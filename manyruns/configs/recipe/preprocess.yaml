@@ -1,0 +1,91 @@
+# The standard scRNA preamble, DECLARED. Until manyruns#54 most of this ran invisibly inside
+# `loading._anndata_matrix` on every counts-like load — normalize_total(1e4) → log1p → PCA(50),
+# returning `obsm["X_pca"]` — as a step nothing declared, in no trace and no g-vector; and the
+# filtering half never ran at all. Here every operation is a step with a name, a parameter and a
+# row in the record.
+#
+# A RECIPE, NOT A STEP, and that is the design decision rather than a packaging choice. A
+# `preprocess` STEP would expand one declared name into the five below, which is an abstraction
+# OVER the recipe rather than a use of it — the expansion would have to be read out of manyruns's
+# source, and the g-vector would carry one `preprocess.*` prefix where five steps each report
+# their own threshold. As a recipe the order is on the page, the thresholds are forkable by
+# copying one file into `$MANYRUNS_RECIPE_DIR`, and `catalog.check_recipe` validates it like the
+# other ten.
+#
+# ORDER IS LOAD-BEARING, and it is why the filters come first. A narrowing invalidates every
+# derived array (`runner.DERIVED_SLOTS`), so filtering after an embedding costs a re-embed and is
+# refused by `vocab.unmet` when a later step needs what was cleared. Filter, then normalize: a
+# library size is a sum over the genes that SURVIVED, so computing it before `filter_genes` scales
+# each cell by a total the run then throws part of away. `transform` last, because `normalize`
+# reads the counts and `transform` reads the working matrix — the pair composes in this order and
+# silently discards the normalization in the other.
+#
+# LEGAL ON `pbmc3k` AND ON NOTHING ELSE WE SHIP, deliberately. `filter_genes` and `filter_mito`
+# declare `("genes",)` in `vocab.STEP_NEEDS` — one prefix-matches `MT-` and the other counts cells
+# per gene — and `genes` is a DATASET fact that no shape can supply. Measured 2026-08-16:
+# `configs/dataset/pbmc3k.yaml` is the only one of the 14 bundled datasets whose handle declares
+# `provides: [genes]`; the other 13 are synthetic point clouds. So this recipe is a hollow row in
+# the ledger on a swissroll, which is the correct answer — "removed 0 genes" from a nameless
+# matrix is indistinguishable from a dataset that had nothing to remove.
+#
+# THRESHOLDS ARE DECLARED, NOT LAWS. These are the Scanpy pbmc3k tutorial's numbers, and Heumos
+# et al. 2023 (10.1038/s41576-023-00586-w) recommends MAD-based outlier detection over fixed cuts.
+# Measured on `data/pbmc3k_raw.h5ad` (2700 × 32738) on 2026-08-16, each cut taken over the full
+# frame: `min_genes=200` drops 0 of 2700 cells, `min_cells=3` drops 19,024 of 32,738 genes,
+# `max_pct=5` drops 57 of 2700 cells over the 13 `MT-*` genes. A cut that removes nothing is not
+# an argument for removing it — it is the record saying this dataset was already clean by that
+# criterion, which is exactly the sentence the undeclared preamble could never produce.
+#
+# `detect_doublets` IS DELIBERATELY ABSENT. It exists as a step and defaults to `remove: false`,
+# and a doublet call nobody has inspected is not something the standard preamble should make
+# silently. It is also the heaviest step in `pipeline/prep.py` and the only one whose dependency
+# (scrublet, via scikit-image) the base install lacks — putting it here would make the preamble
+# uninstallable for everyone in order to flag cells it would not then remove.
+#
+# `hvg` IS ABSENT BECAUSE IT DOES NOT EXIST. Its slot is reserved in `vocab.NARROWING_STEPS` and
+# it is Zachary Warren's to implement (spec §12); naming it here would make this recipe illegal
+# rather than incomplete.
+name: preprocess
+id:   sc.prep.osca
+
+source:
+  kind:  book
+  cite:  "Amezquita, Lun, Becht et al., 'Orchestrating single-cell analysis with Bioconductor', Nature Methods 17:137-145 (2020)"
+  doi:   10.1038/s41592-019-0654-x
+  url:   https://bioconductor.org/books/release/OSCA/
+  verified: 2026-07-28
+  note:  "Thresholds are the Scanpy pbmc3k tutorial's; OSCA is the source for the workflow's shape."
+
+# `via: manylatents` on every row, and it is not decoration. The compute landed in
+# manylatents-omics#61 as seven pure functions; `pipeline/prep.py` imports no scanpy at all and
+# every executor there is a name-and-shape adapter over one of them. `via:` is what
+# `vocab.standins` compares against the engine name to raise a caveat, so writing `scanpy` here
+# would make a real caveat point at a library this run never loads.
+steps:
+  - {name: filter_cells, group: prep, params: {min_genes: 200},            via: manylatents}
+  - {name: filter_genes, group: prep, params: {min_cells: 3},              via: manylatents}
+  - {name: filter_mito,  group: prep, params: {max_pct: 5, prefix: "MT-"}, via: manylatents}
+  # NO `method:` HERE. `prep._step_normalize` reads `target_sum` and `force` and nothing else, so
+  # a `method: library` would be a parameter that appears on the page, is copied into a fork, and
+  # changes nothing — the silent-ignore failure this product refuses everywhere else (see
+  # `prep.TRANSFORMS`, a closed vocabulary precisely so a typo'd `method` cannot default quietly).
+  # Library-size scaling is the only normalization implemented; when a second one exists it
+  # arrives as a param the executor reads, and this comment goes away with it.
+  - {name: normalize,    group: prep, params: {target_sum: 10000},         via: manylatents}
+  - {name: transform,    group: prep, params: {method: log1p},             via: manylatents}
+
+# `<ask> — <gloss>`, ask the SHORT half (`narrate.split_question`; the ledger draws them in
+# different weights). Measured with that function: 19 characters against 65.
+question: "Clean this up first — filter, normalize and transform, with every threshold on the page"
+
+# EMPTY, like `qc` and `sandbox`. Preprocessing is a preamble TO an analysis, not an answer to
+# "what should I look for", so it stays one keystroke away in the dropdown without competing for
+# the top row that `narrate.offer` reserves for a recommendation.
+suits:    []
+
+# NO `claims:`, deliberately, and this comment is the declaration of that. `claims:` is the
+# STRUCTURE a recipe asserts, and filtering, normalizing and log-transforming assert none — they
+# are true of a tree, a simplex and a blob alike. `check_claims` makes absence legal precisely so
+# a recipe can abstain instead of picking the nearest word; `qc.yaml` records the same abstention
+# at length, including the wrinkle that `score.predicted_rung` cannot yet tell an abstention from
+# a `surface` claim.

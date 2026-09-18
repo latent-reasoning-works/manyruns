@@ -1,0 +1,202 @@
+# The declared metric suite — what gets MEASURED on a recipe's result.
+#
+# Orthogonal to the recipe on purpose: a recipe says *what transforms run*, the suite says
+# *what is measured on the result*. Keeping them separate is what lets one suite score every
+# recipe comparably.
+#
+# Delegated, not implemented: manylatents owns the registry; manyruns only declares which
+# metrics run. `manyruns check` validates these names against that live registry and DEFERS
+# (never fakes) when the engine is not importable — see catalog.check_suite.
+#
+# ── THIS LIST IS THE AUDIT'S VERIFIED-SAFE SET ──────────────────────────────────────────
+# The first version of this file was assembled from "names that resolve and return a float",
+# which is not the same as "measurements that mean anything". The component audit
+# ran every metric against structurally wrong input and found
+# ~16 of 38 distinct callables return a confident number rather than raising. What follows is
+# the subset verified correct, deterministic over repeats, AND null-correct on iid noise.
+#
+# ONE MEASUREMENT PER LINE. The registry exposes 110 names for 38 callables (~2.9x
+# over-reporting), so declaring two aliases of one class records the same number twice and
+# inflates its apparent coverage in the table. Notably `kernel_sparsity` and `kernel_density`
+# are the same number under opposite sign — they sum to exactly 1.0 — so only one appears.
+metrics:
+  # ── faithfulness to the ambient data ──
+  - trustworthiness
+  - continuity
+  - knn_preservation
+  # ── intrinsic structure of the embedding ──
+  - lid                             # local intrinsic dimensionality
+  - loglog_consistency              # whether the LID scaling law actually holds
+  - anisotropy
+  - participation_ratio             # scalar mode; NOT `effective_rank`, a different measure
+  # ── topology ──
+  - betti_0                         # connected components
+  - betti_1                         # independent loops
+  # ── geometry preservation ──
+  - geodesic_distance_correlation   # split-mode safe since the Subset view slices both axes
+  # ── density / outliers ──
+  - outlier_score
+  - kernel_sparsity                 # NOT with kernel_density: same number, opposite sign
+
+# ── ADMISSIBLE RANGES ───────────────────────────────────────────────────────────────────
+#
+# THE MOTIVATING CASE, measured on this repo before this block existed: the `embed` recipe on
+# 600×40 iid gaussian noise reports `lid` 3.419 / 3.425 / 3.419 (seeds 0/1/2) on a
+# `final_dim: 3` embedding, with every step `outcome=ok` and the run `ok=True`. Local
+# intrinsic dimensionality is the dimension of the manifold the points lie on, and that
+# manifold is a subset of R^3 — 3.419 is not a surprising reading, it is an impossible one.
+# Nothing in the record said so. Calling the estimator directly on raw iid noise (no PHATE)
+# overshoots at every width — d=2 → 2.293/2.255/2.256, d=3 → 3.451/3.375/3.465,
+# d=5 → 5.466/5.487/5.318 — so the excess is the Levina–Bickel MLE's finite-sample bias at
+# k=20, not PHATE's, and it is worst on NOISE, the regime where a spurious
+# high-dimensionality reading would most mislead.
+#
+# WARNING, NOT REJECTION. An out-of-range value stays in the g-vector and the violation goes
+# in `<name>_note` — the shape `suite.measure` already uses for NaN. Nulling 3.419 would
+# discard a comparable number to make a point: it is an estimator artifact, not a corrupt
+# reading, and recording it and flagging it are two different jobs.
+#
+# A BOUND IS AN EXPRESSION, not a constant, because it depends on the run's shape: `lid`'s
+# ceiling is 3 on a 3-D embedding and 10 on a 10-D one. The grammar is closed and is
+# evaluated without `eval` — a numeric literal, or one identifier from `suite.SHAPE_VARS`
+# (n_samples, n_features, n_embedded, final_dim), all four of which are already in every
+# g-vector. `null` on one side means "no bound on that side".
+#
+# DECLARE ONLY WHAT YOU CAN DEFEND. A bound that cannot be defended is worse than none —
+# it warns on good data. `in: unbounded` is a first-class answer and states that we looked;
+# a metric with NO entry at all is a gap, and `suite.check_ranges` reports it (a test asserts
+# this block covers `metrics:` exactly). Every `why` below is a definition, or a property of
+# the estimator read out of manylatents' source and confirmed by measurement.
+#
+# WHAT DOES NOT BELONG HERE, and it is not a matter of taste. This block covers the SUITE —
+# the metrics `suite.measure` computes on the embedding, one entry per line of `metrics:`
+# above — and `check_ranges` enforces that correspondence in BOTH directions. Measured: adding
+# `cluster_quality_silhouette: {in: [-1, 1]}` returns
+# `"cluster_quality_silhouette: has an admissible range but is not in the suite"`, because an
+# analysis-step readout never travels the `suite.measure` path and so could never be checked
+# against a bound declared here. The five readouts added with §6's ladder (cluster_quality,
+# rank_genes, dpt, simplex, qc) therefore carry their bounds where they are USED — in
+# `steps.py`, as a definition beside the number, plus the one case where a floor is emitted as
+# its own key because the value is uninterpretable without it (`simplex_purity_floor` = 1/k,
+# the barycentre). Extending this mechanism to cover step readouts is a real piece of work
+# (`check_ranges` would need a second declared set to check against); inventing entries here
+# that nothing evaluates would be a check that looks like one and is none.
+ranges:
+  # Venna & Kaski's T(k) = 1 − (2/(nk(2n−3k−1)))·Σ(r(i,j) − k). The penalty sum is ≥ 0 and
+  # the normaliser is its maximum, so the ratio lands in [0, 1]. Caveat kept deliberately:
+  # the normaliser is positive only while 2n > 3k+1 (k defaults to 25, so n ≥ 39). Below that
+  # T can exceed 1 — and flagging it is right, because the number is meaningless there.
+  trustworthiness: {in: [0, 1], why: "definition (Venna & Kaski); penalty ≥ 0, normalised by its max"}
+  # |kNN_high ∩ kNN_low| / n_neighbors, averaged: a fraction of a fixed k. Read out of
+  # manylatents/metrics/continuity.py — `normalize=True` is the default and the suite passes
+  # no params. (`adjust_for_random=True` would move the floor to −k/(n−1); we never set it.)
+  continuity: {in: [0, 1], why: "definition: mean neighbourhood overlap / k, normalize=True default"}
+  knn_preservation: {in: [0, 1], why: "definition: mean |kNN∩kNN| / k, a fraction of a fixed k"}
+  # Ceiling: the estimand is the dimension of the manifold supporting the points, and that
+  # manifold is a subset of R^final_dim. Floor: the MLE is −k/Σlog(d_i/r_k) with every log
+  # ratio ≤ 0, so it is positive. The ceiling is the one that fires — see the case above.
+  # NO CEILING, and the reason is a measurement rather than a preference. "An intrinsic
+  # dimension cannot exceed the ambient dimension" is true of the QUANTITY and false of the
+  # ESTIMATOR: the Levina-Bickel MLE overshoots in finite samples exactly when the true
+  # dimension approaches the ambient one. Measured on a filled 3-ball in R^3 (true intrinsic
+  # dimension = 3) at final_dim=3: lid = 3.137 / 3.119 / 3.099 for seeds 0/1/2 — a ceiling of
+  # final_dim flags ALL THREE, while the 2-D control passes at 2.093. A bound that fires on
+  # correct data is worse than no bound, so only the definitional floor is claimed.
+  lid: {in: [0, null], why: "a dimension estimate is non-negative; the MLE overshoots d in finite samples, so d is not a defensible ceiling (measured: 3.137 on a true-3-D ball at final_dim=3)"}
+  # The scalar is `mean_r_squared`, and loglog_consistency.py clips r_squared to [0, 1]
+  # (np.clip) before averaging. Bounded by the implementation, verified by reading it.
+  loglog_consistency: {in: [0, 1], why: "implementation clips per-point R² to [0,1] before the mean"}
+  # s[0] / Σs over the centred embedding's singular values: non-negative, largest first, so
+  # the ratio is in (0, 1]. The tighter floor 1/final_dim is real (rank ≤ n_cols ⇒ ratio ≥
+  # 1/rank) and NOT declared: an exactly isotropic embedding sits ON it with no margin —
+  # measured 0.3333333333333333 vs 1/3 for the ±identity frame in R^3 — so one ulp of SVD
+  # noise would warn on legitimately isotropic data. That is the bound-worse-than-none case.
+  anisotropy: {in: [0, 1], why: "definition: s[0]/Σs of non-negative singular values, s[0] largest"}
+  # PR = (Σλ)²/Σλ² over each point's local kNN spectrum, averaged. Ceiling: the local SVD in
+  # R^final_dim yields at most final_dim non-zero eigenvalues and PR ≤ their count. Floor:
+  # Cauchy–Schwarz gives PR ≥ 1 while some λ > 0; local_spectral_analysis.py returns 0.0 for
+  # a neighbourhood with total == 0, so a mean below 1 means some neighbourhood collapsed to
+  # a point. Measured: 0.0 on an all-identical 400×3 embedding, 1.0 on 20 distinct points ×20
+  # copies, 2.675 on clean noise. Flagging a collapse is the intent, not a false positive.
+  participation_ratio: {in: [1, final_dim], why: "Cauchy–Schwarz floor; at most final_dim non-zero local eigenvalues"}
+  # Floor 1: a non-empty cloud has at least one connected component. persistent_homology.py
+  # counts the essential class explicitly, having found that dropping it made betti_0
+  # "systematically one low" and let it reach 0 — this bound catches that regression.
+  # Measured 1.0 on a single point, 26.0 on 400 noise points. The ceiling is loose in
+  # practice: the metric subsamples to max_N=2000 first, so the reachable maximum is
+  # min(n_embedded, 2000) — n_embedded is the half that does not depend on another package's
+  # default staying put.
+  betti_0: {in: [1, n_embedded], why: "≥1 component for a non-empty cloud; ≤1 per point"}
+  # A Betti number is the rank of a homology group: a non-negative integer. No ceiling: the
+  # Rips bound (β1 ≤ E − n + β0 ≤ C(n,2)) is true and so loose it could never bind, and a
+  # bound that cannot bind reads as a check while being none.
+  betti_1: {in: [0, null], why: "definition: rank of H1, a non-negative integer; no ceiling that could bind"}
+  # Spearman ρ (default) or Kendall τ over the flattened upper triangles — a correlation
+  # coefficient. Read out of geodesic_distance_correlation.py.
+  geodesic_distance_correlation: {in: [-1, 1], why: "definition: a rank correlation coefficient"}
+  # UNBOUNDED, and that is the answer, not an omission. The scalar is the MEAN of sklearn's
+  # LOF (−negative_outlier_factor_): a ratio of local reachability densities with ~1 as the
+  # inlier baseline and no cap — a point can be arbitrarily more isolated than its
+  # neighbours. A floor of 0 is derivable (a mean of non-negative ratios) and could never
+  # bind, so declaring it would look like a check and be none. Measured 1.075 / 1.104 / 1.122
+  # on the iid-noise runs above; nothing in that pins a top.
+  outlier_score: {in: unbounded, why: "LOF is an uncapped density ratio; the derivable floor (0) could never bind"}
+  # zero_elements / total_elements of the kernel matrix at threshold 1e-10 — a fraction of
+  # the matrix. Consistent with this file's note that sparsity + density = 1.0 exactly.
+  kernel_sparsity: {in: [0, 1], why: "definition: fraction of kernel entries at or below 1e-10"}
+
+# ── REMOVED, with reasons. Do not re-add without re-testing. ────────────────────────────
+#
+#   (betti_0, betti_1 were removed here and are now BACK — see the topology block above.
+#    The persistence threshold was ABSOLUTE, so the answer tracked coordinate scale rather
+#    than topology: one fixed cloud gave betti_0=221 through PCA and 0 through PHATE. It is
+#    now a fraction of the cloud diameter, so PHATE — manyruns's only shipped embedder —
+#    reads gaussian_blob 3/0, torus 1/1, swiss_roll 1/0. Requires manylatents 13e580d.)
+#
+#   kmeans_stratification   Raises `AttributeError: 'InMemoryDataset' object has no attribute
+#                           'metadata'` on the `input_data` path — which is the path every
+#                           CHAINED step uses. It also fails the null twin: 3 clusters and 1
+#                           cluster both score ARI 1.0, because k-means trivially reproduces a
+#                           single label. Use `silhouette` for rung 1 instead.
+#
+#   spectral_gap_ratio      NOT constant — an earlier note here said it was, and that was
+#                           wrong. It reads PCA 1.2854 / t-SNE 1.0261 / UMAP 1.0008 / PHATE
+#                           1.0002 on one fixed cloud, and under PCA it correctly orders noise
+#                           1.05 < swiss 1.29 < blobs 3.02. The real problem is narrower:
+#                           row-normalised diffusion kernels have near-degenerate top
+#                           eigenvalues, so the ratio collapses toward 1.000x for that whole
+#                           family and can invert. Measured through PHATE here: blob 1.000,
+#                           torus 1.001, swiss 1.000. Excluded for near-zero discriminative
+#                           power on the only embedder we ship, not for being broken.
+#
+#   spectral_decay_rate     Scale-sensitive in the way betti was (1.333 -> 0.009 between PCA
+#                           and PHATE on identical input). Unlike betti this has had no fix,
+#                           so it stays out.
+#
+#   effective_neighborhood_ Inverts with coordinate scale (mean_k_eff 0.033 for PCA vs 6.79 for
+#   size                    PHATE on identical input), so it substantially measures scale. It
+#                           also emits a per-sample ARRAY alongside its scalars, which a tidy
+#                           table drops. It topped the F-ranking in the first sweep, which now
+#                           reads as an artifact rather than a result.
+#
+#   magnitude_dimension     `magnipy` is not installed; returns NaN always, and a NaN column
+#                           ranks by ALPHABETICAL name order in `experiment.rank_metrics`.
+#
+#   silhouette              Correct and null-correct, but it needs LABELS — so it belongs to a
+#                           condition-bearing recipe, not the default suite that must score
+#                           every recipe comparably.
+#
+#   diffusion_map_          Fails on any datamodule defaulting to `mode='split'` — `torus` and
+#   correlation             `saddle_surface` do, every other generator defaults to 'full'. It
+#                           compares the embedding against the ambient matrix and the two have
+#                           different row counts there: `ValueError: x and y must have the same
+#                           length along axis`. Four of twelve sweep cells died on this and its
+#                           sibling. The component audit had listed both as "verified safe" —
+#                           having verified them only against full-mode fixtures, which is a
+#                           reminder that "verified safe" is relative to what it was tried on.
+#
+#                           `geodesic_distance_correlation` was excluded here for the same
+#                           reason and is now BACK: manylatents' `_SubsetView` slices
+#                           `get_gt_dists` on both axes, so it returns real numbers on split
+#                           datasets (torus 0.978, saddle_surface 0.690). `diffusion_map_
+#                           correlation` fails for a different reason and stays out.

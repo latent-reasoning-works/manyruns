@@ -1,0 +1,47 @@
+# What defines each group. Partition the cells, then ask which genes separate one partition
+# from the rest — the readout a clustering is usually run FOR. `contrast.yaml` already promises
+# something adjacent for case/control; this is the same question asked of discovered groups
+# rather than declared ones.
+#
+# NEEDS GENES, which is not free. `loading._anndata_matrix` normalizes, log1p's and PCAs on
+# every scRNA load, so by the time a step runs the gene axis is gone. `rank_genes` therefore
+# declares `clusters` in `vocab.STEP_NEEDS` and reports an ABSENCE rather than a number when
+# the names or the counts did not survive — an unnamed gene index is not a marker.
+#
+# A RANKING, NOT A P-VALUE TO PUBLISH. The test is Wilcoxon rank-sum per the tutorial; the
+# groups it compares were DISCOVERED from the same data it tests, which is double-dipping and
+# is the reason this ships as a description of the partition and not as evidence about biology.
+name: markers
+id:   sc.markers.wilcoxon
+
+source:
+  kind:  tutorial
+  cite:  "Scanpy, 'Preprocessing and clustering' — `sc.tl.rank_genes_groups`; method paper Wolf, Angerer & Theis, Genome Biology 19:15 (2018)"
+  doi:   10.1186/s13059-017-1382-0
+  url:   https://scanpy.readthedocs.io/en/stable/tutorials/basics/clustering.html
+  verified: 2026-07-28
+  note:  "Groups are discovered by leiden on the same matrix the test then reads — selection bias the tutorial also carries. Ranking only."
+
+steps:
+  # THE PREAMBLE, DECLARED. These ran on every counts-like load inside
+  # `loading._anndata_matrix` and appeared in no trace, no g-vector and no caveat; their params
+  # were unreachable from a recipe. What RUNS is unchanged — except the PCA, which is NOT repeated here: this recipe already
+  # declares its own `pca` below, and the preamble's PCA-50 fed it a matrix that was
+  # already 50 components wide. That double PCA is removed rather than reproduced, so this
+  # recipe's geometry metrics move (spec §7.2b). What changed is that it is
+  # written down, settable, and recorded.
+  - {name: normalize, group: prep,   params: {target_sum: 10000}, via: manylatents}
+  - {name: transform, group: prep,   params: {method: log1p},     via: manylatents}
+  - {name: pca,        group: latent,   params: {n_components: 10},
+     limits: {n_components: [n_samples, n_features]}, via: manylatents}
+  - {name: leiden,     group: latent,   params: {},                 via: manylatents}
+  - {name: rank_genes, group: analysis, params: {},                 via: scanpy}
+
+question: "What defines each group? — I'll partition the cells and rank the genes that separate them"
+# Same reasoning as `cluster`: markers describe groups, so they suit data that HAS groups.
+suits:    [clusters]
+
+# Discrete groups — rung 1, the same claim `cluster` makes and for the same reason: `leiden`
+# partitions, and `rank_genes` then names what separates the groups. Ranking genes per group is
+# a READOUT of the partition, not a stronger structural claim than it.
+claims: clusters

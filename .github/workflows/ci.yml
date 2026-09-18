@@ -1,0 +1,151 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # ── base install: does the product run with NONE of the compute stack? ──────────────────
+  # This job's value is what it LACKS. No anndata, no pandas, no scanpy, no torch, no
+  # manylatents — so a module-scope import of any of them fails here and nowhere else.
+  # `tests/test_base_install.py` is the guard that makes that failure legible instead of a
+  # collection crash.
+  #
+  # `anndata` and `scanpy` ARE here and torch is not, which is the whole trick: they are pure
+  # Python, they pull no CUDA, and they unskip the file-format surface. Measured on a faithful
+  # checkout (`git archive`, because `/data/` is gitignored and an rsync of a working tree is
+  # NOT what CI sees): 1261 passed / 69 skipped without them, 1287 / 45 with. The 45 that remain
+  # are manylatents and manyagents — the engine surface, which is what `shipped` below is for.
+  test:
+    name: base install (no compute stack)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: false   # --no-project ignores uv.lock, so there is no key to cache on
+
+      # Product layer only: `--no-project` skips resolving manyruns's full compute stack;
+      # `--with` pulls just the test deps into an ephemeral env. Tests importorskip /
+      # lazy-import omitted packages. The shipped job below tests the public PyPI stack.
+      - name: Lint
+        run: uv run --no-project --python ${{ matrix.python-version }} --with "ruff==0.11.13" ruff check manyruns tests
+
+      # THE LOCKFILE GATE. `uv lock --check` fails when pyproject.toml and uv.lock disagree —
+      # i.e. when someone added a dependency and did not relock. CLAUDE.md requires declaring
+      # the dependency, running `uv lock`, then syncing with every extra already in use so
+      # a fresh checkout can reproduce the environment.
+      #
+      # It is the ONLY thing in this job that reads uv.lock. Everything below runs
+      # `--no-project`, which ignores it — so the versions the base job tests against FLOAT.
+      # Measured 2026-08-20: this job resolves numpy 2.5.2 / scipy 1.18.0 while the lockfile
+      # ships numpy 2.2.6 / scipy 1.14.1. That is deliberate (it is what makes the base job a
+      # test of the SEAM rather than of a pinned set) and it is why the `locked` job below
+      # exists — a dependency regression is invisible here by construction.
+      - name: Lockfile is in sync with pyproject
+        run: uv lock --check
+
+      # Public test deps the suite imports directly (the interface/harness CLIs use click+rich,
+      # recipes use pyyaml, the contrast separation metric uses scikit-learn, viz uses
+      # matplotlib+pillow). The private ecosystem stays out — those tests importorskip it.
+      #
+      # `textual` IS the front door, and until it was added here CI ran NONE of it: 178 tests
+      # across seven `test_tui_*.py` files skipped silently on a missing import, so the surface
+      # a user actually launches was the one surface with no coverage at all. Measured, adding
+      # it: 673 → 845 tests run.
+      #
+      # `phate` is what `pipeline.run_inproc` — the IN-PROCESS step loop, `vocab.INPROC` — fits
+      # with. It is public and torch-free, unlike the rest of the chain. Without it the artifact
+      # channel, the figure attribution and the label tests could not run: they build a recipe,
+      # the latent step is skipped for want of an implementation, and every assertion then reads
+      # an empty dict. Measured: 845 → 883. `textual-image` is what this branch draws pixels
+      # WITH — public, and a base dependency since `[real]` was emptied (PR #40), which is what
+      # two tests here assert. Without it `images.tier()` is "none" and the pane falls back to
+      # paths, so CI would be green on a code path no user is on.
+      #
+      # The engine chain proper (manylatents / the learner) stays out — it brings torch. THAT is
+      # why `run_inproc` exists: `mock` writes no arrays (`runner._mock_transform` never
+      # assigns `state["emb"]`), so it cannot carry the artifact, lineage, rewind or branch
+      # tests, and the only other engine needs torch. `run_inproc` is a TEST SUBSTRATE, not a
+      # backend — it is absent from `app.ENGINES` and from `serving.LocalServer.SERVES`, so
+      # nothing a user types or a stored record replays can route a request to it.
+      # If manylatents is ever added here, note `uv run` does NOT honour `--torch-backend` or
+      # `UV_TORCH_BACKEND` (measured on uv 0.11.8: the flag is rejected, the env var is
+      # silently ignored) — a CPU-only torch needs `uv venv` + `uv pip install
+      # --torch-backend=cpu`, or CI pulls ~3.3 GB of CUDA wheels it never executes.
+      - name: Test
+        run: >-
+          PYTHONPATH=. uv run --no-project --python ${{ matrix.python-version }}
+          --with pytest --with numpy --with scikit-learn --with hydra-core --with omegaconf
+          --with pyyaml --with click --with rich --with pillow --with matplotlib
+          --with textual --with textual-image --with phate
+          --with anndata --with scanpy
+          pytest tests/ -q
+
+  # ── shipped stack: resolve from PyPI with CPU torch ────────────────────────────────
+  # manylatents 0.1.7 ships mioflow.py and cflows.py; this job has been green on main.
+  # Gate the engine suite on that public dependency surface, without checkout sources.
+  # CPU torch avoids downloading CUDA libraries this runner never uses. These disposable
+  # CI venvs are explicitly created for installation checks, never a developer environment.
+  # The wheel smoke step runs outside the checkout so source files cannot mask missing
+  # package data or broken console scripts in the distribution users install.
+  shipped:
+    name: shipped env + engine (PyPI, cpu torch)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: pyproject.toml
+
+      # `--clear`: `setup-uv` has already made a `.venv` by the time this runs, and `uv venv`
+      # refuses to overwrite one ("A virtual environment already exists at: .venv" — measured on
+      # this job's first run). Recreating rather than installing into theirs is deliberate: this
+      # job's whole claim is that it resolves WITHOUT `[tool.uv.sources]`, and an environment
+      # somebody else populated cannot support that claim.
+      - name: Install the shipped stack (PyPI, cpu torch)
+        id: install
+        run: |
+          uv venv --python 3.12 --clear
+          uv pip install --no-sources --torch-backend=cpu -e ".[dev]"
+
+      # `.venv/bin/pytest` directly: preserve the disposable environment resolved above.
+      # `uv run` would reconcile it against the checkout lock instead of testing exactly
+      # this fresh PyPI install. The compute stack no longer has a checkout source override.
+      - name: Test
+        run: .venv/bin/pytest tests/ -q
+
+      # The engine surface by name, so a red build says WHICH one went rather than "44 tests".
+      # Redundant on a green run; the entire point of the job on a red one.
+      # Gated on the INSTALL, not `always()`. A failed TEST above should still produce this
+      # breakdown; a failed INSTALL should not, because `.venv/bin/pytest` does not exist yet and
+      # the exit-127 that follows buries the real error one line up (measured, same first run).
+      - name: The surface the base job cannot reach
+        if: steps.install.outcome == 'success'
+        run: >-
+          .venv/bin/pytest -q
+          tests/test_mioflow_params.py tests/test_bounds.py tests/test_engine_extras.py
+          tests/test_recipe_catalog.py tests/test_app_open.py
+
+      - name: Built wheel install and CLI smoke (PyPI, cpu torch)
+        run: |
+          uv build
+          wheel_venv="$RUNNER_TEMP/manyruns-wheel-venv"
+          uv venv --python 3.12 "$wheel_venv"
+          uv pip install --python "$wheel_venv/bin/python" --no-sources --torch-backend=cpu dist/*.whl
+          smoke_dir=$(mktemp -d)
+          cd "$smoke_dir"
+          "$wheel_venv/bin/python" -c "import manylatents.singlecell.preprocessing"
+          "$wheel_venv/bin/co-science" --version
+          "$wheel_venv/bin/co-science" check
+          "$wheel_venv/bin/co-science" run swissroll --engine mock --project wheel-smoke

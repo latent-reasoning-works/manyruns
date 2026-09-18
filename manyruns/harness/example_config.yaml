@@ -1,0 +1,18 @@
+# Example workflow config for manyruns.harness
+# Use with: python -m manyruns.harness run -c manyruns/harness/example_config.yaml -d swissroll
+
+name: Custom PCA-UMAP Workflow
+
+workflow:
+  - algorithm: PCA
+    params:
+      n_components: 30
+  - algorithm: UMAP
+    params:
+      n_components: 2
+      n_neighbors: 15
+      min_dist: 0.1
+
+metrics:
+  - participation_ratio
+  - trustworthiness

@@ -1,0 +1,56 @@
+# A recipe of steps that DO NOT WORK YET, so the app can be driven against them.
+#
+# WHAT IT IS FOR. A step reaches a screen only if a recipe declares it, so until now a capability
+# could not be designed against in the GUI before someone wrote its compute — the step pane, the
+# ledger row, the refusal sentence and the record are all downstream of a step EXISTING, and none
+# of them needs the maths to be real to be worth looking at. Running this recipe exercises every
+# one of those surfaces and produces no numbers.
+#
+# EVERY STEP HERE DECLINES. `pipeline/stubs.py` gives each a reason and `apply_step` records it as
+# `outcome="skipped"`, which `narrate._OUTCOME_MARKS` draws as `⊘` with the reason beside it. A
+# stub CANNOT report `ok` — pinned by `test_a_stub_can_never_report_ok` — because a step that
+# invented a plausible number would put fabricated geometry in the g-vector and the record could
+# not tell it from a real run. The mock ENGINE is the tool for "invent a number"; this is the
+# opposite.
+#
+# `phate` and `mioflow` are REAL and are here because the stubs need what they produce: the
+# calculus refuses `granger` and the two probes without a `model`, so a recipe of stubs alone
+# would be illegal rather than skipped, and would exercise the refusal path instead of the step
+# pane. Two real steps, then three that decline.
+#
+# NOT A RECOMMENDATION FOR ANYTHING — `suits: []`, like `qc`, so it never competes for the top
+# row of the menu. It is one keystroke away for whoever is working on a screen and invisible
+# otherwise. DELETE IT when the three steps below are implemented; `stubs.names()` is what says
+# whether that day has come.
+name: sandbox
+id:   dev.sandbox.stubs
+
+source:
+  kind: none
+  note: "No method behind this. It is a fixture for driving the app, not an analysis."
+
+steps:
+  - {name: phate,   group: latent,    params: {n_components: 3}, via: manylatents}
+  - {name: mioflow, group: lightning, params: {}, via: manylatents}
+  # Declines. Brian's, manylatents#292 — and the reason names why manyruns deleted its own
+  # granger rather than reading "coming soon".
+  - {name: granger,              group: analysis, params: {}}
+  # Declines. Tier 3 of the MIOFlow work; neither method exists on the engine.
+  - {name: growth_rate,          group: probe,    params: {}}
+
+# `decode_to_gene_space` is a stub too and is deliberately NOT here. It declares
+# `STEP_NEEDS = ("model", "genes")`, and `genes` comes from the dataset's handle — so a recipe
+# containing it is REFUSED AT PLAN TIME on every bundled dataset, none of which carries a gene
+# axis. That refusal is correct and it defeats this recipe's purpose: a recipe that never becomes
+# legal never reaches the step pane, which is the surface this exists to drive. It stays
+# dispatchable and in the interactive menu, where it is reachable on data that has genes.
+
+# `<ask> — <gloss>`, ask the SHORT half (`narrate.split_question`; the ledger renders them in
+# different weights and the ask column folds at 70). An earlier wording had a 48-character ask
+# against a 27-character gloss and overflowed.
+question: "Drive the app — every step here declines, because none of them is built yet"
+
+# EMPTY, deliberately, and for `qc`'s reason: this answers no question about anybody's data.
+suits: []
+
+# NO `claims:`. It asserts no structure because it computes nothing.

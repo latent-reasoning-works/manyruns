@@ -1,0 +1,101 @@
+# The default trajectory exploration recipe: the "CFlows" trace.
+#
+# The PRODUCT owns the recipe — which algorithms run, in what order, with what
+# params. The COMPUTE is delegated downstream (manylatents / scanpy / the learner);
+# manyruns never implements PHATE / MIOFlow itself (see CLAUDE.md).
+#
+# A step declares exactly one vocabulary: `group`. It maps to manylatents'
+# `run(algorithms={<group>: <name>})`:
+#   latent    -> an embedding / transform (PHATE)          — data in, transformed data out
+#   lightning -> a trained Lightning module (MIOFlow)      — likewise
+#   analysis  -> NOT a manylatents algorithm; manyruns's own in-process readout,
+#                which reads the data and lands in the g-vector
+# so the trace reads: latent:phate -> lightning:mioflow.
+#
+# `group` is required — a step without one is skipped and reported, never guessed at. It is
+# also load-bearing for ORDER: `vocab.GROUP_PROVIDES` says a `latent` step produces an
+# `embedding` and `vocab.STEP_NEEDS` says `mioflow` needs one, so `vocab.unmet` walks these
+# steps in order and returns `{"embedding"}` — ILLEGAL — if they are swapped. Measured on
+# `{steps: [mioflow, phate]}`: `["embedding"]` on all six shapes, against `[]` (legal) before
+# that pair of declarations existed. Reordering the two lines below is therefore a refusal at
+# plan time, not a run that quietly reports `pseudotime_range: [0.0, 1.0]` over raw input.
+#
+# WHY THERE IS NO ANALYSIS STEP HERE
+# ---------------------------------
+# This recipe used to end in `analysis:granger`, which reported a directional
+# finding — "some signals lead others" — on every run. It has been deleted for these
+# measured reasons:
+#
+#   * it rejected in 12/12 seeds on PURE NOISE at median p 2.9e-29, and scored a
+#     trajectory with NO lead-lag as MORE significant than one with a real 20-step
+#     lead-lag, so the sentence it produced was a constant function of "the
+#     pipeline ran", not of the data;
+#   * it was circular by construction — pseudotime was computed from the embedding
+#     by `_diffusion_pseudotime`, then two coordinates of that same embedding were
+#     tested against each other in that order. Isolated on null data: the shipped
+#     form rejects 100% of the time, two INDEPENDENT vectors under the same ordering
+#     reject 13%. The 1e-30 is self-reference, not smoothness;
+#   * a better statistic does not rescue it. On the identical fixture PCMCI+/ParCorr
+#     returns p = 2.6e-03 and 9.5e-04 in BOTH directions, and pyEDM's CCM shows
+#     spurious convergence (rho +0.42 -> +0.66).
+#
+# The underlying reason is not fixable by choosing a different method: direction is
+# not identifiable from a static snapshot without real time, splicing, metabolic
+# labelling or lineage barcodes (Weinreb et al., PNAS 115:E2467, 2018). No dataset
+# currently in this repo carries any of those, so the honest output is a refusal —
+# which `narrate` now gives in place of the sentence.
+#
+# Adding a trajectory readout back is a real option, but it needs a DATA-LEVEL null
+# (synthesise null data, re-run the embedding AND the ordering AND the statistic) —
+# a label-permutation null cannot test a statistic that never reads a label, and
+# would have certified this one. `vocab.NULL_KIND` records that distinction.
+name: cflows
+id: sc.traj.mioflow
+
+# The trajectory step is what this recipe is FOR, so the source is MIOFlow's paper; the
+# embedding step's own source is PHATE (10.1038/s41587-019-0336-3, verified 2026-07-29 at
+# CrossRef), recorded here rather than in a second `source:` because a recipe has one.
+#
+# There is no JOURNAL DOI for MIOFlow. The arXiv DOI below resolved at api.datacite.org on the
+# date shown, returning the title verbatim; the volume, pages, year and PMCID were confirmed
+# separately at NCBI eutils (PMID 37397786 → "Adv Neural Inf Process Syst 35 29705-29718 2022").
+# The DOI-shaped `10.5555/3600270.3602424` that circulates for this paper is ACM's non-DOI
+# placeholder prefix: re-checked the same day, it returns 404 at BOTH api.crossref.org and
+# api.datacite.org. It is named here so it cannot be helpfully re-introduced.
+source:
+  kind: paper
+  cite: "Huguet et al., Manifold Interpolating Optimal-Transport Flows for Trajectory
+    Inference, NeurIPS 35:29705-29718 (2022)"
+  doi:  "10.48550/arXiv.2206.14928"
+  url:  "https://arxiv.org/abs/2206.14928"
+  verified: 2026-07-29
+  note: "arXiv/DataCite DOI — no journal DOI exists. Also citable as arXiv:2206.14928,
+    PMID 37397786, PMCID PMC10312391."
+
+# One-dimensional progression — `score.RUNG` grades it rung 2, unchanged from the
+# `score.RECIPE_RUNG["cflows"] = 2` this replaces. NOT `multi-branching`: nothing in this
+# recipe detects a bifurcation, and claiming a rung the steps cannot support is precisely the
+# overshoot `score.ladder_cost` weights double.
+claims: single-trajectory
+
+# `via: manylatents` on `mioflow` is load-bearing, and it is the one place in the bundled three
+# where it is. The in-process loop does NOT run MIOFlow under this name: `steps._step_mioflow`
+# computes a diffusion pseudotime on a kNN graph and its own docstring calls itself "a real
+# MIOFlow stand-in". Declaring the canonical implementation is what lets `vocab.standins` say
+# so through the existing `caveats` channel instead of the run reporting a `pseudotime_range`
+# with nothing recording that the cited method never ran.
+steps:
+  # THE PREAMBLE, DECLARED. These ran on every counts-like load inside
+  # `loading._anndata_matrix` and appeared in no trace, no g-vector and no caveat; their params
+  # were unreachable from a recipe. What changed is that they are written down, settable and
+  # recorded. `pca` is the one operation whose reach CHANGED — see `embed.yaml` for the full
+  # account and manyruns#67 for the unmeasured part.
+  - {name: normalize, group: prep,   params: {target_sum: 10000}, via: manylatents}
+  - {name: transform, group: prep,   params: {method: log1p},     via: manylatents}
+  - {name: pca,       group: latent, params: {n_components: 50},
+     limits: {n_components: [n_samples, n_features]},          via: manylatents}
+  - {name: phate,   group: latent,    params: {n_components: 3}, via: manylatents}  # embedding
+  - {name: mioflow, group: lightning, params: {}, via: manylatents}   # trajectory / flow
+
+question: "Trace the path — where are these cells heading, and what drives the change?"
+suits:    [time-course]

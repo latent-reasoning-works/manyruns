@@ -1,0 +1,45 @@
+# The trace, and then a QUESTION put to the flow that produced it.
+#
+# WHY THIS EXISTS SEPARATELY FROM `cflows`. It is the same two steps plus a third, and the third
+# is the point: `sample_trajectories` is a `probe` — it reads the trained model a `lightning` step
+# left behind and asks it something, rather than transforming data. Until this recipe existed the
+# `probe` group had an executor and no way for a person to reach it: `catalog.known_steps` only
+# knows steps a recipe declares, so `session.available_actions` returned fourteen names and none
+# of them was a probe. A capability nobody can invoke is not shipped.
+#
+# NOT folded into `cflows`, deliberately. That recipe's g-vector is what every stored run of it is
+# comparable against, and `claims: single-trajectory` is what `score.RUNG` grades it on. Adding a
+# step changes the first and would need an argument about the second.
+#
+# ENGINE: `manylatents` only. The probe declines with a reason on every other engine, and that is
+# correct rather than a gap — `runner._DISPATCH` gives `probe` to manylatents alone because it is
+# the only row whose `lightning` executor trains anything. The in-process loop computes a
+# diffusion pseudotime and the mock invents numbers; neither leaves a model to ask.
+name: traced
+id: sc.traj.probed
+
+source:
+  kind: paper
+  cite: "Huguet et al., Manifold Interpolating Optimal-Transport Flows for Trajectory
+    Inference, NeurIPS 35:29705-29718 (2022)"
+  doi:  "10.48550/arXiv.2206.14928"
+  url:  "https://arxiv.org/abs/2206.14928"
+  verified: 2026-07-29
+  note: "Same method as `cflows`; this recipe adds a readout OF the fitted flow, not a new fit."
+
+# Same rung as `cflows` and for the same reason: the trajectory is what is claimed, and the probe
+# reports on it rather than asserting a second structure.
+claims: single-trajectory
+
+steps:
+  - {name: phate,   group: latent,    params: {n_components: 3}, via: manylatents}
+  - {name: mioflow, group: lightning, params: {}, via: manylatents}
+  # Reads `model`, writes to the g-vector, moves no selection and produces no fact.
+  # `vocab.STEP_NEEDS` declares its need, so a recipe that put it before the fit — or after a
+  # filter that dropped the cells the flow was fitted over — is refused at plan time.
+  - {name: sample_trajectories, group: probe, params: {}, via: manylatents}
+
+# `<ask> — <gloss>`, the form every bundled question takes (`narrate.split_question`, pinned by
+# tests/test_tui_state.py). The ledger renders the two halves in different weights.
+question: "Trace the path — then ask the flow where it would carry these cells"
+suits:    [time-course]

@@ -1,0 +1,13 @@
+# Isotropic blobs: discrete groups, no continuum. The contrast case — separation metrics
+# should light up here and stay quiet on the manifolds.
+name: gaussian_blob
+handle: {kind: manylatents, ref: gaussian_blob}
+modality: synthetic
+shape: clusters
+
+# topology: the scShapeBench axis (additive; see vocab.TOPOLOGIES)
+topology: [clusters]
+design:   single
+
+# manylatents 0.1.6, seed 42: training/fit set (not the full generated tensor).
+dims: {n_samples: 100, n_features: 2}

@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use manyruns in research, please cite this software."
+type: software
+title: manyruns
+version: 0.1.0
+authors:
+  - name: "Latent Reasoning Works"
+repository-code: "https://github.com/latent-reasoning-works/manyruns"
+url: "https://github.com/latent-reasoning-works/manyruns"
+license: MIT
+abstract: "A workflow, config catalog, and run record for geometric data exploration."

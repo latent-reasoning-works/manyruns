@@ -1,0 +1,81 @@
+# The "embed" recipe: a plain PHATE embedding — no trajectory, no causality.
+#
+# Auto-selected (see manyruns/app.py `select_analysis`) when the data has NO time axis —
+# e.g. case/control scRNA (treated vs healthy) where imposing a MIOFlow neural-ODE trajectory
+# and a directional claim over a non-temporal axis is not defensible. Here we
+# just embed the manifold so you can look at structure / colour by condition.
+#
+# A richer case/control CONTRAST recipe (composition shift + differential expression) is the
+# next step.
+name: embed
+
+# `id` is the stable external handle: `name` is bound to the FILENAME by
+# `catalog.check_recipe`, so renaming the file renames the recipe; `id` survives that and is
+# what a record or a paper can quote. Dotted lowercase, <domain>.<verb>.<method>.
+id: sc.embed.phate
+
+# WHERE THIS WORKFLOW COMES FROM. Not `ref:` — that word is taken and means "a string the
+# compute layer resolves to bytes" (`handle.ref`, `data_ref`); this points the other way, out
+# at literature no code will resolve. A MAPPING, not a bare `cite:` string, so it can carry
+# the kind, a URL where no DOI exists, and the date the identifier was last resolved.
+#
+# `verified` is not decoration and not a promise the loader keeps: `check_recipe` deliberately
+# does NOT resolve DOIs (a loader that needs the internet fails on a plane). The DOI below was
+# resolved against api.crossref.org on the date shown, and the returned title, journal, volume,
+# pages and year were compared field by field against what is written here.
+source:
+  kind: paper
+  cite: "Moon et al., Visualizing structure and transitions in high-dimensional biological
+    data, Nat Biotechnol 37:1482-1492 (2019)"
+  doi:  "10.1038/s41587-019-0336-3"
+  verified: 2026-07-29
+  note: "PHATE is the entire recipe — one latent step, no trajectory and no contrast, which
+    is why the source is the embedding's method paper and nothing else."
+
+# What structure this recipe ASSERTS — one topology from `vocab.TOPOLOGIES`, scalar because a
+# recipe claims one thing (a dataset's `topology:` is multi-label; this is not that).
+# `score.RUNG` grades it: surface → rung 0, and `score.py`'s own comment is the argument for
+# why that is a correct answer rather than a floor — "for a smooth 2-manifold with no groups,
+# no branch points and no extremal vertices, the honest analysis IS just an embedding".
+# This replaces `score.RECIPE_RUNG["embed"] = 0`; the value is identical and now has one home.
+claims: surface
+
+# `via` names the CANONICAL implementation of the step. It is ADVISORY and never picks an
+# executor — that is still `group` × `--engine`. What it buys is that a substitution can be
+# said out loud: `vocab.standins` compares it to the engine that actually ran. `phate` is PHATE
+# on both engines (the public `phate` package on `real`, `algorithms/latent/phate.py` on
+# manylatents), so this one never fires a caveat — which is the correct outcome, not a gap.
+steps:
+  # THE PREAMBLE, DECLARED. These ran on every counts-like load inside
+  # `loading._anndata_matrix` and appeared in no trace, no g-vector and no caveat; their params
+  # were unreachable from a recipe. What changed is that they are written down, settable and
+  # recorded.
+  #
+  # WHAT RUNS IS NOT IDENTICAL, AND THE DIFFERENCE IS `pca`. An earlier revision of this line
+  # claimed it was; that was wrong. The old preamble gated all three operations on
+  # `looks_like_counts(X)`, and `_anndata_matrix` never ran at all for non-AnnData input, so no
+  # PCA ever touched a synthetic point cloud. `normalize` and `transform` reproduce that gate —
+  # both raise `_StepSkipped` on non-counts and record `skipped` with the reason on screen.
+  # `pca` carries no such guard and SHOULD NOT: PCA of a point cloud is a legitimate operation,
+  # and a `latent` step declining data it can perfectly well reduce would be refusing its own job.
+  #
+  # SO A PCA NOW RUNS ON THE SYNTHETICS WHERE NONE RAN BEFORE. By how much that moves their
+  # g-vectors is NOT MEASURED — an attempt to state it produced numbers that did not reproduce,
+  # and an unverified figure in a recipe comment is worse than an admitted gap. manyruns#67.
+  - {name: normalize, group: prep,   params: {target_sum: 10000}, via: manylatents}
+  - {name: transform, group: prep,   params: {method: log1p},     via: manylatents}
+  - {name: pca,       group: latent, params: {n_components: 50},
+     limits: {n_components: [n_samples, n_features]},          via: manylatents}
+  - {name: phate, group: latent, params: {n_components: 3}, via: manylatents}  # embedding only
+
+# What this recipe ANSWERS, in the scientist's words, and the data shapes it suits. Declared
+# HERE rather than in a table in `narrate.offer`, which hardcoded three shape branches with the
+# recipe names as literals — so a recipe added to this folder was discoverable by `--recipe` and
+# `manyruns recipes` but could never be OFFERED, and fell through the menu as the bare label
+# "Run the <name> recipe" beside questions phrased in English.
+#
+# `suits` drives the ★ recommendation only. A recipe legal for the data but not suited to it is
+# still reachable — one level down, under "run a specific recipe" — because legality is
+# structural and suitability is advice. Same split as `unmet` vs `noncanonical`.
+question: "Map it and look together — I'll lay out the structure and tell you honestly what holds up and what doesn't"
+suits:    [single, unknown, manifold, clusters]

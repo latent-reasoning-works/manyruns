@@ -1,0 +1,15 @@
+# The ordinary scRNA order: clean the cells, THEN ask where they are going.
+#
+# This recipe is the reason the frame carries layers. It used to collapse after its first step:
+# the tool read the ORIGINAL file, the filter had already narrowed the run, and the executor
+# refused rather than report on cells this run had rejected. Now the tool reads the run's VIEW.
+name: qc-then-velocity
+id: sc.traj.qc_velocity
+steps:
+  - {name: filter_cells,  group: prep,      params: {min_genes: 10}, via: manylatents}
+  - {name: pyrovelocity,  group: lightning, tool: pyrovelocity,
+     layers: [spliced, unspliced], params: {max_epochs: 60, num_samples: 8}}
+  - {name: pca,           group: latent,    params: {n_components: 10},
+     limits: {n_components: [n_samples, n_features]}, via: manylatents}
+  - {name: velocity_field, group: analysis, params: {n_neighbors: 10}, via: pyrovelocity}
+question: "Clean it up, then tell me which way these cells are heading"

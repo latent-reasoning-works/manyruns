@@ -1,0 +1,4 @@
+# Remote serverless backend (scale-to-zero). Swap in with `serving=modal`.
+# Same ModelServer interface as local — only this file changes.
+_target_: manyruns.serving.ModalServer
+app_name: manyruns-core

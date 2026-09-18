@@ -1,0 +1,13 @@
+# Default serving backend: in-process driver loop. $0.
+# Select with `serving=local` (the default). Mirrors shop's `cluster=local`.
+#
+# A manyruns "model" is an open-ended driver LOOP (a `while` calling the engine
+# API with the next module/model/metric step), not a fixed sequence. `engine=mock`
+# runs a stand-in loop. An engine naming the learner used to delegate the loop
+# downstream; there is no such engine (see CLAUDE.md, "No track to a learner").
+_target_: manyruns.serving.LocalServer
+engine: mock
+device: cpu
+max_steps: 8
+target_dim: 3
+metrics: [trustworthiness, continuity]

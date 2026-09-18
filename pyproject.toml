@@ -1,0 +1,227 @@
+[project]
+# Renamed from `geomancer` on 2026-08-30, so the code sits with manylatents / manyagents /
+# manykinds — and names this one by its artifact, the run record. There is deliberately NO
+# `geomancer` console-script alias; see [project.scripts] for why.
+name = "manyruns"
+version = "0.1.0"
+# This package holds no dependency, import, config or engine value naming a learner
+# (CLAUDE.md, "No track to a learner"). It delegates compute to
+# manylatents; the learner observes this package's artifacts and drives its CLI from outside.
+description = "An environment for computational biology analyses that records every run, driven the same way by people and agents."
+keywords = [
+    "single-cell",
+    "dimensionality reduction",
+    "reproducibility",
+    "provenance",
+    "agents",
+    "computational biology",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Science/Research",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+authors = [
+    {name = "César Miguel Valdez Córdova", email = "cesar.valdez@mila.quebec"}
+]
+readme = "README.md"
+# DECLARED, not implied. The README carried an MIT badge and this field was absent, so the
+# claim had no text behind it anywhere — and a badge is not a grant. PEP 639 SPDX form, so the
+# identifier travels into the wheel metadata where a consumer's tooling can actually read it.
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11,<3.13"
+# THE COMPUTE IS NOT OPTIONAL. Until now the core was "tiny + fully public" so that
+# `uv tool install manyruns` worked with no GitHub token — and what it installed could not
+# analyse anything. `_default_engine()` returned None, the ledger refused every recipe, and
+# the front door's answer to a scientist's first question was an install command. That is an
+# empty harness, not a small product.
+#
+# So the public scientific stack is fixed in. Every package below is on PyPI, so the tokenless
+# install is INTACT — it now runs all 11 bundled recipes on real data instead of none.
+# `[real]` is gone (see the deprecated alias under [project.optional-dependencies]).
+#
+# Every dependency, including optional extras, resolves from PyPI.
+dependencies = [
+    "hydra-core>=1.3.0",
+    "omegaconf>=2.3.0",
+    "python-dotenv>=1.0",  # load .env (ANTHROPIC_API_KEY / WANDB_API_KEY) at startup
+    # the interactive shell (`manyruns` with no args) — pure-Python, compiles into the
+    # base binary, and is what makes the front door feel like a real app. NOT the engine.
+    "rich>=13.0",          # panels, the live step trace, formatted output
+    "questionary>=2.0",    # arrow-key menus with inline validation
+    # The interactive front door (`manyruns` on a TTY). rich RENDERS; textual is rich plus an
+    # event loop, widgets, a layout engine and input handling — which is what lets a pane be
+    # driven rather than printed. Measured: imports in 0.21s, and `App.run_test` gives a
+    # headless Pilot so the app is testable with no terminal.
+    #
+    # NOTE, recorded rather than inherited: installing textual upgraded rich 13 -> 15.0.0,
+    # which `rich>=13.0` above permitted silently. The suite is unchanged at 689 on 15, so this
+    # is ACCEPTED, not unnoticed. Pin rich if that ever stops being true.
+    "textual>=8.0",
+
+    # ── the compute, formerly the `[real]` extra ─────────────────────────────────────────
+    "numpy",
+    "phate",
+    "scikit-learn",
+    "scipy",
+    "statsmodels",
+    "matplotlib",
+    "pandas",     # .csv / .tsv
+    "anndata",    # .h5ad
+    # REAL PIXELS in the terminal. An inline image escape does survive Textual's compositor —
+    # measured in a pty at textual 8.2.8, inside a two-pane layout with scroll containers: 13
+    # kitty/TGP sequences out of the real run screen, 3 sixel on a sixel terminal. The earlier
+    # finding ("the app cannot draw inside its own layout") was about a NAIVE escape inside a
+    # `Static`, which the compositor measures by cell and shreds; this library composites a
+    # placeholder and writes the graphics separately.
+    #
+    # Freeze-friendly, checked against CLAUDE.md's packaging rules: ~1 MB of
+    # pure Python, no data files on the library path (its one `.jpg` and the two
+    # `__file__`-relative reads are in its `demo/` package, which nothing here imports), and no
+    # string-`__import__` plugin loading.
+    "textual-image>=0.8",
+    # THE ALGORITHM CATALOGUE, and the metric registry with it. Without manylatents a run
+    # produces a g-vector of pure provenance — dataset shape and PHATE hyperparameters — and no
+    # geometry at all, which makes two runs incomparable and is most of what the product is
+    # for. It is also what `pca`, `umap`, `leiden`, `diffusionmap` and `aa` are: the in-process
+    # public path implements none of them (measured — every one reports "no real
+    # implementation"), so without this several bundled recipes cannot run.
+    #
+    # Public on PyPI, so the tokenless install survives fixing it in. It pulls torch +
+    # lightning, which is not a new cost: the lightning step group (MIOFlow) and every training
+    # path already needed them.
+    # 0.1.7 ships the MIOFlow/CFlows modules used by the bundled recipe paths.
+    "manylatents>=0.1.7",
+    # Biology needs the singlecell extra: bare omics supplies the module, but normalize
+    # imports scanpy lazily inside the operation. This declaration travels to consumers;
+    # tool.uv.sources and our lock do not. 0.1.3 first ships singlecell/preprocessing.py.
+    "manylatents-omics[singlecell]>=0.1.3",
+]
+
+[project.urls]
+Homepage = "https://github.com/latent-reasoning-works/manyruns"
+Source = "https://github.com/latent-reasoning-works/manyruns"
+Issues = "https://github.com/latent-reasoning-works/manyruns/issues"
+Changelog = "https://github.com/latent-reasoning-works/manyruns/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+# DEPRECATED, kept as a no-op so `--extra real` and `manyruns[real]` do not start erroring in
+# anyone's script, shell history or CI job. Its contents are in `dependencies` now — the
+# compute is the product, not an add-on. Delete this once nothing names it.
+real = []
+# `[datasets]` — built-in sample datasets (swissroll, …). Also a no-op now: manylatents is a
+# hard dependency, so the datasets were never separable from it in practice.
+datasets = []
+# `[engine]` — DEPRECATED, and now a no-op like `[real]` and `[datasets]` above. It named
+# the learner and pulled the private engine in so that its `--engine` value had something to
+# call. There is no such engine: manyruns holds NO dependency on a learner (the environment-
+# contract spec, §3.5 — the learner observes manyruns's artifacts and drives it via the CLI, so
+# arrow never points this way). Its other three members did not need it either — `manyagents`
+# is declared by `[agents]`, `shop` by `[harness]`'s cluster path, `heatgeo` by nothing here.
+# Kept empty so `--extra engine` in a shell history or CI job does not start erroring.
+engine = []
+dev = ["pytest>=7.0.0", "ruff>=0.11,<0.12"]  # pinned: 0.16 broadened defaults, floats CI red
+# the harness — manyruns's user-facing product flow, lifted from shop.
+# it runs DR via manylatents (PCA/UMAP/PHATE) and STOPS AT THE STORE: `run -> label -> store`.
+# Training is the learner's, and the learner is not called from here (§3.5).
+harness = [
+    # [omics] is LOAD-BEARING, not optional polish: it ships the `manylatents-omics`
+    # distribution, which provides both `manylatents.singlecell.data.anndata`
+    # (AnnDataModule — what assert_loadable constructs) and `manylatents._data_paths`
+    # (omics_data_root — what default_out_dir resolves the `${omics_data:}` root with).
+    # Bare "manylatents" installs neither, so acquire() and assert_loadable() both raise
+    # on the documented install. Another face of the CLAUDE.md non-transitivity gotcha.
+    "manylatents[omics]",
+    # acquire-read shim (manyruns/harness/data_acquire.py) parses raw omics archives
+    # → canonical .h5ad with scanpy. Declared DIRECTLY, not leaned on transitively via
+    # the engine — the [tool.uv.sources] non-transitivity gotcha (CLAUDE.md) is exactly
+    # this fragility. anndata ships with scanpy but is named for the AnnData/concat API.
+    "scanpy>=1.9",
+    "anndata>=0.9",
+    "matplotlib>=3.5",
+    "pillow>=10.0",
+    "wandb>=0.15",
+    "rich>=13.0",
+    "click>=8.0",
+    "numpy",
+    "pyyaml>=6.0",
+    # manyruns's OWN analysis ops (the `analysis` step group) run in-process and are NOT
+    # engine algorithms — so their deps are named where the ops live, not left to whichever
+    # engine happens to pull them transitively. Without these, a `cflows` run fails its
+    # `granger` step (statsmodels) and `contrast` fails `separation`/`composition`
+    # (scikit-learn).
+    #
+    # These two are ALSO base dependencies now, so on any supported install this pair is
+    # redundant — keep it anyway: it records that the `analysis` group owns these, so a
+    # future narrowing of `dependencies` cannot silently break a harness run. (The older
+    # rationale here cited the `[real]` extra; that extra was emptied and carries nothing.)
+    "statsmodels",
+    "scikit-learn",
+]
+# the agentic chat/prompt stream (the `chat` / `prompt` commands). This is the ONLY extra that
+# names manyagents now — it used to arrive transitively through the learner as well, and does
+# not, because manyruns names no learner.
+agents = [
+    "manyagents>=0.0.1",  # published on PyPI; no repository access required
+    # the optional intent tier: one Anthropic call maps a free-typed request to one recipe
+    # (manyruns/intent.py). Import-guarded — the base install never imports it, so the
+    # shipped app / binary stays SDK-free. The harness owns the loop; the model only picks.
+    "anthropic>=0.40",
+]
+
+[project.scripts]
+# this console-script IS the distributable artifact (#9 / distribution path "A").
+#
+# `manyruns` is the name. There is deliberately NO `geomancer` script here: that name is going
+# to its own repo, which will alias into this one from the outside, and declaring it here too
+# would collide with that. `shop` and `shop-spin` used to declare one as well; both dropped it
+# (two installed tools claiming one console-script name resolve by install order, silently), so
+# the name is now unclaimed and should stay that way. Do not add it back.
+manyruns = "manyruns.app:main"
+# `co-science` is the SAME program under the name the work goes by out loud. Not a mode, not a
+# second entry point, not a demo build — the identical `main`, deliberately, because the loop a
+# person drives here is the loop a policy will drive later: observe → legal moves → step →
+# record (`Session.step` takes a typed NAME or a step DICT; that is the whole
+# human/agent split). A separate name that ran a separate path would make the thing shown and
+# the thing built two different things, which is the one failure this alias exists to avoid.
+#
+# The learner stays OUT of this package (CLAUDE.md, "No track to a learner"): the world-models
+# harness observes the record and drives this interface from outside, exactly as any user does.
+# When it needs to enumerate the action space rather than filter it, that is `actions()` and it
+# does not exist yet — design it against that harness, not ahead of it.
+"co-science" = "manyruns.app:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/manyruns/", "/tests/", "/README.md", "/LICENSE", "/CHANGELOG.md", "/pyproject.toml",
+]
+
+[tool.hatch.build.targets.wheel]
+# ships the package AND its bundled config layer (manyruns/configs/**), so the
+# installed binary is self-contained — closes expstash's checkout-only gap.
+include = ["/manyruns/"]
+packages = ["manyruns"]
+
+[tool.uv]
+# Supported: macOS and Linux, Python 3.11–3.12 (requires-python above).
+# Windows is unsupported: required single-cell dependency scikit-misc ships no Windows
+# wheels or source distribution. Keep the manylatents-omics[singlecell]>=0.1.3 floor.
+environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+markers = ["source_checkout: requires repository files or the Git index, omitted from sdist",
+           "stack_integration: real sibling packages, compute, intelligence seam and fresh-process records"]

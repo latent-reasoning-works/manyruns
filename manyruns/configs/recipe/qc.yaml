@@ -1,0 +1,44 @@
+# Is this data usable. Counts per cell, genes per cell, mitochondrial fraction, and how many
+# cells a standard threshold would remove.
+#
+# REPORTING ONLY — IT FILTERS NOTHING. This is the recipe that most strains the abstraction, and
+# the resolution is deliberate: a step that silently drops cells is the exact inverse of this
+# product's thesis, and a run whose record cannot tell you which cells left is not a record. So
+# `qc` MEASURES and REPORTS what a threshold would do, and the scientist decides. `n_samples`
+# in the g-vector is the count that entered, unchanged.
+#
+# WHERE THE REAL PREPROCESSING IS. Half the standard workflow already runs invisibly inside
+# `loading._anndata_matrix` — normalize_total(1e4) -> log1p -> PCA — on every scRNA load, as a
+# step nothing declares and no record mentions (scoping doc §2.5). This recipe does not fix
+# that; it is named here so the gap is not mistaken for something qc covers.
+name: qc
+id:   sc.qc.osca
+
+source:
+  kind:  book
+  cite:  "Amezquita, Lun, Becht et al., 'Orchestrating single-cell analysis with Bioconductor', Nature Methods 17:137-145 (2020)"
+  doi:   10.1038/s41592-019-0654-x
+  url:   https://bioconductor.org/books/release/OSCA/
+  verified: 2026-07-28
+  note:  "Thresholds are REPORTED, never applied. Doublet detection (scrublet) is part of the book's QC chapter and is not implemented here."
+
+steps:
+  - {name: qc, group: analysis, params: {}, via: scanpy}
+
+question: "Is this data usable? — I'll report what a standard filter would remove, and remove nothing"
+# EMPTY, deliberately. `qc` is legal on everything and is the RECOMMENDATION for nothing:
+# it is a hygiene check, not an answer to "what should I look for". An empty `suits` keeps
+# it one keystroke away in the dropdown without letting it compete for the top row.
+suits:    []
+
+# NO `claims:`, deliberately, and this comment is the declaration of that.
+#
+# `claims:` is the STRUCTURE a recipe asserts, and quality control asserts none — it counts
+# genes, counts cells and flags outliers, which is true of a tree, a simplex and a blob alike.
+# `check_claims` makes absence legal precisely so a recipe like this can abstain instead of
+# picking the nearest word, and `score.predicted_rung` contributes nothing for a recipe with no
+# claim, which is the correct grade for an analysis that made no structural assertion.
+#
+# The known wrinkle, recorded rather than fixed here: an abstention and a `surface` claim both
+# come out of `predicted_rung` as 0, so the ladder cannot currently tell "asserts nothing" from
+# "asserts a smooth 2-manifold". That is a property of `score.RUNG`'s floor, not of this file.

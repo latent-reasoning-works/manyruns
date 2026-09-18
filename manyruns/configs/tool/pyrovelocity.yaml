@@ -1,0 +1,80 @@
+# Pyro-Velocity — Bayesian RNA velocity, run OUT OF PROCESS because it cannot run in ours.
+#
+# THE PIN IS THE POINT. `pyrovelocity==0.4.5` is not reproducible on its own: it declares
+# `scvi-tools>=1.1.1` and imports `scvi.model.base._utils`, a private module that exists only in
+# 1.1.x, so a fresh resolve installs cleanly (exit 0, 148 packages) and fails to import.
+# Reaching a working interpreter took ten interventions; the nine constraints below are that
+# search, written down, each with the failure it answers. The LOCK beside them
+# (`locks/pyrovelocity-0.4.5-<platform>.lock`, 211 packages / 3070 hashes) is what actually
+# reproduces — these are the human-readable constraints it was compiled from.
+#
+# `numpy<2` is why this is a tool and not a dependency: manyruns runs numpy 2.2.6. The two
+# environments are mutually exclusive, so no extra, no marker and no optional import can host it.
+name: pyrovelocity
+version: "0.4.5"
+summary: Bayesian RNA velocity with posterior uncertainty over the vector field
+
+source:
+  kind: paper
+  cite: "Qin, Zhang, Pinello et al., Pyro-Velocity: Probabilistic RNA velocity inference from
+    single-cell data, bioRxiv 2022.09.12.507691"
+  doi: "10.1101/2022.09.12.507691"
+  url: "https://github.com/pinellolab/pyrovelocity"
+  verified: 2026-08-20
+
+# AGPL. Recorded because it is a REASON this runs as a separate program communicating through a
+# file rather than as a library we link — not merely a licence note.
+licence: AGPL-3.0-only
+
+produces: [velocity]
+needs:    [splicing]
+python:   "3.12"
+
+requires:
+  - pyrovelocity==0.4.5
+  - scvi-tools==1.1.6      # 1.2+ deleted scvi.model.base._utils, which pyrovelocity imports
+  - numpy<2                # forced by scvi-tools 1.1.6; THIS is the contradiction with manyruns
+  - astropy<7              # astropy 8 needs numpy.lib.array_utils (numpy>=2)
+  - setuptools<81          # setuptools 81 removed pkg_resources, which lightning 2.1 imports
+  - pooch                  # an unlisted scvi-tools extra; its absence is an ImportError
+  - jax==0.4.35            # scvi 1.1.6 imports jaxlib.xla_extension.Device, gone in jaxlib 0.7
+  - jaxlib==0.4.35
+  - numpyro==0.15.3        # 0.21 needs jax.api_util.debug_info, absent at jax 0.4.35
+  - flax<0.10
+  - optax<0.2.4
+  - orbax-checkpoint<0.7
+  - altair<6               # pyrovelocity imports altair.vegalite.v5, gone in altair 6
+
+entrypoint: pyrovelocity_adapter.py
+
+# A LOCK THAT HAS NEVER BEEN EXECUTED IS NOT A WORKING PIN. This is the exact import that fails
+# on an unpinned resolve, so the check is the failure it exists to prevent.
+selftest: |
+  from pyrovelocity.models import PyroVelocity
+  from pyrovelocity.tasks.train import train_model
+
+input:
+  # `source_file`, not `state_matrix`: velocity needs spliced/unspliced LAYERS, and manyruns's
+  # frame is `{counts, genes, labels}` — it carries no layers at all. So the tool reads the
+  # original file, and the executor REFUSES once the run has narrowed, because the file still
+  # holds cells a filter removed.
+  # `state_frame`: the run's CURRENT view, written out with the layers below. This used to be
+  # `source_file` — the original bytes — because the frame carried one matrix and had nowhere
+  # to put splicing. The consequence was measured and was not subtle: `filter_cells ->
+  # pyrovelocity` refused at the tool, because the file still held the cells the filter
+  # dropped, so the whole recipe collapsed after its first step. Filtering before velocity is
+  # what every scVelo tutorial does. The frame carries layers now, so the ordinary order works.
+  kind: state_frame
+  layers: [spliced, unspliced]
+
+output:
+  obsm: [velocity]
+  obs:  [velocity_pseudotime, velocity_pseudotime_sd, velocity_speed,
+         velocity_frac_genes_ci_excludes_zero]
+
+# Defaults a recipe step may override. 1500 rather than the library's 3000 because recovery was
+# MEASURED at both: Spearman rho +0.820 against a known latent time at 1500, and -0.347 at 120,
+# on the synthetic fixture in docs/sidecars/. A short run looks exactly like a working one.
+params:
+  max_epochs: 1500
+  num_samples: 12

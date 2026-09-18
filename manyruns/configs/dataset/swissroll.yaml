@@ -1,0 +1,13 @@
+# A 2-D sheet rolled through 3-D: the canonical curved manifold with no clusters and no
+# time axis. Any protocol should be able to embed it; none should find a trajectory.
+name: swissroll
+handle: {kind: manylatents, ref: swissroll}
+modality: synthetic
+shape: manifold
+
+# topology: the scShapeBench axis (additive; see vocab.TOPOLOGIES)
+topology: [surface]
+design:   single
+
+# manylatents 0.1.6, seed 42: training/fit set (not the full generated tensor).
+dims: {n_samples: 5000, n_features: 3}

@@ -1,0 +1,61 @@
+# Order cells along a continuum without being told the clock. Diffusion pseudotime is the
+# canonical method: build a diffusion map, then order by diffusion distance from a root.
+#
+# WHAT THIS IS NOT. It does not need a time axis, which is exactly why it must not be confused
+# with one. `cflows` fits MIOFlow against REAL timepoints; this INFERS an ordering from the
+# geometry. `runner` documents the failure that keeps the two apart: a trajectory step fed a
+# condition axis trains a fabricated progression, and an ordering derived from an embedding
+# returns a full [0, 1] range on data with no time in it at all.
+#
+# NOT A FINDING, for that reason above all others: the statistic is computed from the embedding
+# it is ordering. `vocab.NULL_KIND` requires a `data` null; nothing implements one.
+name: pseudotime
+id:   sc.trajectory.dpt
+
+source:
+  kind:  paper
+  cite:  "Haghverdi, Büttner, Wolf, Buettner & Theis, 'Diffusion pseudotime robustly reconstructs lineage branching', Nature Methods 13:845-848 (2016)"
+  doi:   10.1038/nmeth.3971
+  url:   https://www.nature.com/articles/nmeth.3971
+  verified: 2026-07-28
+  note:  "Branching (PAGA) is the paper's second half and is NOT implemented — this recipe orders, it does not branch."
+
+steps:
+  # THE PREAMBLE, DECLARED. These ran on every counts-like load inside
+  # `loading._anndata_matrix` and appeared in no trace, no g-vector and no caveat; their params
+  # were unreachable from a recipe. What changed is that they are written down, settable and
+  # recorded. `pca` is the one operation whose reach CHANGED — see `embed.yaml` for the full
+  # account and manyruns#67 for the unmeasured part.
+  - {name: normalize, group: prep,   params: {target_sum: 10000}, via: manylatents}
+  - {name: transform, group: prep,   params: {method: log1p},     via: manylatents}
+  - {name: pca,       group: latent, params: {n_components: 50},
+     limits: {n_components: [n_samples, n_features]},          via: manylatents}
+  # `n_landmark: null` is REQUIRED, not a tuning choice. It defaults to 2000, and the engine
+  # refuses when it exceeds n_samples — `ValueError: n_landmark (2000) >= n_samples (180). Use
+  # kNNGraph instead` — so the step errors on every dataset this repo ships, and `dpt` then
+  # correctly skips for want of an embedding. Landmarking is an approximation for large n; at
+  # these sizes the exact operator is both correct and cheap.
+  - {name: diffusionmap, group: latent,   params: {n_components: 3, n_landmark: null}, via: manylatents}
+  - {name: dpt,          group: analysis, params: {},                via: manyruns}
+  # Declared here (not chained into a trajectory step in THIS file) purely to register the
+  # step name in the catalog, so it is typeable in any session — mix-and-match, same as any
+  # other step (`commands.py`'s own model). Bins `dpt`'s ordering into discrete groups; on
+  # its own it changes nothing about this recipe's claim (still an ORDER, still "NOT A
+  # FINDING" per the header above). Feeding those bins to MIOFlow — `cflows` fits it against
+  # a REAL time axis; running it against a BINNED `dpt` ordering instead is the same
+  # circularity this file already documents at the top: the "timepoints" and the flow trained
+  # against them would come from the same embedding. There is deliberately no bundled recipe
+  # that chains this into `mioflow` — use `$MANYRUNS_RECIPE_DIR` for composing that combination as your OWN recipe, outside the
+  # shipped catalog, where a self-referential result cannot be picked from the main menu
+  # alongside a real finding.
+  - {name: discretize_time, group: analysis, params: {n_timepoints: 5}}
+
+question: "Is there an ordering? — I'll lay the cells along a continuum and tell you if it holds up"
+suits:    [manifold, time-course]
+
+# A one-dimensional ordering — `score.RUNG` grades it rung 2. `_step_dpt`'s own docstring is the
+# argument: "Diffusion pseudotime — an ORDER over cells, never a significance." NOT
+# `multi-branching`: scanpy's DPT can detect branchings and this step does not ask it to, so
+# claiming rung 3 would assert structure these steps never look for — the overshoot
+# `score.ladder_cost` weights double.
+claims: single-trajectory

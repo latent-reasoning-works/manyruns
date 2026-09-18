@@ -1,0 +1,83 @@
+# 2,700 PBMCs, 10x Genomics v1 — RAW COUNTS, every gene, nothing dropped.
+#
+# THE FIRST ENTRY IN THIS FOLDER THAT CARRIES A GENE AXIS, and the reason it exists. The other
+# thirteen declarations are synthetic point clouds: twelve `kind: manylatents` (swissroll, torus,
+# blobs, trees) which the engine loads and manyruns never sees the columns of, and one generated
+# time course. None of them provides `genes` — measured — so the five steps that need one
+# (`qc`, `rank_genes`, `filter_genes`, `filter_mito`, `decode_to_gene_space`) were legal on
+# nothing this repo ships, and the whole scRNA preprocessing path could only be demonstrated
+# against data nobody had. The preprocessing measurements below were taken on this file;
+# it was sitting in `data/` undeclared.
+#
+# `provides:` IS THE POINT, not decoration. `vocab.dataset_provides` used to infer a gene axis
+# from the `.h5ad` SUFFIX, which is a guess that fails both ways — an `.h5ad` written without
+# `var_names` claims genes and the step then fails at run time, and a 10x `matrix.mtx` directory
+# carries genes and is refused. A declaration is cheap to read (no file open, no anndata import,
+# no torch), reviewable in a diff, and is what an agent enumerating datasets can filter on.
+# Declared facts win; the suffix guess remains only for entries that declare nothing.
+#
+# MEASURED on this file, 2026-08-15, and the numbers are the contract a reader may rely on
+# without opening it:
+#
+#     n_obs 2700, n_vars 32738, var_names[:3] = [MIR1302-10, FAM138A, OR4F5], obs columns: none
+#     sha256 89a96f1beaa2dd83a687666d3f19a4513ac27a2a2d12581fcd77afed7ea653a1  (5,855,727 bytes)
+#
+# `sha256` answers "WHICH pbmc3k" — the question a g-vector cannot be reproduced without, and the
+# one a recipe's `spec_id` already answers for the analysis half. First-use downloads verify
+# the declared digest and byte count before publishing a file into the drop folder.
+#
+# `obs` IS EMPTY, so this dataset has no time axis and no condition column. That is why `shape`
+# is `clusters` and not `case-control`: cell TYPES are what is in here, and a design it does not
+# have must not be declared for it.
+#
+# THE FILE IS NOT IN THE WHEEL. `ref` is relative, so an installed manyruns sees this
+# declaration and may not be able to materialise it. That is the catalog/cache split working as
+# intended rather than a bug — the registry says what EXISTS, a local store says what is here —
+# and selecting an absent sample offers a verified download into the drop folder.
+#
+# WHERE `ref` IS LOOKED FOR, because "usable from a checkout" is what this note used to say and
+# it was measured false: `Path(ref)` alone is resolved against the CURRENT DIRECTORY, so this
+# entry was usable from one directory of one checkout while appearing on the menu of every
+# install. Measured on this tree, 2026-08-17, before `shell.dataset_ref_path` existed:
+#
+#     cwd=<repo root>   shell._resolve_dataset("pbmc3k") -> Observation(n_obs=2700, n_vars=32738)
+#     cwd=/private/tmp  shell._resolve_dataset("pbmc3k") -> Observation(n_obs=None, n_vars=None)
+#
+# — the same name silently degrading to a declared-shape-only Observation that was still
+# offered as a loadable sample and then failed at the run. `shell.dataset_ref_path` now tries
+# the ref as written FIRST (so the checkout-root route is unchanged) and then this file's
+# BASENAME inside the drop folders (`$MANYRUNS_DATA_DIR`, `~/.manyruns/data`, `./data`).
+# Measured after, same two directories, with the file present in `~/.manyruns/data`: both
+# return n_obs=2700, n_vars=32738. Where it is nowhere, `shell.missing_dataset_file` reports it
+# and selecting it offers Fetch/Back instead of degrading. Offline, the refusal names the
+# direct URL, expected size/hash and exact destination for a manual download.
+#
+# So: drop `pbmc3k_raw.h5ad` into your drop folder and this entry works from an installed tool.
+# Existing local files keep their precedence and are user inputs: they are never replaced
+# or hash-checked merely by listing or selecting this declaration.
+name: pbmc3k
+handle:
+  kind: path
+  ref:  data/pbmc3k_raw.h5ad
+  # what the bytes at `ref` carry; see the note above on why this is declared, not sniffed
+  provides: [genes]
+  sha256: 89a96f1beaa2dd83a687666d3f19a4513ac27a2a2d12581fcd77afed7ea653a1
+  bytes: 5855727
+  url: https://exampledata.scverse.org/scanpy/pbmc3k_raw.h5ad
+
+modality: scrna
+shape:    clusters
+
+# topology: the scShapeBench axis (additive; see vocab.TOPOLOGIES)
+topology: [clusters]
+design:   single
+
+source:
+  kind: tutorial
+  cite: "10x Genomics, 3k PBMCs from a Healthy Donor (Cell Ranger 1.1.0, 2016) — the Scanpy
+    and Seurat clustering tutorials' reference dataset"
+  url:  https://www.10xgenomics.com/datasets/3-k-pbm-cs-from-a-healthy-donor-1-standard-1-1-0
+  verified: 2026-08-15
+  note: "Public, consented, no controlled access — which is why it is the one real dataset that
+    can be declared here today. An access class belongs on this entry and does not exist yet
+    (#12); when it does, this row is `public` and is the easy case, not the interesting one."

@@ -1,0 +1,63 @@
+# The extremes rather than the middle. Archetypal analysis fits a simplex whose vertices are
+# extremal specialists and describes every cell as a mixture of them — a different question
+# from clustering, which asks which group a cell belongs to.
+#
+# BLOCKED UPSTREAM, and stated rather than worked around. `manylatents`' `aa` raises
+# `TypeError: AA.__init__() got an unexpected keyword argument 'method'` — a version skew
+# against the `archetypes` package, one line, and THEIRS not ours. The recipe ships as a file
+# because its steps are right; it does not run until that lands. The step record will say so:
+# a failing step is recorded with its error, not silently dropped.
+name: archetypes
+id:   sc.archetype.aa
+
+# DECLARED, not just described. The prose above has recorded this breakage since the file was
+# written and the ledger offered the recipe anyway — on `swissroll` it was the FIRST analysis
+# the front door suggested, and taking it ran `pca`, failed `aa`, and handed back a g-vector
+# with no archetypes in it. `narrate.unavailable` reads this field, so the hollow row carries
+# the reason. Delete the line when the upstream kwarg lands; the steps are already right.
+blocked: "not available yet"
+
+source:
+  kind:  paper
+  cite:  "Cutler & Breiman, 'Archetypal Analysis', Technometrics 36(4):338-347 (1994)"
+  doi:   10.1080/00401706.1994.10485840
+  url:   https://www.tandfonline.com/doi/abs/10.1080/00401706.1994.10485840
+  verified: 2026-07-28
+  note:  "`aa` is BROKEN UPSTREAM in manylatents (archetypes-package kwarg skew). AAnet — the deep variant, IEEE Big Data 2019 / Cancer Discovery 2025 — is a separate method and is not this recipe."
+
+steps:
+  # THE PREAMBLE, DECLARED. These ran on every counts-like load inside
+  # `loading._anndata_matrix` and appeared in no trace, no g-vector and no caveat; their params
+  # were unreachable from a recipe. What RUNS is unchanged — except the PCA, which is NOT repeated here: this recipe already
+  # declares its own `pca` below, and the preamble's PCA-50 fed it a matrix that was
+  # already 50 components wide. That double PCA is removed rather than reproduced, so this
+  # recipe's geometry metrics move (spec §7.2b). What changed is that it is
+  # written down, settable, and recorded.
+  - {name: normalize, group: prep,   params: {target_sum: 10000}, via: manylatents}
+  - {name: transform, group: prep,   params: {method: log1p},     via: manylatents}
+  - {name: pca,     group: latent,   params: {n_components: 10},
+     limits: {n_components: [n_samples, n_features]}, via: manylatents}
+  - {name: aa,      group: latent,   params: {},                 via: manylatents}
+  - {name: simplex, group: analysis, params: {},                 via: manyruns}
+
+question: "What are the extremes? — I'll find the specialists and describe everything else as a mixture of them"
+# Extremes are a specific question, not a default. Recommending it on `unknown` is how the
+# alphabet came to pick the default recipe — measured: with a broad `suits`, five recipes
+# recommended themselves for a plain folder and `archetypes` won on the letter A, silently
+# replacing `embed` as what a scientist gets for data with no declared shape.
+suits:    [manifold]
+
+# A simplex with extremal vertices — `score.RUNG` grades it rung 4, the strongest structural
+# claim in the ladder. `aa` fits the archetypes and `simplex` describes every cell as a mixture
+# of them; nothing weaker would be honest, and nothing stronger exists.
+#
+# MEASURED CONSEQUENCE, and it is subtler than it first looks. This is the ONLY recipe that
+# claims rung 4, so declaring it moved `unroutable_rungs()` from [3, 4] to [3] — measured. But
+# that function reads what recipes CLAIM, not what they can RUN, and this recipe is `blocked:`
+# upstream: it is hollow in the ledger and therefore never offered. So rung 4 is now closed on
+# paper and still unreachable in fact.
+#
+# `unroutable_rungs()` measures the CATALOGUE, not the OFFER, and a blocked recipe is exactly
+# where those two answers come apart. Recorded here rather than fixed: the fix is either the one
+# upstream line, or a second function that asks the question of the offer.
+claims: archetypal

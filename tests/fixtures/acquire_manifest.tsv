@@ -1,0 +1,7 @@
+accession	source	modality	format	url	tissue	disease	n_samples	note	disk_after
+GSE000001	geo	scrna	mtx	https://example.invalid/sample.tar	sample material	control	2	Synthetic HC sample fixture	~2 GB
+GSE000002	geo	scrna	txt	https://example.invalid/text.tar	sample material	treated	3	Synthetic text fixture	""
+GSE000003	geo	scrna	tenx_h5	https://example.invalid/matrix.tar	material	treated	4	Synthetic matrix fixture	""
+E-MTAB-0001	arrayexpress	scrna	mtx	https://example.invalid/files/one	material	control	2	Synthetic listing fixture	""
+E-MTAB-0002	arrayexpress	scrna	txt	https://example.invalid/files/two	material	treated	3	Synthetic listing fixture	""
+CELLxGENE-TEST	cellxgene	atlas	census	https://example.invalid/atlas	material	control	4	Synthetic atlas fixture	""

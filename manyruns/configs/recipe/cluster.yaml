@@ -1,0 +1,54 @@
+# The standard single-cell workflow: reduce, embed, partition, then SAY SOMETHING about the
+# partition. The last part is why this is a recipe and not three algorithm calls — a run that
+# emits `pca.*` and `umap.*` keys and no statement about the clusters is a picture with no
+# readout.
+#
+# ORDERING CAVEAT, deliberate and measured. `leiden` consumes an embedding and produces a
+# 1-column LABEL vector, which it writes over `state["emb"]`. So `umap` must run BEFORE it, or
+# it embeds the labels rather than the coordinates. The scoping doc (§5.1) calls this option
+# (b) and names option (a) — leiden writing `state["clusters"]` instead of overwriting — as the
+# cleaner fix. (b) is what ships here because it is correct today with no engine change; the
+# `clusters` fact already exists in `vocab.STEP_PRODUCES`, so the calculus knows leiden is what
+# provides it either way.
+#
+# NOT A FINDING. `cluster_quality` is computed from the embedding and reads no external label,
+# so `vocab.NULL_KIND` requires a `data` null that nothing implements. It ships as a
+# descriptive number. The identical shape of statistic is what `granger` was deleted for.
+name: cluster
+id:   sc.cluster.leiden
+
+source:
+  kind:  tutorial
+  cite:  "Scanpy, 'Preprocessing and clustering'; method paper Wolf, Angerer & Theis, Genome Biology 19:15 (2018)"
+  doi:   10.1186/s13059-017-1382-0
+  url:   https://scanpy.readthedocs.io/en/stable/tutorials/basics/clustering.html
+  verified: 2026-07-28
+  note:  "Step ORDER differs from the tutorial: umap precedes leiden here, because leiden overwrites the embedding. Cross-checked against Seurat's Guided Clustering Tutorial and OSCA (10.1038/s41592-019-0654-x)."
+
+steps:
+  # THE PREAMBLE, DECLARED. These ran on every counts-like load inside
+  # `loading._anndata_matrix` and appeared in no trace, no g-vector and no caveat; their params
+  # were unreachable from a recipe. What RUNS is unchanged — except the PCA, which is NOT repeated here: this recipe already
+  # declares its own `pca` below, and the preamble's PCA-50 fed it a matrix that was
+  # already 50 components wide. That double PCA is removed rather than reproduced, so this
+  # recipe's geometry metrics move (spec §7.2b). What changed is that it is
+  # written down, settable, and recorded.
+  - {name: normalize, group: prep,   params: {target_sum: 10000}, via: manylatents}
+  - {name: transform, group: prep,   params: {method: log1p},     via: manylatents}
+  - {name: pca,             group: latent,   params: {n_components: 10},
+     limits: {n_components: [n_samples, n_features]}, via: manylatents}
+  - {name: umap,            group: latent,   params: {n_components: 2},  via: manylatents}
+  - {name: leiden,          group: latent,   params: {},                 via: manylatents}
+  - {name: cluster_quality, group: analysis, params: {},                 via: manyruns}
+
+question: "What groups are in here? — I'll partition the cells and tell you how well-separated they actually are"
+# NARROW ON PURPOSE. `suits` drives the RECOMMENDATION, and recommending a partition on
+# data whose shape is unknown claims structure the data has not earned — the same unearned
+# claim `narrate.refusal` exists to decline. Legal everywhere the calculus allows; suited
+# where clustering is the question. `embed` stays the honest default for shapeless data.
+suits:    [clusters]
+
+# Discrete groups — `score.RUNG` grades it rung 1. `leiden` partitions and `cluster_quality`
+# scores the separation; the assertion is that groups exist, which is exactly rung 1. NOT
+# `multi-branching`: a partition says nothing about how the groups are connected.
+claims: clusters

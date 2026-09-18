@@ -1,0 +1,119 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# secrets — never commit / machine-local
+.env
+.env.*
+.envrc
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Written by a TOOL, into whatever directory it was launched from. `pyrovelocity`'s trainer
+# opens an mlflow tracking store on import and drops `mlflow.db` + `mlruns/` in the cwd — so
+# every `manyruns run` of a tool recipe leaves them in the repo root. They are a tool's
+# scratch state, not this project's: nothing here reads them, and one was committed by a
+# `git add -A` before this line existed (#86, removed in the commit that added it).
+mlflow.db
+mlruns/
+
+# Runtime outputs
+outputs/
+# `artifacts.root(out_dir)` is `<out_dir>/state`. In product use out_dir is
+# `outputs/<project>`, so state lands under the ignored path above — but `_run_steps`
+# falls back to `ctx.get("out_dir") or "."`, so a run with no out_dir writes ./state
+# into whatever directory it was launched from. Ignored here, and the fallback itself
+# is a defect worth fixing rather than papering over.
+state/
+plots/
+wandb/
+logs/
+*.log
+
+# Model checkpoints
+*.pt
+*.pth
+*.ckpt
+
+# Data (don't commit datasets)
+data/
+*.h5ad
+*.npy
+*.npz
+*.csv
+
+# ...but always keep committed test fixtures (dep-free placeholders, e.g. the EB
+# acceptance run) — they must survive the data-suffix ignores above.
+!tests/fixtures/**
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Hydra
+.hydra/
+multirun/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Keep directory structure
+!experiments/expert_targets/.gitkeep
+!experiments/trained_policies/.gitkeep
+!experiments/results/.gitkeep
+!experiments/manifests/.gitkeep
+!experiments/reference_library/.gitkeep
+_IMPLEMENTATION_NOTES.md
+_PLUGIN_POINTS_SUMMARY.md
+_CURRENT_STATUS.md
+_CI_TESTING_SUMMARY.md
+lightning_logs/
+# harness test artifacts (DR runner saves embedding plots to cwd)
+embedding_*.png
+labeled.json
+
+# local scRNA-seq datasets (e.g. EB timepoints)
+scRNAseq/
+
+# the interactive shell's drop folder — users' own data, never committed
+/data/
+
+# Claude Code — the per-programmer half only.
+# `.claude/settings.json`, `.claude/skills/`, `.claude/agents/` and `.claude/commands/` are
+# shared project context and stay tracked; these two are local to one machine.
+# `worktrees/` holds real checkouts (2.5 GB here) and embeds git repos inside this one.
+.claude/settings.local.json
+.claude/worktrees/
+
+# The decision corpus is generated data, and a run pointed at the repo root would drop one
+# here. `outputs/` is already ignored; this covers an explicit `--out-dir .`.
+decisions.jsonl

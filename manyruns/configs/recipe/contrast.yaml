@@ -1,0 +1,65 @@
+# The "contrast" recipe: case/control analysis — PHATE embedding + condition separation.
+#
+# Auto-selected (see manyruns/app.py `select_analysis`) when the data has ≥2 unordered
+# conditions (disease/condition/…) and NO time axis — for example, treated and control samples. Instead of imposing a trajectory (MIOFlow)
+# on non-temporal data, we embed and ask **how distinctly the conditions separate**.
+#
+# `separation` (an analysis step) reads the embedding + the condition labels
+# and scores their silhouette — delegated to sklearn (public). The condition column is loaded
+# as the label automatically (pipeline.load_labeled → _detect_condition_key).
+#
+# ORDER, and what does NOT yet enforce it: `phate` must come first — `separation` and
+# `composition` score the EMBEDDING. Unlike `cflows`, that order is not enforced by
+# `vocab.unmet`: only `mioflow` declares an `embedding` need, so `{steps: [separation, phate]}`
+# on `case-control` data still returns `[]` (legal) — measured. Nor does the engine refuse it:
+# `steps._step_separation` reads `Z = state.get("emb")` and falls back to `state.get("X")`,
+# the same silent fallback commit df478cc removed from `_step_mioflow`, so a swapped recipe
+# would score a silhouette on the RAW matrix and report it as `separation_silhouette`. Closing
+# that needs the engine-side refusal too, so it is stated here rather than half-declared.
+#
+# NEXT (not yet built): composition shift (cell-type × condition)
+# and differential expression (the gene-level backmap). Those need the gene matrix + scanpy DE.
+name: contrast
+id: sc.contrast.separation
+
+# `kind: none`, and that is the honest answer rather than a missing field. Neither analysis
+# step implements a published method: `separation` is a silhouette of the embedding grouped by
+# the condition label (sklearn), and `composition` clusters the embedding and scores the
+# largest log2 abundance shift with a label-permutation null. Both are manyruns's own. The
+# `source` vocabulary has `none` precisely so a workflow with no publication behind it can say
+# so — the alternative is a plausible-looking citation for a method that never ran.
+#
+# What WOULD carry a citation is the upgrade: Milo (Dann et al., Nat Biotechnol 40:245-253,
+# doi 10.1038/s41587-021-01033-z — re-resolved at api.crossref.org 2026-07-29; title, journal,
+# volume and pages match, and note that CrossRef records the ONLINE date 2021-09-30 while the
+# issue is 2022) tests abundance at neighbourhood rather than cluster resolution and is what
+# `composition` becomes when case-control data exists. It is named in this comment and NOT in
+# `source:` because this recipe does not run it.
+source:
+  kind: none
+  note: "No published method behind either analysis step; both are manyruns's own readouts."
+
+# Discrete groups — `score.RUNG` grades it rung 1, unchanged from the
+# `score.RECIPE_RUNG["contrast"] = 1` this replaces.
+claims: clusters
+
+# `via: manyruns` on the two analysis steps is not a placeholder: `analysis` is a
+# product-owned sentinel, not an engine algorithm (`vocab.STEP_GROUPS`), and both engines
+# dispatch it to the same `_run_analysis_step`. So there is nothing for either engine to stand
+# in for, and `vocab.standins` correctly stays silent on this recipe on every engine.
+steps:
+  # THE PREAMBLE, DECLARED. These ran on every counts-like load inside
+  # `loading._anndata_matrix` and appeared in no trace, no g-vector and no caveat; their params
+  # were unreachable from a recipe. What changed is that they are written down, settable and
+  # recorded. `pca` is the one operation whose reach CHANGED — see `embed.yaml` for the full
+  # account and manyruns#67 for the unmeasured part.
+  - {name: normalize, group: prep,   params: {target_sum: 10000}, via: manylatents}
+  - {name: transform, group: prep,   params: {method: log1p},     via: manylatents}
+  - {name: pca,       group: latent, params: {n_components: 50},
+     limits: {n_components: [n_samples, n_features]},          via: manylatents}
+  - {name: phate,       group: latent,   params: {n_components: 3}, via: manylatents}
+  - {name: separation,  group: analysis, params: {}, via: manyruns}  # condition separation
+  - {name: composition, group: analysis, params: {}, via: manyruns}  # population shift
+
+question: "How different? — do the groups separate, and which populations shift?"
+suits:    [case-control]

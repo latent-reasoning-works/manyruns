@@ -1,0 +1,44 @@
+# THIS DEMONSTRATES PLUMBING, NOT BIOLOGY.
+#
+# It is three Gaussian clouds translated along a line. It is not development, not a cell
+# cycle, not a differentiation trajectory, and no result measured on it says anything about
+# any of those. What it is for: giving the `cflows` recipe (phate → mioflow) a real time
+# axis to run on, so the wiring that carries a timepoint from a dataset config to MIOFlow's
+# label can be exercised and tested.
+#
+# WHY IT HAD TO EXIST. Measured 2026-07-28 over `catalog.load_datasets()`: the 12 other
+# bundled datasets declare `shape: manifold` (9) or `shape: clusters` (3), and all 12 handle
+# to a manylatents datamodule. `vocab.SHAPE_PROVIDES` maps `time-course →
+# ("time",)` and nothing else provides it, so before this file no bundled dataset carried a
+# time axis at all — MIOFlow could only ever run on the pseudotime fallback in
+# `steps._step_mioflow`, which derives an ordering FROM the embedding and so returns a full
+# [0, 1] range on data with no time in it. There is also nothing upstream to point at:
+# `manylatents.data.list_datamodules()` returns 35 names, none time-labelled.
+#
+# TIME IS A GENERATIVE PARAMETER HERE. Each snapshot is `randn(n, d) + drift * t` with the
+# label `t` — the same construction manylatents' own MIOFlow tests use
+# (`tests/algorithms/test_mioflow_lightning.py::time_labeled_batch`), which is what makes a
+# synthetic time course this stack's established validation fixture. The timepoint is an
+# ARGUMENT to the generator and never a quantity read back out of the geometry. That is the
+# categorical difference from pseudotime, and `pipeline.loading.time_course_arrays` is where
+# it is kept.
+#
+# HOW IT LOADS. `synthetic:` is a generated ref, not a file: `pipeline.loading` builds an
+# AnnData with a per-cell `timepoint` column, which `vocab.find_time_key` matches, so
+# `load_labeled` returns `label_kind="time"` through the ordinary path. Fixed parameters
+# (300 cells × 5 features, timepoints 0.0/0.5/1.0, drift 3.0, seed 42) live with the
+# generator. There is deliberately no `params:` block: for a `path` handle, `params` is
+# routed to the engine's `data_kwargs` and never reaches the loader, so declaring one would
+# be a value that is type-correct, plausible, and never applied.
+name:     synthetic_timecourse
+handle:   {kind: path, ref: "synthetic:time-course"}
+modality: synthetic
+shape:    time-course
+
+# topology: the scShapeBench axis (additive; see vocab.TOPOLOGIES). `single-trajectory` is a
+# claim about the GENERATIVE motion — one direction, no bifurcation — not about visual
+# separability. Measured on the shipped parameters: silhouette by timepoint is +0.27, i.e.
+# the three snapshots overlap heavily and are NOT clusters, while |ρ(PHATE₁, t)| = 0.93, so
+# the order is recoverable. The drift was chosen to sit there; see TIME_COURSE_DRIFT.
+topology: [single-trajectory]
+design:   time-course
