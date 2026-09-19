@@ -112,6 +112,39 @@ def hint() -> str:
 
 if HAVE_IMAGES:
     from PIL import Image as PILImage
+    from textual.strip import Strip
+
+    class _SafeImageRenderable:
+        """Keep lazy drawing inside the guard, including any nested renderables."""
+
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __getattr__(self, name):
+            # Rich measurement and Textual's protocol probes still reach the original.
+            return getattr(self._inner, name)
+
+        def __rich_console__(self, console, options):
+            try:
+                segments = list(console.render(self._inner, options))
+            except Exception:  # noqa: BLE001 - a failed draw must not fail the screen
+                return
+            yield from segments
+
+    def _guard_sixel_draw(child):
+        # Wrap the composed instance's public method: no private upstream class import,
+        # constructor, or CSS identity to keep in sync across textual-image releases.
+        render_lines = child.render_lines
+
+        def safe_render_lines(crop):
+            try:
+                if child.content_size.width > 0 and child.content_size.height > 0:
+                    return render_lines(crop)
+            except Exception:  # noqa: BLE001 - sixel draws outside Rich's render protocol
+                pass
+            return [Strip.blank(crop.width) for _ in range(crop.height)]
+
+        child.render_lines = safe_render_lines
 
     class _OwnedTGP(_TGP):
         """Delete only this renderable's upload, on replacement as well as disposal.
@@ -147,7 +180,8 @@ if HAVE_IMAGES:
 
         A decoded copy outlives a rename, replacement, or deletion during tuning. The `image`
         getter retains the assigned source for callers, while the renderer uses only pixels.
-        Decode and renderable-construction failures degrade to no picture.
+        Decode, construction, and draw-time failures degrade to no picture, including zero-size
+        scaling in textual-image 0.12, which is the version that resolves on Python 3.11.
 
         `Renderable=` is required by `BaseImage.__init_subclass__` and is the same one the
         library picked, with owned TGP cleanup — subclassing without it is a TypeError.
@@ -183,8 +217,13 @@ if HAVE_IMAGES:
                 _Widget.image.fset(self, None)
 
         def render(self):  # noqa: D102 - see the base class
+            # Before mounting, content_size is unknown rather than a squeezed pane.
+            if self.is_mounted and (self.content_size.width == 0 or self.content_size.height == 0):
+                return ""
             try:
-                return super().render()
+                rendered = super().render()
+                # The base retains the INNER renderable for replacement/unmount cleanup.
+                return _SafeImageRenderable(rendered) if rendered != "" else ""
             except Exception:  # noqa: BLE001 - constructing a picture must not fail a paint
                 self._renderable = None
                 return ""
@@ -194,6 +233,7 @@ if HAVE_IMAGES:
                 # Sixel composes a child from the public getter; give it the snapshot too.
                 for child in super().compose():
                     child.image = self._image
+                    _guard_sixel_draw(child)
                     yield child
 
 else:
