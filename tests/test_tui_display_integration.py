@@ -639,8 +639,11 @@ async def test_ask_refresh_keeps_second_shared_figure_occurrence_before_recolour
 async def test_tuning_refresh_keeps_selected_attempt_and_plot_before_recolour(
         tmp_path, monkeypatch, full, plot_index):
     from manyruns import agents, tune
+    from manyruns.tui import images
 
     monkeypatch.setattr(agents, 'ask_available', lambda: False)
+    monkeypatch.setattr(images, 'is_pixel_perfect', lambda: True)
+    monkeypatch.setattr(images.AutoImage, '_Renderable', images._Half)
     initial, png, _ = example(tmp_path)
     original = figspec.load(png)
     plots = [io.save_display_scatter(
@@ -666,6 +669,12 @@ async def test_tuning_refresh_keeps_selected_attempt_and_plot_before_recolour(
         tune._keep_attempt({'record': record}, 1, messages.append)
         assert len(messages) == 2
         archived = list(record['plots'])
+        thumb = pane.query_one('#figure-thumb', images.AutoImage)
+        assert thumb.image == plots[plot_index]
+        thumb.refresh(layout=True)
+        await pilot.resize_terminal(100, 35)
+        await pilot.pause()
+        assert app.is_running
         for path in plots:
             io.save_display_scatter(original['coords'] + 100, [], tmp_path,
                                     Path(path).name, [], 'PHATE retry',

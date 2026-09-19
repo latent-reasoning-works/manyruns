@@ -34,14 +34,11 @@ role in prose too. The hash-based guard checks every tracked file without printi
 forbidden names. Read [CLAUDE.md](CLAUDE.md) for the layering rules.
 
 This is an open beta. The CLI and record schema can still change; describe any
-compatibility impact in the pull request and changelog. Include `co-science --version`
+compatibility impact in the pull request and changelog. Include `manyruns --version`
 output, platform, and Python version when reporting a problem. Share a
 small synthetic reproduction instead of private data or credentials.
 
 ## Maintainers: releases
-
-The distribution is `manyruns`. `co-science` is only its console-script alias;
-the PyPI distribution with that name belongs to an unrelated project.
 
 Keep the GitHub Actions environment **release** protected with a **required
 reviewer**. PyPI trusted publishing must use project **manyruns**, owner
@@ -65,8 +62,8 @@ After publishing, check a clean consumer install on the supported platforms:
 
 ```sh
 uv tool install --python 3.12 manyruns
-co-science --version
-co-science check
+manyruns --version
+manyruns check
 ```
 
 Do not announce on social media for this open beta. Track feedback in the public

@@ -19,7 +19,7 @@ First public release: an open beta for macOS and Linux, Python 3.11–3.12.
 ### Added
 
 - Interactive data exploration, 11 bundled recipes, and the run → label → store
-  workflow, available through both `manyruns` and `co-science`.
+  workflow, available through `manyruns`.
 - Run and decision records carry `schema_version`; missing versions read as 1.
 - Public install instructions, contribution and community guides, and citation metadata.
 - Verified wheel and sdist builds with PyPI trusted publishing through GitHub Actions.
@@ -37,6 +37,7 @@ First public release: an open beta for macOS and Linux, Python 3.11–3.12.
 
 - Tabular `.csv` and `.tsv` inputs load instead of crashing.
 - An explicit seed of 0 is preserved.
+- Displayed figures survive tuning renames and file changes without crashing the TUI.
 
 [Unreleased]: https://github.com/latent-reasoning-works/manyruns/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/latent-reasoning-works/manyruns/releases/tag/v0.1.0

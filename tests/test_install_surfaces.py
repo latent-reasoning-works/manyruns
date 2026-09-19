@@ -36,6 +36,7 @@ def test_readme_installs_the_public_distribution_without_org_access():
     assert "open beta" in readme.lower()
     assert "https://github.com/latent-reasoning-works/manyruns/issues" in readme
     assert "CLI and record schema can still change" in readme
+    assert "co-science" not in readme
 
 
 def test_install_opens_with_the_pypi_quickstart():
@@ -44,7 +45,7 @@ def test_install_opens_with_the_pypi_quickstart():
     assert "once published" in intro.lower()
     assert "https://docs.astral.sh/uv/getting-started/installation/" in intro
     commands, following = block.split("```", 1)
-    assert commands.splitlines() == ["uv tool install --python 3.12 manyruns", "co-science"]
+    assert commands.splitlines() == ["uv tool install --python 3.12 manyruns", "manyruns"]
     assert "`uv tool upgrade manyruns` updates an installed tool in place (keeping its extras)" in following
     assert ("`sh packaging/install.sh` reinstalls the base tool from scratch, "
             "which drops any extras you added") in following
@@ -90,7 +91,7 @@ def test_readme_explains_local_drop_precedence_and_verified_first_use():
     assert "sha256" in readme
     assert "5.6 MB" in readme
     assert "https://exampledata.scverse.org/scanpy/pbmc3k_raw.h5ad" in readme
-    assert "co-science check" in readme
+    assert "manyruns check" in readme
     assert "never downloads" in readme
     assert "no .h5ad files are bundled" in readme.lower()
 
@@ -128,7 +129,7 @@ def test_readme_distinguishes_check_validation_from_sample_presence(tmp_path, mo
 
 def test_readme_uses_generated_metadata_for_the_colour_example():
     readme = read_surface("README.md")
-    assert "co-science run synthetic_timecourse --recipe embed --color-by timepoint" in readme
+    assert "manyruns run synthetic_timecourse --recipe embed --color-by timepoint" in readme
     assert "--color-by cell_type --color-by score" in readme
     assert "raw pbmc3k has no obs metadata" in readme.lower()
     assert "F7/F8" in readme
@@ -235,11 +236,11 @@ if name == "uv":
         print("" if os.environ.get("FAKE_BIN_EMPTY") else os.environ["FAKE_TOOL_BIN"])
     else:
         fail("unexpected uv arguments: " + repr(args), 99)
-elif name == "co-science":
+elif name == "manyruns":
     assert args == ["--version"], args
     if os.environ.get("FAKE_VERSION_FAIL"):
         fail("fixture entry-point failure", 8)
-    print("co-science fixture version")
+    print("manyruns fixture version")
 elif name == "curl":
     assert "https://astral.sh/uv/install.sh" in args, args
     destination = Path(args[args.index("-o") + 1])
@@ -288,7 +289,7 @@ def installer(tmp_path):
         if uv_present:
             names.append("uv")
         if tool_present:
-            names.append("co-science")
+            names.append("manyruns")
         for name in names:
             path = fake_bin / name
             path.write_text(f"#!{sys.executable}\n" + FAKE_COMMAND)
@@ -314,9 +315,9 @@ def test_installer_uses_existing_uv_once_and_checks_the_command(installer):
     assert result.returncode == 0, result.stderr
     assert installs(commands) == [["uv", "tool", "install", "--python", "3.12", "--force",
                                    PUBLIC_URL]]
-    assert commands[-1] == ["co-science", "--version"]
+    assert commands[-1] == ["manyruns", "--version"]
     assert not any(command[0] == "curl" for command in commands)
-    assert "co-science fixture version" in result.stdout
+    assert "manyruns fixture version" in result.stdout
 
 
 def test_installer_bootstraps_uv_then_installs_once(installer):
@@ -324,7 +325,7 @@ def test_installer_bootstraps_uv_then_installs_once(installer):
     assert result.returncode == 0, result.stderr
     assert len(installs(commands)) == 1
     assert ["fake-bootstrap"] in commands
-    assert commands[-1] == ["co-science", "--version"]
+    assert commands[-1] == ["manyruns", "--version"]
 
 
 @pytest.mark.parametrize("setting,diagnostic", [
@@ -349,7 +350,7 @@ def test_installer_keeps_install_stderr_and_points_to_the_public_source(installe
     assert PUBLIC_URL.removeprefix("git+") in result.stderr
     assert "clone failed" not in result.stderr.lower()
     assert len(installs(commands)) == 1
-    assert not any(command[0] == "co-science" for command in commands)
+    assert not any(command[0] == "manyruns" for command in commands)
 
 
 def test_installer_succeeds_with_path_advice_if_command_is_not_visible(installer):
@@ -359,7 +360,7 @@ def test_installer_succeeds_with_path_advice_if_command_is_not_visible(installer
     assert env["FAKE_TOOL_BIN"] in result.stdout
     assert len(installs(commands)) == 1
     assert ["uv", "tool", "dir", "--bin"] in commands
-    assert not any(command[0] == "co-science" for command in commands)
+    assert not any(command[0] == "manyruns" for command in commands)
 
 
 @pytest.mark.parametrize("setting", ["FAKE_BIN_FAIL", "FAKE_BIN_EMPTY"])
@@ -397,7 +398,7 @@ def test_broken_installed_entry_point_is_not_reported_as_success(installer):
     assert result.returncode == 8
     assert "fixture entry-point failure" in result.stderr
     assert len(installs(commands)) == 1
-    assert commands[-1] == ["co-science", "--version"]
+    assert commands[-1] == ["manyruns", "--version"]
 
 
 @pytest.mark.parametrize("name", ["README.md", "CLAUDE.md", "packaging/install.sh"])
