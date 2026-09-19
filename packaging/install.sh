@@ -51,12 +51,12 @@ else
     exit "$status"
 fi
 
-if ! command -v co-science >/dev/null 2>&1; then
+if ! command -v manyruns >/dev/null 2>&1; then
     tool_bin=$(uv tool dir --bin 2>/dev/null) || tool_bin="$HOME/.local/bin"
     tool_bin=${tool_bin:-"$HOME/.local/bin"}
     printf 'Installation succeeded. Tool bin directory: %s\n' "$tool_bin"
-    printf '%s\n' 'Run uv tool update-shell and open a new terminal, then run co-science.'
+    printf '%s\n' 'Run uv tool update-shell and open a new terminal, then run manyruns.'
     exit 0
 fi
 
-co-science --version
+manyruns --version

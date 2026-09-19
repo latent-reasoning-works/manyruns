@@ -26,7 +26,7 @@ evaluates the result. The compute lives one layer down
 
 **Open beta.** The CLI and record schema can still change. Report problems in
 [GitHub issues](https://github.com/latent-reasoning-works/manyruns/issues), with
-`co-science --version`, your platform, and a small reproduction.
+`manyruns --version`, your platform, and a small reproduction.
 
 **Supported platforms:** macOS and Linux, Python 3.11–3.12; Windows is unsupported because
 a required single-cell dependency (`scikit-misc`) ships no Windows wheels.
@@ -43,8 +43,7 @@ Three ways to use it:
   recipe over every dataset, and rank which geometric metrics actually separate the
   workflows. The `experiment` harness.
 
-New here? Start with the install below, then open `co-science`. `manyruns` and `co-science`
-are two names for the same program.
+New here? Start with the install below, then open `manyruns`.
 
 Each working directory has one run ledger at `outputs/index.jsonl`, with artifacts under `outputs/<project>/`.
 
@@ -54,21 +53,19 @@ Each working directory has one run ledger at `outputs/index.jsonl`, with artifac
 
 ```sh
 uv tool install --python 3.12 manyruns
-co-science
+manyruns
 ```
 
 `uv tool upgrade manyruns` updates an installed tool in place (keeping its extras); `sh packaging/install.sh` reinstalls the base tool from scratch, which drops any extras you added.
 
 If you do not have uv, use [uv's official installer](https://docs.astral.sh/uv/getting-started/installation/)
 or follow the [setup details](#setup-details) below, then run the tool install command above.
-The distribution is **manyruns**; `co-science` is a console-script alias installed by it.
-Do not install the unrelated `co-science` distribution on PyPI.
 
 Alternatively, install from the public repository (requires [Git](https://git-scm.com/downloads)):
 
 ```sh
 uv tool install --python 3.12 --force git+https://github.com/latent-reasoning-works/manyruns
-co-science
+manyruns
 ```
 
 ### Setup details
@@ -80,7 +77,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 Open a **new terminal** or activate the PATH printed by the installer. If installation
-succeeds but `co-science` is not found, run `uv tool update-shell` and open a new terminal.
+succeeds but `manyruns` is not found, run `uv tool update-shell` and open a new terminal.
 `uv tool dir --bin` shows where the commands were installed. Installation and metric
 computation time depend on your machine, data, and dependencies.
 
@@ -95,7 +92,7 @@ public repository. `make demo` runs swissroll with the manylatents engine and th
 recipe. `make test` and `make lint` use the checkout's development environment.
 
 `sh packaging/install.sh` also installs from the public repository. It bootstraps uv if
-absent, then checks `co-science --version` or prints PATH advice. No organisation access
+absent, then checks `manyruns --version` or prints PATH advice. No organisation access
 or GitHub login is required.
 
 **The compute is a base dependency.** The metadata requests
@@ -103,7 +100,7 @@ or GitHub login is required.
 single-cell runtime. Python 3.12 is recommended within the supported range.
 
 A Git tool install resolves the declared dependencies; it does not inherit this checkout's
-`tool.uv.sources` or `uv.lock`. `co-science --version` reports the installed version and Git
+`tool.uv.sources` or `uv.lock`. `manyruns --version` reports the installed version and Git
 revision when available; Git provenance is stored in the tool's `direct_url.json`.
 The release workflow verifies the built wheel and a wheel rebuilt from the sdist in clean
 environments before publishing.
@@ -150,7 +147,7 @@ Three things, three axes — kept apart on purpose (see [CLAUDE.md](CLAUDE.md)):
 
 ## the interactive app
 
-Run `co-science` with no arguments to open the data roster. Pick a dataset, inspect what it
+Run `manyruns` with no arguments to open the data roster. Pick a dataset, inspect what it
 contains, then choose an analysis.
 
 - **Drop folder.** The destination is `$MANYRUNS_DATA_DIR` when set, otherwise an
@@ -170,7 +167,7 @@ contains, then choose an analysis.
   the local file and work offline. Offline first use gives the filename, URL and destination:
   download `pbmc3k_raw.h5ad` from
   <https://exampledata.scverse.org/scanpy/pbmc3k_raw.h5ad> and place it in the chosen drop
-  folder. `co-science check` validates declarations, never downloads, and does not tell you
+  folder. `manyruns check` validates declarations, never downloads, and does not tell you
   whether a sample file is present. The roster marks missing samples and offers **Fetch**
   when a download is available.
 - **Available analyses.** The menu offers what the data can support. A trajectory on data
@@ -213,8 +210,8 @@ from the data's shape** — a time axis → `cflows` (PHATE → MIOFlow → Gran
 Choose a metadata column for display with repeatable `--color-by`:
 
 ```sh
-co-science run synthetic_timecourse --recipe embed --color-by timepoint
-co-science run /path/to/annotated.h5ad --recipe embed --color-by cell_type --color-by score
+manyruns run synthetic_timecourse --recipe embed --color-by timepoint
+manyruns run /path/to/annotated.h5ad --recipe embed --color-by cell_type --color-by score
 ```
 
 The first example generates a time course locally with a `timepoint` column; accept the

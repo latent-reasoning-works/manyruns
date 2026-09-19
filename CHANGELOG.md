@@ -19,7 +19,7 @@ First public release: an open beta for macOS and Linux, Python 3.11–3.12.
 ### Added
 
 - Interactive data exploration, 11 bundled recipes, and the run → label → store
-  workflow, available through both `manyruns` and `co-science`.
+  workflow, available through `manyruns`.
 - Run and decision records carry `schema_version`; missing versions read as 1.
 - Public install instructions, contribution and community guides, and citation metadata.
 - Verified wheel and sdist builds with PyPI trusted publishing through GitHub Actions.
