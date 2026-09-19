@@ -34,6 +34,8 @@ jobs:
           python-version: '3.12'
       - uses: astral-sh/setup-uv@v5
       - name: Check public source hygiene
+        env:
+          PYTHONPATH: .
         run: uvx --from pytest pytest -p no:cacheprovider tests/test_public_safety.py -q
       - name: Check release version
         id: version
@@ -159,6 +161,9 @@ jobs:
 
   github-release:
     needs: [build, publish]
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
