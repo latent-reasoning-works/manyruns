@@ -37,6 +37,7 @@ First public release: an open beta for macOS and Linux, Python 3.11–3.12.
 
 - Tabular `.csv` and `.tsv` inputs load instead of crashing.
 - An explicit seed of 0 is preserved.
+- Displayed figures survive tuning renames and file changes without crashing the TUI.
 
 [Unreleased]: https://github.com/latent-reasoning-works/manyruns/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/latent-reasoning-works/manyruns/releases/tag/v0.1.0

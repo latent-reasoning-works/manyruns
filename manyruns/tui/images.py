@@ -111,6 +111,7 @@ def hint() -> str:
 
 
 if HAVE_IMAGES:
+    from PIL import Image as PILImage
 
     class _OwnedTGP(_TGP):
         """Delete only this renderable's upload, on replacement as well as disposal.
@@ -142,16 +143,11 @@ if HAVE_IMAGES:
                 self.terminal_image_id = None
 
     class AutoImage(_Widget, Renderable=_OwnedTGP if _Renderable is _TGP else _Renderable):  # type: ignore[misc,valid-type,call-arg]
-        """`textual-image`'s widget, with one guard: **an unreadable file must not kill the app.**
+        """Snapshot pixels on assignment; repainting never reopens the source file.
 
-        Its `image` setter opens the file eagerly to measure it, so assigning a path that is not
-        a decodable image raises `PIL.UnidentifiedImageError` out of a Textual event handler,
-        which takes the whole app down. That is not hypothetical here: `_save_scatter` is
-        best-effort so a killed run leaves a half-written PNG, and a `plots` entry from an older
-        run can name a file that has since been replaced by something else.
-
-        A figure that cannot be decoded costs the picture and nothing more. The path is on the
-        line below it either way, and the run behind it already succeeded.
+        A decoded copy outlives a rename, replacement, or deletion during tuning. The `image`
+        getter retains the assigned source for callers, while the renderer uses only pixels.
+        Decode and renderable-construction failures degrade to no picture.
 
         `Renderable=` is required by `BaseImage.__init_subclass__` and is the same one the
         library picked, with owned TGP cleanup — subclassing without it is a TypeError.
@@ -168,14 +164,37 @@ if HAVE_IMAGES:
 
         @property
         def image(self):  # noqa: D102 - see the base class
-            return _Widget.image.fget(self)
+            return self._source
 
         @image.setter
         def image(self, value) -> None:
+            self._source = None
             try:
-                _Widget.image.fset(self, value)
+                if value is None:
+                    pixels = None
+                elif isinstance(value, PILImage.Image):
+                    pixels = value.copy()
+                else:
+                    with PILImage.open(value) as opened:
+                        pixels = opened.copy()
+                _Widget.image.fset(self, pixels)
+                self._source = value
             except Exception:  # noqa: BLE001 - every decode failure degrades to no picture
                 _Widget.image.fset(self, None)
+
+        def render(self):  # noqa: D102 - see the base class
+            try:
+                return super().render()
+            except Exception:  # noqa: BLE001 - constructing a picture must not fail a paint
+                self._renderable = None
+                return ""
+
+        if _Widget is _WSixel:
+            def compose(self):  # noqa: D102 - see the base class
+                # Sixel composes a child from the public getter; give it the snapshot too.
+                for child in super().compose():
+                    child.image = self._image
+                    yield child
 
 else:
     from textual.widgets import Static
