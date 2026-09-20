@@ -6,11 +6,20 @@ tried, what happened, and what should happen.
 
 ## Development
 
+Target pull requests at `dev`, where development work lands once all three CI
+checks pass; no review is required. `main` is the stable line and receives release
+PRs only. Cut release tags (`v0.1.x`) from `main`. Both branches require the three
+checks and refuse force-pushes and deletion.
+
+Consumers depending on manyruns from Git should pin a release tag. Use `dev` only
+while co-developing a change.
+
 Use macOS or Linux with Python 3.11–3.12:
 
 ```sh
 git clone https://github.com/latent-reasoning-works/manyruns
 cd manyruns
+git switch dev
 uv sync --extra harness --extra dev
 uv run pytest tests/ -q
 uv run ruff check manyruns tests
@@ -47,11 +56,12 @@ environment **release**. Before the project exists on PyPI, configure these valu
 as a pending publisher. No API token or publishing secret is needed; Actions
 exchanges its OIDC identity for publishing access.
 
-1. Confirm the release version in `pyproject.toml` and `manyruns/__init__.py`.
-2. Run `release.yml` manually with `publish: false`. Review the wheel and sdist
-   verification jobs and SHA-256 hashes in the build summary.
-3. Push the matching tag `vX.Y.Z`. A `v*` tag triggers publication; a manual run
-   publishes only when `publish: true`.
+1. On `main`, confirm the release version in `pyproject.toml` and
+   `manyruns/__init__.py`.
+2. Run `release.yml` manually on `main` with `publish: false`. Review the wheel and
+   sdist verification jobs and SHA-256 hashes in the build summary.
+3. Cut and push the matching tag `vX.Y.Z` from `main`. A `v*` tag triggers
+   publication; a manual run publishes only when `publish: true`.
 4. After build and verification both pass, the required reviewer approves the
    deployment to the **release** environment.
 
