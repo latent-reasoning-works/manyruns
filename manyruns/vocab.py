@@ -106,6 +106,12 @@ TOPOLOGIES = (
     "surface",            # a 2-manifold (likewise)
 )
 
+#: The vocabulary version. `decisions.append` hashes it into every row's `legal_id`, so bump it
+#: by hand whenever `TOPOLOGIES` or any table that defines legality changes: two task spaces
+#: must not share an id. A test pins it to `TOPOLOGIES`. Not derived from a hash of the tables,
+#: because then a reorder would move every `legal_id` with no reason in any diff.
+VERSION = "1"
+
 
 def check_topology(values: Any) -> list[str]:
     """Problems with a dataset's `topology` field; empty means valid (or absent).
@@ -122,6 +128,61 @@ def check_topology(values: Any) -> list[str]:
         return ["topology is an empty list — omit the field instead of declaring nothing"]
     unknown = [v for v in values if v not in TOPOLOGIES]
     return [f"unknown topology {unknown} — must be from {TOPOLOGIES}"] if unknown else []
+
+
+#: scShapeBench's label columns to the canonical topology. The benchmark has four classes;
+#: `cycle` and `surface` are not among them.
+SCSHAPEBENCH_TOPOLOGY: dict[str, str] = {
+    "multi_branch": "multi-branching",
+    "simple_traj": "single-trajectory",
+    "archetypal": "archetypal",
+    "clusters": "clusters",
+}
+
+#: The harness labeler's words (`harness/labeler.py`) to the canonical topology. `other` claims
+#: no topology, so it maps to `None`. The labeler's `VALID_LABELS` is derived from these keys.
+LABELER_TOPOLOGY: dict[str, Optional[str]] = {
+    "cluster": "clusters",
+    "trajectory": "single-trajectory",
+    "cycle": "cycle",
+    "surface": "surface",
+    "other": None,
+}
+
+
+def scshapebench_to_topology(label: str) -> str:
+    """The canonical topology of one scShapeBench label column. `ValueError` for any other."""
+    try:
+        return SCSHAPEBENCH_TOPOLOGY[label]
+    except (KeyError, TypeError):
+        raise ValueError(f"unknown scShapeBench label {label!r} — must be one of "
+                         f"{sorted(SCSHAPEBENCH_TOPOLOGY)}") from None
+
+
+def labeler_to_topology(label: str) -> Optional[str]:
+    """The canonical topology of one harness labeler label; `None` for `other`.
+
+    A canonical name is refused: `clusters` is not a labeler word, and accepting both forms
+    would make two spellings of one label."""
+    try:
+        return LABELER_TOPOLOGY[label]
+    except (KeyError, TypeError):
+        raise ValueError(f"unknown labeler label {label!r} — must be one of "
+                         f"{sorted(LABELER_TOPOLOGY)}") from None
+
+
+def collapse_for_benchmark(name: str) -> str:
+    """A canonical topology folded onto scShapeBench's four classes. FOR THE BENCHMARK SCORER ONLY.
+
+    `cycle` becomes `single-trajectory` and `surface` becomes `archetypal`: the benchmark's own
+    scoring rules. The ladder disagrees on purpose. `score.RUNG` puts `surface` at rung 0,
+    because a smooth 2-manifold with no further structure is honestly "just embed". If
+    `score.truth_rung` collapsed first, `surface` would move to rung 4 and the over-claim
+    penalty would reward an archetype analysis on a surface. So `truth_rung` must not call this.
+    """
+    if name not in TOPOLOGIES:
+        raise ValueError(f"unknown topology {name!r} — must be from {TOPOLOGIES}")
+    return {"cycle": "single-trajectory", "surface": "archetypal"}.get(name, name)
 
 
 def check_provides(values: Any) -> list[str]:

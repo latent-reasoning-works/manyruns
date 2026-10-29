@@ -8,17 +8,19 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
+from manyruns import vocab
+
 log = logging.getLogger(__name__)
 
-# THE topology vocabulary for DR embeddings, declared once: `label_workflow` validates
-# against it and `interactive_label` offers it as the prompt's choices.
+# The labeler's five words. The table that defines them, and maps each to its canonical
+# topology, is `vocab.LABELER_TOPOLOGY`; this name stays because other readers import it.
 #
 # A `LabelType = Literal[...]` alias restated the same five names on the next line. Grepped
 # across manyruns, the learner, manylatents and shop, it had ZERO readers — nothing was
 # annotated with it — so it could not fail a type check and could only ever drift away from
 # the frozenset that is actually enforced. Removed rather than wired up: this file's `label`
 # parameters are `str` and the runtime check is what rejects a bad label.
-VALID_LABELS = frozenset({"cluster", "trajectory", "cycle", "surface", "other"})
+VALID_LABELS = frozenset(vocab.LABELER_TOPOLOGY)
 
 
 def label_workflow(
@@ -34,7 +36,8 @@ def label_workflow(
 
     Args:
         result: Dict from run_workflow() with keys embeddings, scores, etc.
-        label: Topology label (cluster, trajectory, cycle, surface, other).
+        label: Topology label (cluster, trajectory, cycle, surface, other). The entry keeps it
+            as given and adds ``topology``, its canonical name (``None`` for ``other``).
         selected_metrics: List of metric names to include in G-vector.
         labeler: Name/ID of the person providing the label.
 
@@ -45,8 +48,12 @@ def label_workflow(
         ValueError: If label is invalid or metrics not found.
     """
     # Validate label
-    if label not in VALID_LABELS:
-        raise ValueError(f"Invalid label: '{label}'. Must be one of: {sorted(VALID_LABELS)}")
+    try:
+        topology = vocab.labeler_to_topology(label)
+    except ValueError:
+        raise ValueError(
+            f"Invalid label: '{label}'. Must be one of: {sorted(vocab.LABELER_TOPOLOGY)}"
+        ) from None
 
     scores = result.get("scores", {})
 
@@ -65,6 +72,7 @@ def label_workflow(
         "workflow": result["workflow"],
         "dataset": result["dataset"],
         "label": label,
+        "topology": topology,
         "selected_metrics": metrics_dict,
         "embedding_shape": list(result["embeddings"].shape),
         "labeler": labeler,
@@ -115,7 +123,7 @@ def interactive_label(
     # Prompt for label
     label = Prompt.ask(
         "What topology do you see?",
-        choices=list(VALID_LABELS),
+        choices=list(vocab.LABELER_TOPOLOGY),
         default="other",
     )
 

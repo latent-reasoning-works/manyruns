@@ -1,7 +1,10 @@
 """The complexity ladder (manyruns/score.py) — pure, dependency-free scoring."""
+import inspect
+from pathlib import Path
+
 import pytest
 
-from manyruns import score
+from manyruns import decisions, score
 from manyruns.vocab import TOPOLOGIES
 
 
@@ -92,3 +95,18 @@ def test_every_topology_in_the_registry_is_scoreable():
     """Guards the real failure: a dataset labelled with a valid topology the ladder forgot."""
     for t in TOPOLOGIES:
         assert score.truth_rung([t]) is not None
+
+
+def test_the_benchmark_collapse_is_not_on_the_ladder():
+    """`vocab.collapse_for_benchmark` folds `surface` into `archetypal` for scShapeBench's scorer.
+    On the ladder that would move `surface` from rung 0 to rung 4 and reward an over-claim, so
+    `truth_rung` must not call it and the decision store must not either. Only these two are
+    read: other scorer functions in `score.py` may call the collapse."""
+    assert score.truth_rung(["surface"]) == 0
+    assert score.truth_rung(["cycle"]) == 2
+    assert score.RUNG == {"surface": 0, "clusters": 1, "cycle": 2, "single-trajectory": 2,
+                          "multi-branching": 3, "archetypal": 4}
+    assert "collapse_for_benchmark" not in inspect.getsource(score.truth_rung)
+    source = Path(decisions.__file__)
+    assert source.is_file()
+    assert "collapse_for_benchmark" not in source.read_text()
