@@ -279,3 +279,11 @@ def test_the_fixtures_are_pinned_to_the_protocol_they_test():
 
     doc = json.loads((Path(__file__).parent / "fixtures" / "driver_conformance.json").read_text())
     assert doc["protocol_version"] == driver.PROTOCOL_VERSION
+
+
+def test_every_fixture_carries_the_offer_the_seat_would_send():
+    """A driver's conformance harness lives in another repository and imports nothing from
+    manyruns, so each case carries the exact offer (question 1, build `conformance`)."""
+    for case in _conformance():
+        assert case["offer"] == driver.step_surface(case["step"], case["constraints"], 1,
+                                                    "conformance"), case["id"]

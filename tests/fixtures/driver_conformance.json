@@ -1,7 +1,7 @@
 {
  "schema_version": 1,
  "protocol_version": 1,
- "about": "Driver conformance cases. `probe` is one choice and `verdict` is what the seam must answer it (manyruns tests this). `intent` labels what a good driver does with `said`: a parameter and direction or value, `outside` for a request the offer cannot meet, `none` when no change is right. Scoring a driver against `intent` lives with the driver, never in manyruns.",
+ "about": "Driver conformance cases. `probe` is one choice and `verdict` is what the seam must answer it (manyruns tests this). `intent` labels what a good driver does with `said`: a parameter and direction or value, `outside` for a request the offer cannot meet, `none` when no change is right. Scoring a driver against `intent` lives with the driver, never in manyruns. Each case carries `offer`: exactly what the seat sends for that step (question 1, build `conformance`), so a harness in another repository needs no manyruns import.",
  "cases": [
   {
    "id": "phate-branches",
@@ -26,7 +26,47 @@
      "knn": 3
     }
    },
-   "verdict": "ok"
+   "verdict": "ok",
+   "offer": {
+    "surface": "step",
+    "step": "phate",
+    "question_id": 1,
+    "params": {
+     "t": {
+      "current": "auto",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false,
+      "also": [
+       "auto"
+      ]
+     },
+     "decay": {
+      "current": 40,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "knn": {
+      "current": 5,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "n_components": {
+      "current": 2,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     }
+    },
+    "legal_id": "d6ebf290e5ba",
+    "tool_version": "conformance"
+   }
   },
   {
    "id": "phate-smoother",
@@ -51,7 +91,47 @@
      "t": 40
     }
    },
-   "verdict": "ok"
+   "verdict": "ok",
+   "offer": {
+    "surface": "step",
+    "step": "phate",
+    "question_id": 1,
+    "params": {
+     "t": {
+      "current": "auto",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false,
+      "also": [
+       "auto"
+      ]
+     },
+     "decay": {
+      "current": 40,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "knn": {
+      "current": 5,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "n_components": {
+      "current": 2,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     }
+    },
+    "legal_id": "d6ebf290e5ba",
+    "tool_version": "conformance"
+   }
   },
   {
    "id": "phate-lost-branch",
@@ -76,7 +156,47 @@
      "t": 5
     }
    },
-   "verdict": "ok"
+   "verdict": "ok",
+   "offer": {
+    "surface": "step",
+    "step": "phate",
+    "question_id": 1,
+    "params": {
+     "t": {
+      "current": "auto",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false,
+      "also": [
+       "auto"
+      ]
+     },
+     "decay": {
+      "current": 40,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "knn": {
+      "current": 5,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "n_components": {
+      "current": 2,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     }
+    },
+    "legal_id": "d6ebf290e5ba",
+    "tool_version": "conformance"
+   }
   },
   {
    "id": "phate-one-line",
@@ -101,7 +221,47 @@
      "t": 60
     }
    },
-   "verdict": "ok"
+   "verdict": "ok",
+   "offer": {
+    "surface": "step",
+    "step": "phate",
+    "question_id": 1,
+    "params": {
+     "t": {
+      "current": "auto",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false,
+      "also": [
+       "auto"
+      ]
+     },
+     "decay": {
+      "current": 40,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "knn": {
+      "current": 5,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "n_components": {
+      "current": 2,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     }
+    },
+    "legal_id": "d6ebf290e5ba",
+    "tool_version": "conformance"
+   }
   },
   {
    "id": "phate-set-knn",
@@ -125,7 +285,47 @@
      "knn": 20
     }
    },
-   "verdict": "ok"
+   "verdict": "ok",
+   "offer": {
+    "surface": "step",
+    "step": "phate",
+    "question_id": 1,
+    "params": {
+     "t": {
+      "current": "auto",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false,
+      "also": [
+       "auto"
+      ]
+     },
+     "decay": {
+      "current": 40,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "knn": {
+      "current": 5,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "n_components": {
+      "current": 2,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     }
+    },
+    "legal_id": "d6ebf290e5ba",
+    "tool_version": "conformance"
+   }
   },
   {
    "id": "phate-connect",
@@ -150,7 +350,47 @@
      "knn": 15
     }
    },
-   "verdict": "ok"
+   "verdict": "ok",
+   "offer": {
+    "surface": "step",
+    "step": "phate",
+    "question_id": 1,
+    "params": {
+     "t": {
+      "current": "auto",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false,
+      "also": [
+       "auto"
+      ]
+     },
+     "decay": {
+      "current": 40,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "knn": {
+      "current": 5,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "n_components": {
+      "current": 2,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     }
+    },
+    "legal_id": "d6ebf290e5ba",
+    "tool_version": "conformance"
+   }
   },
   {
    "id": "umap-global",
@@ -172,7 +412,37 @@
      "n_neighbors": 50
     }
    },
-   "verdict": "ok"
+   "verdict": "ok",
+   "offer": {
+    "surface": "step",
+    "step": "umap",
+    "question_id": 1,
+    "params": {
+     "n_neighbors": {
+      "current": 15,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "min_dist": {
+      "current": 0.1,
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "n_components": {
+      "current": 2,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     }
+    },
+    "legal_id": "7f71849fd218",
+    "tool_version": "conformance"
+   }
   },
   {
    "id": "umap-piled",
@@ -194,7 +464,37 @@
      "min_dist": 0.5
     }
    },
-   "verdict": "ok"
+   "verdict": "ok",
+   "offer": {
+    "surface": "step",
+    "step": "umap",
+    "question_id": 1,
+    "params": {
+     "n_neighbors": {
+      "current": 15,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "min_dist": {
+      "current": 0.1,
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "n_components": {
+      "current": 2,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     }
+    },
+    "legal_id": "7f71849fd218",
+    "tool_version": "conformance"
+   }
   },
   {
    "id": "umap-tighter",
@@ -216,7 +516,37 @@
      "min_dist": 0.05
     }
    },
-   "verdict": "ok"
+   "verdict": "ok",
+   "offer": {
+    "surface": "step",
+    "step": "umap",
+    "question_id": 1,
+    "params": {
+     "n_neighbors": {
+      "current": 15,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "min_dist": {
+      "current": 0.1,
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "n_components": {
+      "current": 2,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     }
+    },
+    "legal_id": "7f71849fd218",
+    "tool_version": "conformance"
+   }
   },
   {
    "id": "umap-30",
@@ -238,7 +568,37 @@
      "n_neighbors": 30
     }
    },
-   "verdict": "ok"
+   "verdict": "ok",
+   "offer": {
+    "surface": "step",
+    "step": "umap",
+    "question_id": 1,
+    "params": {
+     "n_neighbors": {
+      "current": 15,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "min_dist": {
+      "current": 0.1,
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "n_components": {
+      "current": 2,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     }
+    },
+    "legal_id": "7f71849fd218",
+    "tool_version": "conformance"
+   }
   },
   {
    "id": "leiden-more",
@@ -260,7 +620,23 @@
      "resolution": 2.0
     }
    },
-   "verdict": "ok"
+   "verdict": "ok",
+   "offer": {
+    "surface": "step",
+    "step": "leiden",
+    "question_id": 1,
+    "params": {
+     "resolution": {
+      "current": 1.0,
+      "type": "number",
+      "minimum": 0.1,
+      "maximum": null,
+      "maximum_known": false
+     }
+    },
+    "legal_id": "cd2a59f72a80",
+    "tool_version": "conformance"
+   }
   },
   {
    "id": "leiden-fewer",
@@ -282,7 +658,23 @@
      "resolution": 0.5
     }
    },
-   "verdict": "ok"
+   "verdict": "ok",
+   "offer": {
+    "surface": "step",
+    "step": "leiden",
+    "question_id": 1,
+    "params": {
+     "resolution": {
+      "current": 1.0,
+      "type": "number",
+      "minimum": 0.1,
+      "maximum": null,
+      "maximum_known": false
+     }
+    },
+    "legal_id": "cd2a59f72a80",
+    "tool_version": "conformance"
+   }
   },
   {
    "id": "leiden-finer",
@@ -304,7 +696,23 @@
      "resolution": 3.0
     }
    },
-   "verdict": "ok"
+   "verdict": "ok",
+   "offer": {
+    "surface": "step",
+    "step": "leiden",
+    "question_id": 1,
+    "params": {
+     "resolution": {
+      "current": 1.0,
+      "type": "number",
+      "minimum": 0.1,
+      "maximum": null,
+      "maximum_known": false
+     }
+    },
+    "legal_id": "cd2a59f72a80",
+    "tool_version": "conformance"
+   }
   },
   {
    "id": "phate-knn-cap",
@@ -328,7 +736,47 @@
      "knn": 500
     }
    },
-   "verdict": "refused"
+   "verdict": "refused",
+   "offer": {
+    "surface": "step",
+    "step": "phate",
+    "question_id": 1,
+    "params": {
+     "t": {
+      "current": "auto",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false,
+      "also": [
+       "auto"
+      ]
+     },
+     "decay": {
+      "current": 40,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "knn": {
+      "current": 5,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 120,
+      "maximum_known": true
+     },
+     "n_components": {
+      "current": 2,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     }
+    },
+    "legal_id": "6be1af43f242",
+    "tool_version": "conformance"
+   }
   },
   {
    "id": "phate-knn-zero",
@@ -347,7 +795,47 @@
      "knn": 0
     }
    },
-   "verdict": "refused"
+   "verdict": "refused",
+   "offer": {
+    "surface": "step",
+    "step": "phate",
+    "question_id": 1,
+    "params": {
+     "t": {
+      "current": "auto",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false,
+      "also": [
+       "auto"
+      ]
+     },
+     "decay": {
+      "current": 40,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "knn": {
+      "current": 5,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "n_components": {
+      "current": 2,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     }
+    },
+    "legal_id": "d6ebf290e5ba",
+    "tool_version": "conformance"
+   }
   },
   {
    "id": "umap-min-dist-negative",
@@ -364,7 +852,37 @@
      "min_dist": -1.0
     }
    },
-   "verdict": "refused"
+   "verdict": "refused",
+   "offer": {
+    "surface": "step",
+    "step": "umap",
+    "question_id": 1,
+    "params": {
+     "n_neighbors": {
+      "current": 15,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "min_dist": {
+      "current": 0.1,
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "n_components": {
+      "current": 2,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     }
+    },
+    "legal_id": "7f71849fd218",
+    "tool_version": "conformance"
+   }
   },
   {
    "id": "phate-colour",
@@ -383,7 +901,47 @@
      "colour": "viridis"
     }
    },
-   "verdict": "refused"
+   "verdict": "refused",
+   "offer": {
+    "surface": "step",
+    "step": "phate",
+    "question_id": 1,
+    "params": {
+     "t": {
+      "current": "auto",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false,
+      "also": [
+       "auto"
+      ]
+     },
+     "decay": {
+      "current": 40,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "knn": {
+      "current": 5,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "n_components": {
+      "current": 2,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     }
+    },
+    "legal_id": "d6ebf290e5ba",
+    "tool_version": "conformance"
+   }
   },
   {
    "id": "phate-unchanged",
@@ -402,7 +960,47 @@
      "knn": 5
     }
    },
-   "verdict": "refused"
+   "verdict": "refused",
+   "offer": {
+    "surface": "step",
+    "step": "phate",
+    "question_id": 1,
+    "params": {
+     "t": {
+      "current": "auto",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false,
+      "also": [
+       "auto"
+      ]
+     },
+     "decay": {
+      "current": 40,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "knn": {
+      "current": 5,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "n_components": {
+      "current": 2,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     }
+    },
+    "legal_id": "d6ebf290e5ba",
+    "tool_version": "conformance"
+   }
   },
   {
    "id": "phate-question",
@@ -417,7 +1015,47 @@
    "said": "what does this plot show?",
    "intent": "none",
    "probe": null,
-   "verdict": null
+   "verdict": null,
+   "offer": {
+    "surface": "step",
+    "step": "phate",
+    "question_id": 1,
+    "params": {
+     "t": {
+      "current": "auto",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false,
+      "also": [
+       "auto"
+      ]
+     },
+     "decay": {
+      "current": 40,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "knn": {
+      "current": 5,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     },
+     "n_components": {
+      "current": 2,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": null,
+      "maximum_known": false
+     }
+    },
+    "legal_id": "d6ebf290e5ba",
+    "tool_version": "conformance"
+   }
   },
   {
    "id": "leiden-thanks",
@@ -432,7 +1070,23 @@
    "probe": {
     "decision": "accept"
    },
-   "verdict": "ok"
+   "verdict": "ok",
+   "offer": {
+    "surface": "step",
+    "step": "leiden",
+    "question_id": 1,
+    "params": {
+     "resolution": {
+      "current": 1.0,
+      "type": "number",
+      "minimum": 0.1,
+      "maximum": null,
+      "maximum_known": false
+     }
+    },
+    "legal_id": "cd2a59f72a80",
+    "tool_version": "conformance"
+   }
   }
  ]
 }
