@@ -89,6 +89,16 @@ def test_hello_attaches_the_driver_at_interpret(seat):
     c.close()
 
 
+def test_a_driver_that_arrives_mid_question_gets_the_offer_in_its_hello(seat):
+    """Events are not replayed, so a driver that attaches while a question is already waiting
+    would otherwise never see the offer for it."""
+    seat.set_offer(PHATE, {}, question_id=4)
+    c = Client(seat.path)
+    reply = c.ask({"verb": "hello", "chooser": "llm:x", "bound": "schema"})
+    assert reply["offer"]["question_id"] == 4 and reply["offer"]["step"] == "phate"
+    c.close()
+
+
 def test_nothing_but_hello_is_allowed_before_hello(seat):
     c = Client(seat.path)
     reply = c.ask({"verb": "say", "text": "hi"})

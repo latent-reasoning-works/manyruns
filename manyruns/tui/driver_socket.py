@@ -227,8 +227,12 @@ class DriverSocket:
             except ValueError as error:
                 return {"ok": False, "error": str(error)}, attached
             self._on_control(ctrl)
+            with self._lock:
+                offer = self.offer
+            # THE CURRENT OFFER RIDES ON THE REPLY. Events are not replayed, and a driver that
+            # attaches while a question is already waiting would otherwise never see it.
             return {"ok": True, "level": ctrl["level"], "tag": driver.tag(ctrl),
-                    "verbs": sorted(driver.VERBS[ctrl["level"]])}, True
+                    "verbs": sorted(driver.VERBS[ctrl["level"]]), "offer": offer}, True
         if not attached:
             return {"ok": False, "error": "send `hello` with your `chooser` and `bound` first"}, attached
         with self._lock:

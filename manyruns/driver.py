@@ -107,7 +107,7 @@ def step_surface(step: dict, constraints: dict, question_id: Optional[int],
     `legal_id` hashes everything that makes this offer the one it is: the step, its current
     values, the caps, the question and the build. So an answer to an earlier question, or to the
     same question before a value moved, is stale by construction."""
-    from manyruns.tui.params import FLOOR, tunable_for
+    from manyruns.tui.params import CONCRETE_FROM, FLOOR, tunable_for
 
     presets = step.get("presets") if isinstance(step.get("presets"), dict) else {}
     params: dict[str, dict] = {}
@@ -121,6 +121,11 @@ def step_surface(step: dict, constraints: dict, question_id: Optional[int],
             "maximum": cap.get("cap") if known else None,
             "maximum_known": known,
         }
+        # A KNOB AT A WORD THAT TAKES A NUMBER (`t: auto`, which `CONCRETE_FROM` makes 20 on the
+        # first arrow press) is offered as the number, with the word kept in `also`.
+        if isinstance(current, str) and name in CONCRETE_FROM:
+            entry["type"] = _type_name(CONCRETE_FROM[name])
+            entry["also"] = [current]
         if name in presets:
             entry["presets"] = list(presets[name])
         params[name] = entry

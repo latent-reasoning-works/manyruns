@@ -80,6 +80,15 @@ def test_the_step_offer_lists_this_products_knobs_with_current_values():
     assert offer["params"]["decay"]["current"] == 40  # the product default, as the strip shows
 
 
+def test_a_knob_at_auto_is_offered_as_the_number_it_takes_with_auto_kept():
+    """`t` reads `auto` until someone sets it, and takes an integer; an offer typed `string`
+    hid PHATE's most relevant knob from any numeric tool schema."""
+    t = _offer()["params"]["t"]
+    assert t["current"] == "auto" and t["type"] == "integer" and t["also"] == ["auto"]
+    offer = _offer()
+    assert driver.check_choice(offer, {"legal_id": offer["legal_id"], "params": {"t": 20}}) == []
+
+
 def test_a_minimum_is_the_floor_and_an_unknown_maximum_is_said_to_be_unknown():
     p = _offer()["params"]["knn"]
     assert p["minimum"] == 1
