@@ -1126,6 +1126,18 @@ async def test_the_driver_seat_can_be_turned_off(prepared_entries, tmp_path, mon
         assert app.screen.query_one("#on-air").display is False
 
 
+@drives
+async def test_a_bad_launch_grant_opens_no_seat_and_still_runs(prepared_entries, tmp_path,
+                                                                 monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MANYRUNS_DRIVER_LEVEL", "root")
+    app = _App()
+    async with app.run_test() as pilot:
+        app.open_run(_entry(), "embed")
+        await pilot.pause()
+        assert isinstance(app.screen, RunScreen) and app.screen.seat is None
+
+
 def test_the_gate_is_closed_when_the_screen_goes_away():
     """A gate that can block forever turns a quit into a hang — `tui/gate.py`'s own note. The
     screen owns the close because the screen is what disappears.

@@ -472,12 +472,15 @@ class ManyrunsApp(App):
         try:
             obs = entry.as_source()[3]
             # `$MANYRUNS_DRIVER_LEVEL` is the launch grant (`DriverSocket`): how far a driver may
-            # go before anyone presses a key. A value that is not a level is refused here, loudly,
-            # rather than read as the most permissive one.
+            # go before anyone presses a key. A value that is not a level opens no seat and says
+            # so, rather than being read as the most permissive one or stopping the run.
             seat = DriverSocket(Path("outputs") / _app._slug(_shell._slugish(obs.source)),
                                 tool_version=_app._installed_build(),
                                 grant=_env.get("DRIVER_LEVEL", "interpret"))
             seat.start()
+        except ValueError as error:
+            self.notify(f"no driver seat: $MANYRUNS_DRIVER_LEVEL — {error}", severity="warning")
+            return None
         except OSError:
             return None
         return seat
