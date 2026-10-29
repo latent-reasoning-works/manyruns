@@ -53,7 +53,7 @@ import json
 import os
 import uuid
 from pathlib import Path
-from typing import Any, Iterator, Optional, Sequence
+from typing import Any, Iterable, Iterator, Optional, Sequence
 
 from manyruns import vocab
 
@@ -195,7 +195,8 @@ def read(out_dir: Path | str = "outputs") -> Iterator[dict]:
             continue
 
 
-def examples(out_dir: Path | str = "outputs") -> list[dict]:
+def examples(out_dir: Path | str = "outputs", *, surface: Optional[str] = "ledger",
+             exclude_chooser: str | Iterable[str] | None = None) -> list[dict]:
     """The corpus as `(inputs, label)` pairs — one per decision that had a real alternative.
 
     THE TRAINING SHAPE, kept here so the selector's notion of an example and this store's row
@@ -217,9 +218,27 @@ def examples(out_dir: Path | str = "outputs") -> list[dict]:
     `narrate.offer`'s prior with a human's name on it, and a selector trained to high accuracy on
     it has learned to agree with the default. A trainer that cannot see the flag cannot report
     the rate, so the flag is part of the example rather than something to reconstruct.
+
+    **Filters select rows; they never widen the pair.** `surface` keeps one surface (`None`
+    keeps all); a row with no `surface` key is a ledger row. `exclude_chooser` drops rows whose
+    `chooser` equals a value, or starts with a value that ends in `":"` — so `"llm:"` drops
+    every model row. A row with no `chooser` key was a person's, written before the field
+    existed. That is how a trainer keeps a policy's own choices out of its training data
+    (environment contract §2.1) without a `chooser` key in the pair.
     """
+    if exclude_chooser is None:
+        excluded: tuple[str, ...] = ()
+    elif isinstance(exclude_chooser, str):
+        excluded = (exclude_chooser,)
+    else:
+        excluded = tuple(exclude_chooser)
     out: list[dict] = []
     for row in read(out_dir):
+        if surface is not None and row.get("surface", "ledger") != surface:
+            continue
+        chooser = row.get("chooser", "human")
+        if any(chooser == v or (v.endswith(":") and str(chooser).startswith(v)) for v in excluded):
+            continue
         offered = row.get("offered") or []
         legal = [o["recipe"] for o in offered if o.get("can_run")]
         chosen = row.get("chosen")

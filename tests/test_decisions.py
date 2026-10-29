@@ -281,6 +281,79 @@ def test_a_decision_with_one_legal_move_is_not_an_example(tmp_path):
     assert decisions.examples(tmp_path) == []
 
 
+# ── filtering the training pairs ─────────────────────────────────────────────
+PAIR_KEYS = {"shape", "topology", "legal", "blocked", "recommended", "chosen", "took_default"}
+
+
+def _hand_written(tmp_path, **row):
+    """A row as an older writer left it: no `surface`, no `chooser`."""
+    row = {"offered": OFFERED, "chosen": "embed", **row}
+    with decisions.index_path(tmp_path).open("a") as fh:
+        fh.write(json.dumps(row) + "\n")
+
+
+def test_examples_keep_the_ledger_surface_by_default(tmp_path):
+    _write(tmp_path, surface="ledger")
+    _write(tmp_path, surface="audit")
+    assert len(decisions.examples(tmp_path)) == 1
+    assert len(decisions.examples(tmp_path, surface="audit")) == 1
+    assert len(decisions.examples(tmp_path, surface=None)) == 2
+
+
+def test_a_row_without_a_surface_counts_as_ledger(tmp_path):
+    _hand_written(tmp_path)
+    assert len(decisions.examples(tmp_path)) == 1
+
+
+def _three_choosers(tmp_path):
+    """Each chooser takes a different recipe, so a surviving pair says whose row it came from."""
+    for chooser, chosen in (("human", "embed"), ("llm:claude-opus-4-8", "cluster"),
+                            ("llm:qwen3:8b", "contrast")):
+        _write(tmp_path, chooser=chooser, chosen=chosen)
+
+
+def test_examples_drop_one_model_by_exact_chooser(tmp_path):
+    """Environment contract §2.1: a row a policy chose is not training data for that policy."""
+    _three_choosers(tmp_path)
+    assert len(decisions.examples(tmp_path, exclude_chooser="llm:claude-opus-4-8")) == 2
+
+
+def test_examples_drop_every_model_by_prefix(tmp_path):
+    _three_choosers(tmp_path)
+    (ex,) = decisions.examples(tmp_path, exclude_chooser="llm:")
+    assert ex["chosen"] == "embed"
+
+
+def test_examples_drop_by_a_list_of_choosers(tmp_path):
+    _three_choosers(tmp_path)
+    (ex,) = decisions.examples(tmp_path, exclude_chooser=["human", "llm:qwen3:8b"])
+    assert ex["chosen"] == "cluster"
+
+
+def test_a_chooser_without_a_trailing_colon_matches_exactly(tmp_path):
+    _three_choosers(tmp_path)
+    assert len(decisions.examples(tmp_path, exclude_chooser="llm")) == 3
+
+
+def test_a_legacy_row_counts_as_human(tmp_path):
+    _hand_written(tmp_path)
+    assert decisions.examples(tmp_path, exclude_chooser="human") == []
+
+
+def test_a_pair_does_not_carry_the_chooser(tmp_path):
+    """The pair keeps its seven keys; a trainer filters with `exclude_chooser` instead."""
+    _write(tmp_path, chooser="llm:x")
+    (ex,) = decisions.examples(tmp_path)
+    assert set(ex) == PAIR_KEYS
+
+
+def test_the_default_rate_uses_the_default_filters(tmp_path):
+    _write(tmp_path, chosen="embed")
+    _write(tmp_path, chosen="embed", surface="audit")
+    assert decisions.default_rate(tmp_path) == 1.0
+    assert len(decisions.examples(tmp_path)) == 1
+
+
 # ── the call site ────────────────────────────────────────────────────────────
 def test_the_offer_is_the_rows_the_screen_drew(tmp_path):
     """`LedgerRow.as_offer` is the ONE conversion, and it lives beside the row rather than in
