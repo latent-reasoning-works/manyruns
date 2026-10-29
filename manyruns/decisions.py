@@ -14,7 +14,8 @@ set, the lineage edge — was already on disk.
 conversion and the app hands this module the rows the screen actually drew. Recomputing the
 ledger here would be a second account of what was offered, which is the same failure the TUI's
 "no screen computes a fact `narrate` does not expose" rule exists to prevent — one direction
-further out.
+further out. `actions.ledger_offer` is the same serialization for a dataset's declaration — what
+`manyruns actions` prints as `offered` — so the CLI offers the rows the ledger would draw.
 
 **The join runs decision → run, not the other way.** `runner.identity` mints `run_id` as
 `uuid4().hex[:12]` (read, not assumed), so a decision written BEFORE the run cannot know it.

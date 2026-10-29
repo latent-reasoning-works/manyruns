@@ -44,8 +44,10 @@ lineage, rewind, and branch tests use `pipeline.run_inproc` (`vocab.INPROC`). Th
 in-process loop is a test substrate, absent from product engine choices and serving
 backends. Mock output is not scientific evidence.
 
-Tools currently run as declared recipe steps. Add planning or action-enumeration
-interfaces only against a concrete caller's needs.
+Tools currently run as declared recipe steps. `manyruns actions <DATASET>` is the one
+action-enumeration interface: it prints the ledger for a dataset's declaration as one
+JSON document (`manyruns/actions.py`), for any outside program that drives the CLI. Add
+further planning or enumeration interfaces only against a concrete caller's needs.
 
 ## Config and record handling
 

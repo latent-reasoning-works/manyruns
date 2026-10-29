@@ -377,3 +377,24 @@ def test_catalog_validation_and_loading_never_fetch_or_verify_data_bytes(tmp_pat
     assert tmp_path.is_dir()
     assert catalog.load_dataset("sample", config_dir=tmp_path) == ds
     assert catalog.check_dataset(ds) == []
+
+
+def test_actions_reads_the_catalog_check_validates(tmp_path, monkeypatch, capsys):
+    """`MANYRUNS_RECIPE_DIR` replaces the bundled recipes for `actions` exactly as for `check`:
+    the legal moves are offered from the set the author just validated, not from the wheel's."""
+    import json
+    import shutil
+
+    from manyruns import catalog
+
+    rdir = tmp_path / "recipes"
+    rdir.mkdir()
+    shutil.copy(catalog.recipe_dir() / "embed.yaml", rdir / "embed.yaml")
+    assert rdir.is_dir()
+    monkeypatch.setenv("MANYRUNS_RECIPE_DIR", str(rdir))
+    assert _check() == 0
+    assert "embed" in capsys.readouterr().out
+    assert app.main(["actions", "swissroll"]) == 0
+    doc = json.loads(capsys.readouterr().out)
+    assert [o["recipe"] for o in doc["offered"]] == ["embed"]
+    assert list(doc["detail"]) == ["embed"]

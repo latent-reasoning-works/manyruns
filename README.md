@@ -289,6 +289,20 @@ if __name__ == "__main__":            # required — the pool spawns processes
 The sweep spec and the recipe/dataset authoring briefs are pending a rewrite; the shipped
 recipes under `manyruns/configs/recipe/` are the working reference.
 
+## actions
+
+```bash
+manyruns actions pbmc3k            # one JSON document on stdout
+```
+
+`actions` prints the legal moves for one dataset: the ledger rows (`offered`, each with
+`recipe`, `can_run`, `blocked`, `recommended`, `measured`), per-recipe `detail` (steps,
+`unmet` facts, `offer_rank`), and a `legal_id` that names the legal set and the build. It is
+computed from the dataset's declaration alone, so it never opens, downloads or writes data,
+and its output is the same whether or not the file is on this machine. An unknown name exits 2;
+a declaration that does not load exits 1 with nothing on stdout. `--dataset-dir` and the
+`$MANYRUNS_*_DIR` overlays apply as they do for `check`. Any outside program can read it.
+
 ## architecture
 
 ```

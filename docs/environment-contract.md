@@ -185,6 +185,12 @@ and its artifacts are the observation.** `outputs/<project>/` — `project.yaml`
 `plots/`, `index.jsonl`, `decisions.jsonl` — is the full state, on disk, in formats this repository
 documents. Nothing new has to be built for the learner to see everything.
 
+One read makes the legal set explicit rather than reconstructed from those files:
+`manyruns actions <DATASET>` prints the ledger for a dataset's declaration as one JSON
+document — the `LedgerRow.as_offer()` rows a decision row records, per-recipe detail, and the
+`legal_id` of §2.3 (the sorted runnable set plus the installed build). It is computed from the
+declaration alone, names no caller, and is the same command for every program that runs it.
+
 **What this buys, and it is why the rule is absolute rather than a preference:**
 
 * manyruns is genuinely standalone open source, with no vestigial hooks whose purpose a reader

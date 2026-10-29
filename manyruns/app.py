@@ -54,7 +54,7 @@ _BULK_SUFFIXES = {".csv", ".tsv", ".txt"}
 #  defensible. `_choose_recipe` now derives from `narrate.offer`, so modality no longer
 #  selects a recipe and the table had no remaining reader.)
 
-_SUBCOMMANDS = ("init", "explore", "run", "open", "projects", "check", "audit",
+_SUBCOMMANDS = ("init", "explore", "run", "open", "projects", "check", "actions", "audit",
                 "tools", "shell")
 
 
@@ -155,6 +155,15 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_check.add_argument("--dataset-dir", help="validate datasets from this directory instead")
     p_check.set_defaults(func=cmd_check)
+
+    p_actions = sub.add_parser(
+        "actions", help="the legal moves for a dataset, as one JSON document on stdout"
+    )
+    p_actions.add_argument("dataset", metavar="DATASET", help="a dataset name from the catalog")
+    p_actions.add_argument("--dataset-dir", help="read datasets from this directory instead")
+    p_actions.add_argument("--surface", choices=("ledger",), default="ledger",
+                           help="which choice to describe (only `ledger` exists)")
+    p_actions.set_defaults(func=cmd_actions)
 
     p_audit = sub.add_parser(
         "audit", help="run the admission gate over the declared metric suite (non-zero on reject)"
@@ -962,6 +971,28 @@ def cmd_audit(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     print(f"\n{counts['admitted']} admitted · {counts['flagged']} flagged · "
           f"{counts['rejected']} rejected · {counts['deferred']} deferred")
     return 1 if counts["rejected"] else 0
+
+
+def cmd_actions(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    """Print the legal moves for one dataset as exactly one JSON document (`manyruns.actions`).
+
+    Exit 2 for a name the catalog does not have; exit 1, with nothing on stdout, when the
+    declaration exists and does not load. Diagnostics go to stderr so stdout stays parseable."""
+    import json
+
+    from manyruns import actions, catalog
+
+    ddir = getattr(args, "dataset_dir", None)
+    if args.dataset not in catalog.discover_datasets(ddir):
+        parser.error(f"unknown dataset {args.dataset!r}; known: "
+                     f"{', '.join(catalog.discover_datasets(ddir)) or '(none)'}")
+    try:
+        doc = actions.document(args.dataset, _installed_build(), ddir)
+    except Exception as exc:  # noqa: BLE001 - stdout must stay empty on any failure
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(doc, indent=2, ensure_ascii=False))
+    return 0
 
 
 def cmd_check(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
