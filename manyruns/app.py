@@ -54,7 +54,7 @@ _BULK_SUFFIXES = {".csv", ".tsv", ".txt"}
 #  defensible. `_choose_recipe` now derives from `narrate.offer`, so modality no longer
 #  selects a recipe and the table had no remaining reader.)
 
-_SUBCOMMANDS = ("init", "explore", "run", "open", "projects", "check", "audit",
+_SUBCOMMANDS = ("init", "explore", "run", "open", "projects", "check", "actions", "audit",
                 "tools", "shell")
 
 
@@ -102,20 +102,33 @@ def _installed_build() -> str:
     return f"{dist.version} · revision {revision if revision else 'unavailable'}"
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    from manyruns import commands
+class _Parser(argparse.ArgumentParser):
+    """The top-level parser, whose epilog (the REPL command registry) is rendered on demand.
 
-    parser = argparse.ArgumentParser(
+    ON DEMAND, not at build time: `commands.render_help` imports `manyruns.session` and reads
+    every recipe YAML, and every invocation builds this parser. A read-only verb such as
+    `actions` must import no session and must not fail on a malformed recipe it never reads, so
+    only `--help` pays for the registry.
+    """
+
+    def format_help(self) -> str:
+        from manyruns import commands
+
+        self.epilog = commands.render_help()
+        return super().format_help()
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = _Parser(
         # NOT pinned. argparse defaults `prog` to `basename(sys.argv[0])`, so each installed
         # console-script reports the name it was actually invoked as — `manyruns` and the
         # `co-science` alias are one program, and a pinned `prog` would make `co-science
         # --help` print usage for a command the reader did not type.
         description="manyruns — geometric exploration of your data.",
-        epilog=commands.render_help(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {_installed_build()}")
-    sub = parser.add_subparsers(dest="cmd", required=True)
+    sub = parser.add_subparsers(dest="cmd", required=True, parser_class=argparse.ArgumentParser)
 
     p_init = sub.add_parser("init", help="set up a project, then step through it interactively")
     _add_setup_args(p_init)
@@ -155,6 +168,23 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_check.add_argument("--dataset-dir", help="validate datasets from this directory instead")
     p_check.set_defaults(func=cmd_check)
+
+    p_actions = sub.add_parser(
+        "actions", help="the legal action space for a dataset, as one JSON document on stdout"
+    )
+    p_actions.add_argument("dataset", nargs="?", metavar="DATASET",
+                           help="a dataset name from the catalog (not on the ladder surface)")
+    p_actions.add_argument("--dataset-dir", help="read datasets from this directory instead")
+    p_actions.add_argument("--surface", choices=("ledger", "tune", "ladder"), default="ledger",
+                           help="ledger: which recipes can run · tune: the knobs of one "
+                                "recipe's steps · ladder: the scorer's rung tables")
+    p_actions.add_argument("--recipe", help="the recipe to tune (tune surface)")
+    p_actions.add_argument("--step", help="only this tunable step (tune surface)")
+    p_actions.add_argument("--gate", choices=("on", "off"), default=None,
+                           help="the geometry mask (default on; not on the ladder surface)")
+    p_actions.add_argument("--seed", type=int, default=None,
+                           help="the seed whose probe run the gate reads (default 42)")
+    p_actions.set_defaults(func=cmd_actions)
 
     p_audit = sub.add_parser(
         "audit", help="run the admission gate over the declared metric suite (non-zero on reject)"
@@ -962,6 +992,36 @@ def cmd_audit(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     print(f"\n{counts['admitted']} admitted · {counts['flagged']} flagged · "
           f"{counts['rejected']} rejected · {counts['deferred']} deferred")
     return 1 if counts["rejected"] else 0
+
+
+def cmd_actions(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    """Print the legal action space as exactly one JSON document (`manyruns.actions`).
+
+    Exit 2 through `parser.error` for a request the verb does not accept; exit 1, with nothing
+    on stdout, when a discovered name does not load. The document is built whole before the
+    first byte is printed, so a failure never leaves half of one on stdout.
+    """
+    import json
+
+    from manyruns import actions
+
+    if args.surface == "ladder":
+        given = [flag for flag, value in (("--gate", args.gate), ("--seed", args.seed))
+                 if value is not None]
+        if given:
+            parser.error(f"the ladder surface takes no {', '.join(given)}")
+    try:
+        doc = actions.enumerate_actions(
+            args.surface, dataset=args.dataset, recipe=args.recipe, step=args.step,
+            dataset_dir=args.dataset_dir, gate=args.gate != "off",
+            seed=42 if args.seed is None else args.seed)
+    except actions.UsageError as exc:
+        parser.error(str(exc))
+    except actions.LoadError as exc:
+        print(f"error: cannot load {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(doc, indent=2))
+    return 0
 
 
 def cmd_check(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:

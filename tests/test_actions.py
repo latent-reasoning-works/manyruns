@@ -9,7 +9,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
+import sys
 from pathlib import Path
+
+import pytest
+import yaml
 
 from manyruns import actions, app, catalog, narrate, score, store, tune, vocab
 from manyruns.tui import params, state
@@ -264,3 +269,169 @@ def test_gate_is_recorded_and_changes_the_digest(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "read", refuse)
     assert actions.enumerate_actions("ledger", dataset="swissroll", gate=False,
                                      store=tmp_path)["evidence"] is None
+
+
+# ── task 3: the CLI ─────────────────────────────────────────────────────────────
+
+
+def _cli(argv: list[str], capsys) -> tuple[int, str, str]:
+    """`app.main(argv)` as a process would see it: exit code, stdout, stderr."""
+    try:
+        code = app.main(argv)
+    except SystemExit as exit_:
+        code = exit_.code
+    out, err = capsys.readouterr()
+    return code, out, err
+
+
+def test_actions_is_a_subcommand(capsys):
+    assert app._normalize_argv(["actions", "pbmc3k"]) == ["actions", "pbmc3k"]
+    args = app._build_parser().parse_args(["actions", "pbmc3k"])
+    assert args.func is app.cmd_actions
+    assert args.surface == "ledger"
+    assert args.dataset == "pbmc3k"
+    code, out, _ = _cli(["--help"], capsys)
+    assert code == 0
+    assert "actions" in out
+
+
+def test_repeat_runs_are_byte_identical(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    first = _cli(["actions", "pbmc3k"], capsys)
+    second = _cli(["actions", "pbmc3k"], capsys)
+    assert first[0] == 0
+    assert first[1].endswith("}\n")
+    assert first[1].encode() == second[1].encode()
+
+
+@pytest.mark.parametrize("argv, needle", [
+    ([], None),
+    (["--surface", "tune", "--recipe", "cluster"], None),
+    (["no_such_dataset"], "no_such_dataset"),
+    (["no_such_dataset", "--surface", "tune", "--recipe", "cluster"], "no_such_dataset"),
+    (["pbmc3k", "--surface", "tune"], "--recipe"),
+    (["pbmc3k", "--surface", "tune", "--recipe", "no_such_recipe"], "no_such_recipe"),
+    (["pbmc3k", "--surface", "tune", "--recipe", "cluster", "--step", "pca"], "pca"),
+    (["pbmc3k", "--recipe", "cluster"], "--recipe"),
+    (["pbmc3k", "--step", "umap"], "--step"),
+    (["pbmc3k", "--surface", "ladder"], "DATASET"),
+    (["--surface", "ladder", "--recipe", "cluster"], "--recipe"),
+    (["--surface", "ladder", "--step", "umap"], "--step"),
+    (["--surface", "ladder", "--gate", "off"], "--gate"),
+    (["--surface", "ladder", "--seed", "1"], "--seed"),
+    (["pbmc3k", "--gate", "maybe"], "maybe"),
+    (["pbmc3k", "--surface", "sweep"], "sweep"),
+    (["--surface", "ladder", "--dataset-dir", "<empty>"], None),
+])
+def test_usage_errors_exit_2_with_empty_stdout(argv, needle, tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    if "<empty>" in argv:
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        assert empty.is_dir()
+        argv = [str(empty) if a == "<empty>" else a for a in argv]
+        # `--dataset-dir` is accepted on every surface and changes nothing on the ladder.
+        code, out, _ = _cli(["actions", *argv], capsys)
+        assert code == 0
+        assert out == _cli(["actions", "--surface", "ladder"], capsys)[1]
+        return
+    code, out, err = _cli(["actions", *argv], capsys)
+    assert code == 2
+    assert out == ""
+    if needle is not None:
+        assert needle in err
+
+
+def test_load_failure_exits_1_with_empty_stdout(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    ddir = tmp_path / "datasets"
+    ddir.mkdir()
+    (ddir / "broken.yaml").write_text("name: [")
+    assert ddir.is_dir()
+    code, out, err = _cli(["actions", "broken", "--dataset-dir", str(ddir)], capsys)
+    assert (code, out) == (1, "")
+    assert "dataset" in err and "broken" in err
+    assert len(err.strip().splitlines()) == 1
+
+    assert catalog.recipe_dir().is_dir()
+    cluster = (catalog.recipe_dir() / "cluster.yaml").read_text()
+    rdir = tmp_path / "recipes"
+    rdir.mkdir()
+    (rdir / "cluster.yaml").write_text(cluster)
+    (rdir / "broken.yaml").write_text("name: [")
+    assert rdir.is_dir()
+    monkeypatch.setenv("MANYRUNS_RECIPE_DIR", str(rdir))
+    code, out, err = _cli(["actions", "pbmc3k", "--surface", "tune", "--recipe", "broken"],
+                          capsys)
+    assert (code, out) == (1, "")
+    assert "recipe" in err and "broken" in err
+    assert len(err.strip().splitlines()) == 1
+
+    # On the ledger a recipe that does not load is a missing row, not a failure of the verb.
+    code, out, _ = _cli(["actions", "pbmc3k"], capsys)
+    assert code == 0
+    doc = json.loads(out)
+    assert [o["recipe"] for o in doc["offered"]] == ["cluster"]
+    assert "broken" not in doc["detail"]
+
+    twice = yaml.safe_load(cluster)
+    twice["name"] = "twice"
+    umap = next(i for i, s in enumerate(twice["steps"]) if s["name"] == "umap")
+    twice["steps"].insert(umap + 1, dict(twice["steps"][umap]))
+    assert catalog.check_recipe(twice, "twice") == []
+    (rdir / "twice.yaml").write_text(yaml.safe_dump(twice))
+    code, out, err = _cli(["actions", "pbmc3k", "--surface", "tune", "--recipe", "twice"],
+                          capsys)
+    assert (code, out) == (1, "")
+    assert "twice" in err and "umap" in err
+
+
+def test_no_heavy_import_no_session_and_no_write(tmp_path):
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    assert cwd.is_dir()
+    probe = (
+        "import json, sys\n"
+        "import manyruns.actions\n"
+        "manyruns.actions.enumerate_actions('ledger', dataset='pbmc3k')\n"
+        "from manyruns import app\n"
+        "code = app.main(['actions', 'pbmc3k'])\n"
+        "bad = sorted(k for k in sys.modules if k.startswith(('textual', 'manylatents'))\n"
+        "             or k == 'manyruns.session')\n"
+        "print(json.dumps({'code': code, 'bad': bad}), file=sys.stderr)\n"
+    )
+    done = subprocess.run([sys.executable, "-c", probe], cwd=cwd, capture_output=True,
+                          text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    report = json.loads(done.stderr.strip().splitlines()[-1])
+    assert report == {"code": 0, "bad": []}
+    assert json.loads(done.stdout)["schema_version"] == 1
+    assert list(cwd.iterdir()) == []
+
+
+def test_returned_and_printed_documents_have_one_digest(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    cases = [
+        (["pbmc3k"], dict(surface="ledger", dataset="pbmc3k")),
+        (["pbmc3k", "--surface", "tune", "--recipe", "cluster"],
+         dict(surface="tune", dataset="pbmc3k", recipe="cluster")),
+        (["--surface", "ladder"], dict(surface="ladder")),
+    ]
+    docs = {}
+    for argv, kwargs in cases:
+        surface = kwargs.pop("surface")
+        doc = actions.enumerate_actions(surface, **kwargs)
+        code, out, _ = _cli(["actions", *argv], capsys)
+        assert code == 0
+        printed = json.loads(out)
+        assert doc == printed
+        assert _digest(doc) == _digest(printed)
+        docs[surface] = doc
+    assert docs["ladder"]["incomparable"] == [[3, 4]]
+    assert "dataset" not in docs["ladder"]
+    # A choice is checkable from the document alone.
+    assert docs["ledger"]["surface"] == "ledger"
+    assert docs["ledger"]["dataset"]["name"] == docs["tune"]["dataset"]["name"] == "pbmc3k"
+    assert docs["ledger"]["offered"]
+    assert (docs["tune"]["recipe"], docs["tune"]["step"]) == ("cluster", None)
+    assert set(docs["tune"]["knobs"]) == {"umap", "leiden"}
