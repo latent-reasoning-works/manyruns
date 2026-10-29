@@ -362,11 +362,18 @@ def _record_decision(session: Any, attempts: list[dict], chosen: Optional[str],
         entry = {"step": a["name"], "params": a["params"], "label": a["label"]}
         if a.get("by"):
             entry["by"] = a["by"].get("chooser")
+            if (a["by"].get("proposed") or {}).get("chooser"):
+                entry["proposed_by"] = a["by"]["proposed"]["chooser"]
         offered.append(entry)
     driven = chosen_by is not None or any(a.get("by") for a in attempts)
     v2 = {}
     if driven:
-        final = chosen_by or {"chooser": "human", "bound": "none"}
+        final = dict(chosen_by or {"chooser": "human", "bound": "none"})
+        # THE CARD BEHIND THE KEPT ATTEMPT. The accept is usually a later keystroke, so the
+        # proposal that produced the kept values rides on the attempt, not on the accept.
+        kept = next((a for a in reversed(attempts) if a["label"] == chosen), None)
+        if not final.get("proposed") and kept and (kept.get("by") or {}).get("proposed"):
+            final["proposed"] = kept["by"]["proposed"]
         v2 = {"chooser": final.get("chooser") or "human", "bound": final.get("bound") or "none",
               "proposed": final.get("proposed"), "legal_id": final.get("legal_id"),
               "rationale": (final.get("proposed") or {}).get("rationale")}

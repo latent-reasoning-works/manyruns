@@ -1105,7 +1105,8 @@ class RunScreen(Screen):
         self.conversation.append(("you", f"took {card['line']}"))
         self._deliver(card["line"], qid, by={
             "chooser": "human", "bound": "none", "legal_id": card.get("legal_id"),
-            "proposed": {"params": card["line"], "chooser": card.get("by"),
+            "proposed": {"params": card.get("params") or {}, "line": card["line"],
+                         "chooser": card.get("by"), "bound": card.get("bound"),
                          "rationale": card.get("rationale")}})
         self._after_answer()
         self.seat.emit({"event": "taken", "line": card["line"], "question_id": qid})

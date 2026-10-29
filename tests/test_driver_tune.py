@@ -58,6 +58,11 @@ def test_the_scientist_accepting_a_drivers_card_is_the_humans_choice(tmp_path, m
     assert row["schema_version"] == 2
     assert row["chooser"] == "human" and row["bound"] == "none"
     assert [o.get("by") for o in row["offered"]] == [None, "human"]
+    # The card behind the kept attempt is recorded even though the accept came later and was
+    # the scientist's own keystroke: a machine suggested the value that was kept.
+    assert row["proposed"]["chooser"] == "llm:qwen3:1.7b"
+    assert row["proposed"]["params"] == {"knn": 10}
+    assert row["offered"][1]["proposed_by"] == "llm:qwen3:1.7b"
 
 
 def test_a_loop_no_driver_touched_writes_the_version_1_row(tmp_path, monkeypatch):

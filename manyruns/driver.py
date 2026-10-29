@@ -224,7 +224,8 @@ def handle(request: Any, ctrl: dict, offer: Optional[dict]) -> tuple[dict, Optio
     line = request["decision"] if "decision" in request else answer_line(request["params"])
     if verb == "propose":
         rationale = request.get("rationale")
-        return {"ok": True}, {"kind": "propose", "line": line, "by": by,
+        return {"ok": True}, {"kind": "propose", "line": line, "by": by, "bound": ctrl.get("bound"),
+                              "params": dict(request.get("params") or {}),
                               "rationale": rationale if isinstance(rationale, str) else None,
                               "question_id": offer.get("question_id"),
                               "legal_id": offer["legal_id"]}

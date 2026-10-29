@@ -178,6 +178,8 @@ async def test_at_propose_the_card_waits_for_the_scientists_key(tmp_path):
 
     row = _tune_rows(holder)[-1]
     assert row["chooser"] == "human" and [o.get("by") for o in row["offered"]] == [None, "human"]
+    assert row["proposed"]["chooser"] == "llm:qwen3:1.7b" and row["proposed"]["params"] == {"t": 20}
+    assert row["rationale"] == "a longer diffusion draws the trajectory as one line"
 
 
 @drives
