@@ -6,6 +6,9 @@ During the open beta, the CLI and record schema can still change.
 
 ## [Unreleased]
 
+- Relicensed from MIT to Apache-2.0. Releases up to and including 0.1.0 stay under MIT; NOTICE keeps the MIT notice and lists the MIOFlow files it does not cover.
+
+
 ### Added
 
 - An engine byproduct that is a dict of scalars, such as the Reeb graph

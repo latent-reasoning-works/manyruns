@@ -7,5 +7,5 @@ authors:
   - name: "Latent Reasoning Works"
 repository-code: "https://github.com/latent-reasoning-works/manyruns"
 url: "https://github.com/latent-reasoning-works/manyruns"
-license: MIT
+license: Apache-2.0
 abstract: "A workflow, config catalog, and run record for geometric data exploration."

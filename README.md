@@ -10,7 +10,7 @@
   load. assume. run. repeat.
 </pre>
 
-[![license](https://img.shields.io/badge/license-MIT-F59E0B.svg)](LICENSE)
+[![license](https://img.shields.io/badge/license-Apache--2.0-F59E0B.svg)](LICENSE)
 [![python](https://img.shields.io/badge/python-3.11–3.12-F59E0B.svg)](https://www.python.org)
 [![uv](https://img.shields.io/badge/pkg-uv-F59E0B.svg)](https://docs.astral.sh/uv/)
 
@@ -336,14 +336,15 @@ for existence by the test suite.
 
 ## licensing and sample data
 
-manyruns is [MIT licensed](LICENSE). Its dependencies `phate`, `graphtools`, `tasklogger`,
-`leidenalg`, and `igraph` are GPL licensed; they are imported rather than bundled in the
+manyruns is licensed under [Apache-2.0](LICENSE); see [NOTICE](NOTICE) for the MIT notice of
+releases up to 0.1.0 and the MIOFlow files the relicense does not cover. Its dependencies
+`phate`, `graphtools`, `tasklogger`, `leidenalg`, and `igraph` are GPL licensed; they are imported rather than bundled in the
 manyruns distribution.
 
 The `pbmc3k` sample is **10x Genomics, 3k PBMCs from a Healthy Donor**, Cell Ranger 1.1.0
 (2016): [original dataset](https://www.10xgenomics.com/datasets/3-k-pbm-cs-from-a-healthy-donor-1-standard-1-1-0).
 The app fetches the [Scanpy H5AD copy](https://exampledata.scverse.org/scanpy/pbmc3k_raw.h5ad)
-on explicit first use. The data is not bundled with manyruns; the MIT license covers this
+on explicit first use. The data is not bundled with manyruns; the license covers this
 project's code, not third-party data.
 
 ## status
@@ -363,5 +364,5 @@ lets the trajectory step drop its local shim.
 ---
 
 <p align="center">
-<sub>MIT License · <a href="https://github.com/latent-reasoning-works">Latent Reasoning Works</a></sub>
+<sub>Apache-2.0 License · <a href="https://github.com/latent-reasoning-works">Latent Reasoning Works</a></sub>
 </p>
