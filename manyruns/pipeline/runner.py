@@ -34,7 +34,7 @@ from manyruns.pipeline import stubs as _stubs
 from manyruns.pipeline import suite as _suite
 from manyruns.pipeline.io import _numeric_quiet
 from manyruns.pipeline.loading import as_matrix, dense as _dense
-from manyruns.vocab import CATEGORICAL_KINDS, INPROC, STEP_GROUPS
+from manyruns.vocab import CATEGORICAL_KINDS, INPROC, STEP_GROUPS, STEP_PRODUCES
 from manyruns.watch import describe
 
 
@@ -1611,6 +1611,16 @@ def _display_scatter(emb, state, ctx, fname, title, *, trajectories=None):
     return result
 
 
+def _label_valued(name: str) -> bool:
+    """Whether a latent step leaves a PARTITION in ``state["emb"]`` rather than coordinates.
+
+    Read off `vocab.STEP_PRODUCES` — the one table that already says `leiden` yields
+    `clusters` — so this cannot drift from the calculus the first time a second clustering
+    step is added. What such a step leaves behind is an (N, 1) label column (the shape
+    `test_analysis_readouts` measured), and the geometry suite has nothing to measure in it."""
+    return "clusters" in STEP_PRODUCES.get(name, ())
+
+
 def _ml_latent(name, params, state, g, ctx):
     """A latent step → ``manylatents.api.run(algorithms={'latent': name})``."""
     import numpy as np
@@ -1626,8 +1636,21 @@ def _ml_latent(name, params, state, g, ctx):
     kwargs.update(params or {})
     # The declared metric suite. manylatents' registry computes these and returns them in
     # `scores`, which we fold into the g-vector below — this is the whole mechanism by which
-    # "a suite of 10-20 metrics" reaches the experiment table. Omitted → engine defaults.
-    if ctx.get("metrics"):
+    # "a suite of 10-20 metrics" reaches the experiment table. Omitted → NO engine metrics
+    # (`api._resolve_metrics(None)` is "no metrics", not a default bundle).
+    #
+    # NOT FOR A PARTITION STEP. The engine evaluates the suite inside `run()` on the step's own
+    # output, and its list-of-names path has no per-metric catch (manylatents `evaluate.py`,
+    # `_evaluate_registry`): the first metric that declines takes the whole call down, output
+    # included. `leiden` leaves an (N, 1) label column, and `lid` refuses fewer than k+1
+    # distinct points — so on the bundled `cluster` recipe over swissroll 800×10 (17 clusters,
+    # k=20) the step recorded `error: MeasurementUnavailable: only 17 distinct points for k=20`,
+    # the run `ok=False`, exit 1, with the partition computed and lost. The suite is geometry
+    # on coordinates; a partition has none, so it is not sent, and the absence is stated below
+    # rather than implied by a missing `leiden.lid` key (`suite.py`, "declared, not
+    # conditional"). One metric declining is the metric's absence, never the step's error —
+    # the rule `suite.measure` already applies to the final suite.
+    if ctx.get("metrics") and not _label_valued(name):
         kwargs["metrics"] = list(ctx["metrics"])
     # "first" is derived from the state, not a flag: a flag that only cleared on full
     # success meant a step failing *after* producing an embedding sent the next step back
@@ -1659,6 +1682,9 @@ def _ml_latent(name, params, state, g, ctx):
         ctx["metadata_aligned"] = True
     _check_metadata_alignment(emb, state, ctx, out.get("obs_names", out.get("sample_ids")))
     state["emb"] = emb
+    if ctx.get("metrics") and _label_valued(name):
+        g[f"{name}.suite_note"] = ("geometry suite not measured: this step produces a "
+                                   "partition (clusters), not coordinates")
     for k, v in (out.get("scores") or {}).items():
         g[f"{name}.{k}"] = v
         if not k.endswith("_note"):
