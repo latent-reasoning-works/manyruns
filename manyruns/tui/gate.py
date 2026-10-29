@@ -62,6 +62,11 @@ class Gate:
         self.question_kind: Optional[str] = None
         self.transcript: list[str] = []
         self.closed = False
+        #: WHO GAVE THE LAST ANSWER: `None` for the scientist, else the attached driver's
+        #: `{"chooser", "bound", "proposed"}`. Set with the answer under one lock, and read
+        #: by `run_tune_loop` right after `read` returns, so a decision row says who moved a
+        #: value without the loop learning anything about drivers.
+        self.answered_by: Optional[dict] = None
 
     def bind(self, on_prompt: Optional[Callable[[str], None]] = None,
              on_write: Optional[Callable[[str], None]] = None,
@@ -166,7 +171,8 @@ class Gate:
             return (not self.closed and self.prompt is not None
                     and question_id == self.question_id)
 
-    def answer(self, text: str, *, question_id: Optional[int] = None) -> bool:
+    def answer(self, text: str, *, question_id: Optional[int] = None,
+               by: Optional[dict] = None) -> bool:
         """Deliver an answer. False when nothing was waiting for one.
 
         The check is `prompt is not None` rather than the queue's emptiness: a keypress that
@@ -177,9 +183,13 @@ class Gate:
             if (self.closed or self.prompt is None
                     or (question_id is not None and question_id != self.question_id)):
                 return False
+            # Set BEFORE the put: the worker wakes the moment the answer is on the queue, and
+            # reads this right after.
+            previous, self.answered_by = self.answered_by, (dict(by) if by else None)
             try:
                 self._answers.put_nowait(str(text))
             except queue.Full:
+                self.answered_by = previous
                 return False
             # CONSUMED HERE, under the same lock that checked it, so the pending question and the
             # answer to it move together. A reader waiting for `prompt is not None` therefore sees

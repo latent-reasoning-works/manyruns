@@ -42,8 +42,9 @@ MAX_LINE = 1 << 20
 class DriverSocket:
     """A listening socket, the control state, and the current step offer."""
 
-    def __init__(self, folder: Path | str, *, on_effect: Callable[[dict], None],
-                 on_control: Callable[[dict], None], tool_version: str) -> None:
+    def __init__(self, folder: Path | str, *, tool_version: str,
+                 on_effect: Callable[[dict], None] = lambda effect: None,
+                 on_control: Callable[[dict], None] = lambda ctrl: None) -> None:
         self.folder = Path(folder)
         self._on_effect = on_effect
         self._on_control = on_control
@@ -57,6 +58,14 @@ class DriverSocket:
         self._server: Optional[socket.socket] = None
         self._client: Optional[socket.socket] = None
         self._closed = False
+
+    def bind(self, *, on_effect: Callable[[dict], None],
+             on_control: Callable[[dict], None]) -> "DriverSocket":
+        """Attach the screen's callbacks after construction, as `Gate.bind` does and for its
+        reason: the seat is built beside the gate, before the screen that receives its effects."""
+        self._on_effect = on_effect
+        self._on_control = on_control
+        return self
 
     # ── life cycle ───────────────────────────────────────────────────────────
     def start(self) -> str:

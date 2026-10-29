@@ -320,7 +320,8 @@ def _label(step: dict) -> str:
     return f"{step.get('name')} {rendered}".strip()
 
 
-def _record_decision(session: Any, attempts: list[dict], chosen: Optional[str]) -> None:
+def _record_decision(session: Any, attempts: list[dict], chosen: Optional[str],
+                     chosen_by: Optional[dict] = None) -> None:
     """Write what was tried and what was kept — manyruns#45.
 
     THE LOOP EXISTS TO PRODUCE THIS AND WAS THROWING IT AWAY. `decisions.append` has been the
@@ -344,17 +345,36 @@ def _record_decision(session: Any, attempts: list[dict], chosen: Optional[str]) 
     extracts LEDGER rows only — it reads `o["recipe"]` and `o["can_run"]`, which these deliberately
     do not carry, so tune rows are skipped there rather than mis-parsed. Turning them into training
     pairs is separate work; recording them is what stops the data being unrecoverable.
+
+    A DRIVER MAKES IT A VERSION 2 ROW. When any attempt's params came from an attached driver,
+    or a driver (or the scientist accepting a driver's card) made the final choice, each offered
+    entry names who chose it (`by`, absent for the recipe and the scientist), and the row's
+    `chooser`/`bound` say who made the final choice: the driver's, as it told the seat, or
+    `human`/`none`. `proposed` is the card the scientist accepted, when it was one. A loop no
+    driver touched writes the version 1 row exactly as before.
     """
     if len(attempts) < 2:
         return
     from manyruns import decisions
 
+    offered = []
+    for a in attempts:
+        entry = {"step": a["name"], "params": a["params"], "label": a["label"]}
+        if a.get("by"):
+            entry["by"] = a["by"].get("chooser")
+        offered.append(entry)
+    driven = chosen_by is not None or any(a.get("by") for a in attempts)
+    v2 = {}
+    if driven:
+        final = chosen_by or {"chooser": "human", "bound": "none"}
+        v2 = {"chooser": final.get("chooser") or "human", "bound": final.get("bound") or "none",
+              "proposed": final.get("proposed"), "legal_id": final.get("legal_id"),
+              "rationale": (final.get("proposed") or {}).get("rationale")}
     decisions.append(
-        offered=[{"step": a["name"], "params": a["params"], "label": a["label"]}
-                 for a in attempts],
+        offered=offered,
         chosen=chosen, surface="tune", run_id=getattr(session, "run_id", None),
         dataset=getattr(session, "dataset", None), shape=getattr(session, "shape", None),
-        out_dir=_corpus_dir(session))
+        out_dir=_corpus_dir(session), **v2)
 
 
 def _keep_attempt(rec: dict, attempt: int, write: Any) -> None:
@@ -480,6 +500,10 @@ def run_tune_loop(session: Any, step: dict, read: Any, write: Any, *,
     # Appended after `session.step` rather than before, so an attempt that never executed is not
     # offered to the corpus as one that did.
     attempts: list[dict] = []
+    # WHO CHOSE EACH ATTEMPT'S PARAMS: None for the recipe and the scientist, else the attached
+    # driver's `{"chooser", "bound", ...}` as the gate recorded it (`Gate.answered_by`). Only a
+    # surface with a driver ever sets it, so every other loop writes the row it always wrote.
+    attempt_by: Optional[dict] = None
     saved_metrics = session.ctx.get("metrics")
     session.ctx["metrics"] = []
     baseline_state = dict(session.state)
@@ -521,7 +545,7 @@ def run_tune_loop(session: Any, step: dict, read: Any, write: Any, *,
             _reset()
             rec = session.step(current)
             attempts.append({"name": current.get("name"), "params": dict(current.get("params") or {}),
-                             "label": _label(current)})
+                             "label": _label(current), "by": attempt_by})
             show_plots(rec, write)
             write(_fmt_step(rec))
             # Both questions accept changed params. Validate inside this inner loop so a
@@ -536,18 +560,19 @@ def run_tune_loop(session: Any, step: dict, read: Any, write: Any, *,
                 read_tune = getattr(getattr(read, "__self__", None), "read_tune", None)
                 prompt_step = {**current, "constraints": constraints}
                 text = (read_tune(prompt, prompt_step, kind) if read_tune else read(prompt)).strip()
+                by = getattr(getattr(read, "__self__", None), "answered_by", None)
                 choice = text.lower()
                 if kind == "params" and choice in ("cancel", "c"):
                     kind = "decision"
                     continue
                 if kind == "decision":
                     if choice in ("accept", "a", "y", "yes"):
-                        _record_decision(session, attempts, _label(current))
+                        _record_decision(session, attempts, _label(current), by)
                         return current
                     if choice in ("cancel", "c"):
                         _reset()
                         # A cancellation still records that none of these attempts was kept.
-                        _record_decision(session, attempts, None)
+                        _record_decision(session, attempts, None, by)
                         write(f"  (cancelled — {current['name']} discarded, back to what it was before)")
                         return None
                     if choice in ("tune", "t", "retry", "r"):
@@ -565,6 +590,7 @@ def run_tune_loop(session: Any, step: dict, read: Any, write: Any, *,
             attempt += 1
             _keep_attempt(rec, attempt, write)
             current = {**current, "params": {**(current.get("params") or {}), **overrides}}
+            attempt_by = by
     except ComputeCancelled:
         if not attempts:
             # Nothing completed: the driver records this occurrence as not run.
