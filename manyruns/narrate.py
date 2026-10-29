@@ -1008,17 +1008,26 @@ def refusal(user_text: str, obs: Observation) -> Optional[str]:
     """If the user asks for a trajectory on data with no time axis, decline + reframe. Else None."""
     t = (user_text or "").lower()
     wants_trajectory = any(w in t for w in _TRAJECTORY_WORDS)
-    if wants_trajectory and obs.shape in ("case-control", "single", "unknown"):
+    # `clusters` is here for the same reason as the rest: cell TYPES captured at one moment
+    # (pbmc3k declares it) have no time axis, so a trajectory over them is invented.
+    if wants_trajectory and obs.shape in ("case-control", "clusters", "single", "unknown"):
         return (
             "There's no progression to show here — these cells were captured at one moment"
             + (", from different people" if obs.shape == "case-control" else "")
             + ". There's no clock in this data. I could force a trajectory, but it would draw a "
             "confident story of change that the data can't support — a line invented from noise. "
             "I'd rather not hand you that.\n  What I think you want: "
-            + ("how the groups differ from each other." if obs.shape == "case-control"
-               else "the structure of the data, mapped honestly.")
+            + _REFRAME.get(obs.shape, "the structure of the data, mapped honestly.")
         )
     return None
+
+
+#: What a refused trajectory request most likely meant, per shape. A shape absent here gets the
+#: structure-only reframe.
+_REFRAME = {
+    "case-control": "how the groups differ from each other.",
+    "clusters": "what cell types are here and how they separate.",
+}
 
 
 def interpret(user_text: str, obs: Observation) -> Optional[str]:
