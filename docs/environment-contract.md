@@ -357,6 +357,9 @@ The scientist sets your level with one key (`ctrl+g`); no request can raise it.
 | `propose` | the above, and `propose` |
 | `drive` | the above, and `apply` |
 
+An unattended run has nobody at the keys, so whoever starts it may grant a level up front
+with `MANYRUNS_DRIVER_LEVEL` (`interpret` by default); you get it on attach.
+
 The **handbrake** (`ctrl+b`) drops you to `interpret` at once. You stay attached and may still
 talk. `ctrl+g` hands the wheel back.
 

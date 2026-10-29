@@ -255,3 +255,20 @@ def test_close_while_a_driver_is_attached_does_not_hang(tmp_path):
     t.join(3)
     assert not t.is_alive()
     c.close()
+
+
+def test_a_launch_grant_sets_the_level_a_driver_gets_on_attach(tmp_path):
+    """Unattended runs: whoever starts the run grants a level up front. Nobody is at the keys
+    to raise it, and no request can."""
+    s = DriverSocket(tmp_path, tool_version="t", grant="drive")
+    s.start()
+    c = Client(s.path)
+    reply = c.ask({"verb": "hello", "chooser": "llm:x", "bound": "schema"})
+    assert reply["level"] == "drive" and reply["tag"] == "MACHINE · llm:x"
+    c.close()
+    s.close()
+
+
+def test_an_unknown_grant_is_refused_at_launch(tmp_path):
+    with pytest.raises(ValueError, match="grant"):
+        DriverSocket(tmp_path, tool_version="t", grant="root")

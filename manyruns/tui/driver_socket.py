@@ -44,7 +44,15 @@ class DriverSocket:
 
     def __init__(self, folder: Path | str, *, tool_version: str,
                  on_effect: Callable[[dict], None] = lambda effect: None,
-                 on_control: Callable[[dict], None] = lambda ctrl: None) -> None:
+                 on_control: Callable[[dict], None] = lambda ctrl: None,
+                 grant: str = "interpret") -> None:
+        # THE LAUNCH GRANT: the level a driver gets the moment it attaches. `interpret` unless
+        # whoever STARTED the run said otherwise, which is how an unattended run (nobody at the
+        # keys to press ctrl+g) can be driven at all. It is still a person's decision, made
+        # before the run instead of during it; no request can raise a level past it.
+        if grant not in driver.LEVELS:
+            raise ValueError(f"grant must be one of {list(driver.LEVELS)}, not {grant!r}")
+        self.grant = grant
         self.folder = Path(folder)
         self._on_effect = on_effect
         self._on_control = on_control
@@ -221,8 +229,8 @@ class DriverSocket:
                 return {"ok": False, "error": "already attached; hello once"}, attached
             try:
                 with self._lock:
-                    self.ctrl = driver.attach(self.ctrl, request.get("chooser"),
-                                              request.get("bound"))
+                    self.ctrl = {**driver.attach(self.ctrl, request.get("chooser"),
+                                                 request.get("bound")), "level": self.grant}
                     ctrl = dict(self.ctrl)
             except ValueError as error:
                 return {"ok": False, "error": str(error)}, attached
