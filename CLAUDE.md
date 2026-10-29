@@ -10,75 +10,91 @@ algorithms belong in `manylatents`.
 **observe → legal moves → step → record**; `Session.step` accepts a step name or a
 step dictionary, and `vocab.unmet` checks preconditions.
 
-## Bring your own intelligence — the driver seam
+**Bring your own intelligence.** Any model, trained on anything, may drive a run.
+manyruns defines what is legal, checks every move, runs it, and records who made it;
+the model brings the judgement. Swapping, retraining, or cloning a model changes
+nothing about what counts as a valid or reproducible run.
 
-Any model, trained on anything, may drive manyruns. That is the product: manyruns
-defines what is legal, checks every proposal, runs it, and records it; the driver
-brings the intelligence. Swapping, retraining, or cloning a driver changes nothing
-about what counts as a valid or reproducible run.
+## Who is at the wheel
 
-The seam keeps the arrow of the next section: **a driver attaches to manyruns, and
-manyruns never calls a driver.** A running session opens a local socket in its own
-output folder. Any program may connect to it, as it may run the CLI. The socket names
-no caller and is the same for every program.
+A stepped run has one wheel and a tag under its heading that always says who holds it.
+A **driver** is any outside program attached to the run's **seat** (below).
 
-The verbs, as JSON lines:
+| Mode | Who is there | Driver level | Tag |
+|---|---|---|---|
+| person alone | scientist | no driver attached | `HUMAN` |
+| interpret | scientist + driver | `interpret`: talks only | `HUMAN` |
+| propose | scientist + driver | `propose`: puts up cards the scientist takes | `HUMAN` |
+| drive, watched | scientist + driver | `drive`: applies its own choices | `ON AIR · MACHINE · <chooser>` |
+| driver alone | driver | `drive`, granted at launch | `ON AIR · MACHINE · <chooser>` |
 
-- `actions`: the legal moves, as `manyruns actions` prints them. The `ledger` surface
-  lists the recipes; the `step` surface lists the current step's parameters, current
-  values, presets, and ranges. Both carry a `legal_id` (contract §2.3).
-- `events`: what happened, as it happens: runs, the scientist's messages, and changes of
-  control.
-- `say`: text for the conversation pane.
-- `propose`: a choice shown to the scientist as a card, which one key accepts.
-- `apply`: a choice that runs at once. manyruns checks it against the current offer,
-  whatever schema the driver used. A stale `legal_id`, an unknown parameter, a wrong
-  type, or a value out of range is refused with its reason and recorded, and nothing
-  runs. A valid choice goes through the tune loop's own gate, so the figure pane updates
-  as it does for a human step.
+Keys on the run screen, all priority bindings so they work while the ask field has
+focus: `ctrl+g` cycles the level (interpret → propose → drive), `ctrl+b` is the
+handbrake, `ctrl+y` takes the driver's card. With a driver attached, `? question` in
+the ask field goes to the driver, and the answer pane's border names it.
 
-The scientist sets the driver's level with one key, and the level decides which verbs
-the driver may use:
+## The driver seam
 
-| Level | The driver may use |
+**A driver attaches to manyruns; manyruns never calls a driver.** This keeps the arrow
+of the next section. A stepped run opens a seat: a Unix socket (mode 0600) in a short
+temp folder, with a pointer at `outputs/<project>/driver.json`. Any program may
+connect, as it may run the CLI. The seat names no caller.
+
+The protocol is §8 of [the environment contract](docs/environment-contract.md); that is
+what a driver author reads. In short: JSON lines; `hello` (with `chooser` and `bound`)
+first; requests `actions`, `say`, `propose`, `apply`; events pushed by the session
+(`control`, `offer`, `question`, `message`, `said`, `applied`, `taken`, `refused`,
+`finished`). `hello` returns the offer already waiting, because events are not replayed.
+
+| File | Holds |
 |---|---|
-| `interpret` | `actions`, `events`, `say` |
-| `propose` | the above, and `propose` |
-| `drive` | the above, and `apply` |
+| `manyruns/driver.py` | levels, the step offer, the check on a choice, request handling; pure |
+| `manyruns/tui/driver_socket.py` | the seat: one driver at a time, threads, pointer file |
+| `manyruns/tui/run.py` | the tag, the keys, the conversation pane, cards, applying a choice |
+| `manyruns/tui/gate.py`, `manyruns/tune.py` | who answered, carried into the decision row |
+| `manyruns/tui/app.py` | a seat for every stepped run |
+| `tests/fixtures/driver_conformance.json` | cases with the verdict the seam owes each choice |
 
-Rules for the seam:
+Rules:
 
-- A tag on the screen always says who has control: `HUMAN`, or the driver's chooser
-  (`llm:<model>`) while it drives. It changes the moment control changes.
-- The handbrake key stops a driving driver at once: the level drops to `interpret`, a
-  fit the driver started is cancelled, and the parameters stay where the last completed
-  attempt left them, for the scientist to change.
-- The driver passes `chooser` and `bound` in, and they are recorded as told (contract
-  §2.1, §2.2). manyruns records its own verdict beside them. The verdict is the only
-  check manyruns enforces, and it never trusts a schema to have held.
-- Each `propose` and `apply` writes a version 2 decision row: `proposed`, `chosen`,
-  `chooser`, `legal_id`, `state_before`, the turn's text when the driver sends it, and
-  the `run_id`. `decisions.examples()` is the training shape; extend it there.
-- The documents are plain JSON. A driver needs no import or type from manyruns.
-- Name no driver, model, or trainer here. Conformance fixtures (offers, with the verdict
-  each reply must get) ship in this repository; the check that calls a model lives with
-  the driver.
-- The driver owns its loop. manyruns answers one request at a time, and `agents.py`
-  stays the only place manyruns asks a model: a rented one, one call at a time.
-
-Status on 2026-10-29: built and tested. The pure half is `manyruns/driver.py`; the
-socket is `tui/driver_socket.py`; the screen half is in `tui/run.py`; `tui/app.py`
-opens a seat for every stepped run. The protocol a driver author reads is
-§8 of [the environment contract](docs/environment-contract.md). The `ledger` surface is not on the
-socket yet; a driver reads it with `manyruns actions`.
+- **The level is the scientist's.** No request can raise it. An unattended run gets its
+  level from whoever starts it (`MANYRUNS_DRIVER_LEVEL`), before the run, never after.
+- **manyruns checks every choice itself**, whatever schema the driver used, through the
+  parser typed text goes through (`tune.validated_overrides`) plus a range check. A stale
+  `legal_id`, an unknown parameter, a wrong type, or a value out of range is refused with
+  its reason. Refuse, never clamp: a clamp runs a number the driver did not choose.
+- **The offer states only what is known.** Names and current values come from
+  `params.tunable_for`, minimums from `params.FLOOR`, caps from
+  `bounds.resolved_constraints`. An undeclared maximum is `maximum_known: false`, never
+  invented. A knob at a word that takes a number (`t: auto`) is offered as the number.
+- **An apply is checked twice**: by the seat, and again on the UI thread, so a handbrake
+  or a human answer that lands in between wins.
+- **The handbrake** drops the level to `interpret` and refuses the driver's next move.
+  A fit already running is left to finish: cancelling mid-fit would discard the whole
+  step (`run_tune_loop`'s `ComputeCancelled` path), the opposite of keeping the values.
+- **Every move is attributed.** A tune loop a driver touched writes a version 2 decision
+  row: each offered value names who set it (`by`) and whose card it came from
+  (`proposed_by`); `chooser`/`bound` name who made the final choice; `proposed` and
+  `rationale` carry the card behind the kept value. A loop no driver touched writes the
+  version 1 row it always wrote.
+- **The protocol is versioned** (`driver.PROTOCOL_VERSION`, on the pointer and on
+  `hello`). Bump it for any change an existing driver could misread, and re-pin the
+  conformance fixtures.
+- **Name no driver, model, or trainer here.** Conformance fixtures ship here; the code
+  that calls a model and scores it lives with the driver (manyagents, or the driver's
+  own repository).
+- The driver owns its loop. manyruns answers one request at a time. `agents.py` stays the
+  only place manyruns itself asks a model: a rented one, one call at a time.
 
 ## No track to a learner — the arrow points one way
 
 manyruns names no learner: no dependency, import, engine value, config, or CLI path.
 A learner, or any agent, observes the artifacts (`index.jsonl`, g-vectors, decision
-rows) and drives the CLI from outside, like any user. There is no privileged caller.
-The environment defines what is legal and records what happened; the caller decides
-what to do. See [the environment contract](docs/environment-contract.md), §3.5.
+rows) and drives the CLI or the seat from outside, like any user. There is no privileged
+caller. The environment defines what is legal and records what happened; the caller
+decides what to do. See [the environment contract](docs/environment-contract.md), §3.5.
+Attaching to the seat is not a track: the seat is open to every program and manyruns
+never learns who is on the other end.
 
 Use roles in prose. `tests/learners.py` holds only SHA-256 digests of forbidden
 strings; keep that guard. The public-safety gate checks every tracked file,
@@ -106,11 +122,10 @@ lineage, rewind, and branch tests use `pipeline.run_inproc` (`vocab.INPROC`). Th
 in-process loop is a test substrate, absent from product engine choices and serving
 backends. Mock output is not scientific evidence.
 
-Tools currently run as declared recipe steps. `manyruns actions <DATASET>` is the one
-action-enumeration interface: it prints the ledger for a dataset's declaration as one
-JSON document (`manyruns/actions.py`), for any outside program that drives the CLI. Add
-further planning or enumeration interfaces only against a concrete caller's needs;
-the driver seam below is one, and nothing goes into it that no driver needs.
+Two interfaces enumerate legal moves: `manyruns actions <DATASET>` (`manyruns/actions.py`)
+prints a dataset's ledger as one JSON document, and the seat's `actions` returns the
+offer for the step the tune loop is waiting on. The ledger is not on the seat yet. Add
+further planning or enumeration interfaces only against a concrete caller's needs.
 
 ## Config and record handling
 
@@ -122,9 +137,10 @@ string-`__import__` plugin loading so packaging remains straightforward.
 
 `store.append` writes one run per line to cwd-relative `outputs/index.jsonl`.
 TUI menu choices use `outputs/decisions.jsonl`; tuning choices use the session's
-output directory. Both writers put `schema_version: 1` first. Missing versions
-read as 1, and unknown fields survive reading and JSON serialization. Core row
-shapes are documented in `manyruns/store.py` and `manyruns/decisions.py`.
+output directory. Missing schema versions read as 1, and unknown fields survive
+reading and JSON serialization. Core row shapes are documented in `manyruns/store.py`
+and `manyruns/decisions.py`; a decision row is version 2 exactly when a `chooser` is
+given.
 
 `store.append(extra=...)` is a top-level merge: `source`, `modality`, and
 `decision_id` remain core fields even when passed through that argument. Put future
@@ -132,6 +148,9 @@ downstream fields in nested `extra.<caller>` namespaces.
 
 Environment variables use `MANYRUNS_*` and are read through `manyruns.env.get`,
 passing the suffix after the prefix. User cache state lives in `~/.cache/manyruns/`.
+The driver seam reads two: `MANYRUNS_DRIVER_SOCKET` (`0` or empty: no seat) and
+`MANYRUNS_DRIVER_LEVEL` (the launch grant: `interpret`, `propose`, or `drive`; a value
+that is not a level opens no seat and says so).
 
 ## Distribution
 
@@ -153,11 +172,11 @@ uv tool install --python 3.12 --force git+https://github.com/latent-reasoning-wo
 ```
 
 Supported platforms: macOS and Linux, Python 3.11–3.12. Windows is unsupported
-because the required single-cell dependency `scikit-misc` has no Windows wheels.
-Base dependencies run every bundled recipe. Keep `manylatents-omics[singlecell]`:
-bare omics does not supply scanpy. Public dependencies resolve from PyPI without
-checkout source overrides. Diagnose tool installs using installed versions and
-`direct_url.json`.
+because the required single-cell dependency `scikit-misc` has no Windows wheels, and
+the seat is a Unix socket. Base dependencies run every bundled recipe. Keep
+`manylatents-omics[singlecell]`: bare omics does not supply scanpy. Public
+dependencies resolve from PyPI without checkout source overrides. Diagnose tool
+installs using installed versions and `direct_url.json`.
 
 `uv tool install` supplies an isolated application. For a developer checkout, use
 `uv sync --extra harness --extra dev` and run commands through `uv run`. Sync
@@ -176,6 +195,15 @@ uv sync --extra harness --extra dev
 uv run pytest tests/ -q
 uv run ruff check manyruns tests
 ```
+
+The driver seam's tests run in seconds and need no model:
+
+```sh
+uv run pytest -q tests/test_driver.py tests/test_driver_socket.py tests/test_tui_driver.py tests/test_driver_tune.py
+```
+
+`tests/test_tui_driver.py` attaches a real Unix-socket client to a real run screen
+running the real tune loop on the mock engine; copy its harness for new screen tests.
 
 `dev` is an extra, not a dependency group: use `--extra dev`, not `--dev`.
 **Never `uv pip install` in this project.** It mutates the environment without
@@ -198,3 +226,5 @@ Write a failing test before changing behavior, then run affected tests, the full
 dev suite, and ruff. **Every test that scans a path must first assert `is_dir()`
 on its scan root.** A renamed directory can otherwise make `rglob` scan nothing
 and pass silently. Keep this protection when moving packages or config trees.
+A module-scope import must be in `tests/test_base_install.py`'s stdlib list or its
+allowlist; defer anything else into the function that needs it.
