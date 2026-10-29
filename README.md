@@ -31,7 +31,7 @@ evaluates the result. The compute lives one layer down
 **Supported platforms:** macOS and Linux, Python 3.11–3.12; Windows is unsupported because
 a required single-cell dependency (`scikit-misc`) ships no Windows wheels.
 
-Three ways to use it:
+Four ways to use it:
 
 - **Just run `manyruns`** → an interactive app: it reads your data, tells you what it sees,
   offers the analyses it can *honestly* run, executes with a live trace, and explains the
@@ -42,6 +42,9 @@ Three ways to use it:
 - **Sweep many** → author a catalog of *recipes* (workflows) and *datasets*, run every
   recipe over every dataset, and rank which geometric metrics actually separate the
   workflows. The `experiment` harness.
+- **Bring your own model** → attach any model to a run while it is open: it can explain,
+  suggest, or tune for you, a tag on screen always says who has control, and one key
+  switches to manual and back. (See [bring your own model](#bring-your-own-model).)
 
 New here? Start with the install below, then open `manyruns`.
 
@@ -192,6 +195,41 @@ with elapsed time until the run finishes.
 
 Prefer one command? The `run` / `check` / sweep verbs below use the same tools.
 
+## bring your own model
+
+Any model can join a run while it is open. It can be a local model through Ollama or vLLM,
+a hosted one, or one you trained yourself. manyruns checks every move it makes and records
+who made it. Nothing about the model is built into manyruns: the model's program attaches
+to the run.
+
+**Who has control.** A tag under the run's heading always says: `HUMAN`, or
+`ON AIR · MACHINE · <model>` while a model is driving. You set how far the model may go:
+
+| Key | What it does |
+|---|---|
+| `ctrl+g` | Next level: **interpret** (it talks) → **propose** (it puts up a card you can take) → **drive** (it changes values itself) |
+| `ctrl+y` | Take the model's card |
+| `ctrl+b` | Manual / auto: one press and you are driving, with the values where they are; press again and the model takes over at its level |
+| `? question` | In the ask field: ask the attached model |
+
+**What it can and cannot do.** The model only chooses among the values manyruns offers for the
+step on screen. A value out of range, an unknown parameter, or an answer to a question that has
+moved on is refused with the reason, and nothing runs. Every value it sets is recorded with its
+name in `outputs/<project>/decisions.jsonl`, next to yours.
+
+**Attaching a model.** Each stepped run writes `outputs/<project>/driver.json`, which names a
+local socket readable only by you. A model's program connects there and speaks JSON lines; the
+protocol is §8 of [the environment contract](docs/environment-contract.md), and the cases a
+driver should pass are in `tests/fixtures/driver_conformance.json`.
+
+**With nobody at the keys.** Grant the level when you start the run:
+
+```bash
+MANYRUNS_DRIVER_LEVEL=drive manyruns
+```
+
+`MANYRUNS_DRIVER_SOCKET=0` turns the socket off.
+
 ## run
 
 ```bash
@@ -288,6 +326,20 @@ if __name__ == "__main__":            # required — the pool spawns processes
 
 The sweep spec and the recipe/dataset authoring briefs are pending a rewrite; the shipped
 recipes under `manyruns/configs/recipe/` are the working reference.
+
+## actions
+
+```bash
+manyruns actions pbmc3k            # one JSON document on stdout
+```
+
+`actions` prints the legal moves for one dataset: the ledger rows (`offered`, each with
+`recipe`, `can_run`, `blocked`, `recommended`, `measured`), per-recipe `detail` (steps,
+`unmet` facts, `offer_rank`), and a `legal_id` that names the legal set and the build. It is
+computed from the dataset's declaration alone, so it never opens, downloads or writes data,
+and its output is the same whether or not the file is on this machine. An unknown name exits 2;
+a declaration that does not load exits 1 with nothing on stdout. `--dataset-dir` and the
+`$MANYRUNS_*_DIR` overlays apply as they do for `check`. Any outside program can read it.
 
 ## architecture
 

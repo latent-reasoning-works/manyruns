@@ -545,9 +545,7 @@ def catalog_entry(name: str, *, skip=(), snapshot=None, on_changed=None,
                                  observation=observation, require_observation=require_observation,
                                  on_changed=on_changed) if found is not None else None)
     pending = found is not None and source is None
-    declared = Observation(shape=ds.get("shape", "unknown"),
-                           modality=ds.get("modality", "unknown"), source=name,
-                           declared=tuple(sorted(narrate.declared_facts(ds))))
+    declared = narrate.declared_observation(ds, name)
     folder = found if found is not None else Path(ref) if handle.get("kind") == "path" else None
     dataset = None if handle.get("kind") == "path" else handle.get("ref", name)
     obs = declared

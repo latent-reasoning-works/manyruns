@@ -128,7 +128,8 @@ def test_examples_are_the_pairs_a_selector_sees(tmp_path):
     assert ex == {"shape": "manifold", "topology": ("surface",),
                   "legal": ["embed", "cluster"],
                   "blocked": {"contrast": "needs a healthy/disease column"},
-                  "recommended": ["embed"], "chosen": "embed", "took_default": True}
+                  "recommended": ["embed"], "chosen": "embed", "took_default": True,
+                  "overrode": None}
 
 
 def test_the_corpus_says_how_often_the_human_just_took_the_default(tmp_path):
@@ -262,3 +263,131 @@ def test_the_unreachable_rung_is_reported_rather_than_hidden():
 
     assert score.unroutable_rungs() == [3]
     assert narrate.unavailable(load_recipe("archetypes")), "rung 4's only claimant is blocked"
+
+
+# ── schema version 2: a proposal and the choice made against it ─────────────
+V1_KEYS = ["schema_version", "decision_id", "run_id", "at", "surface", "dataset", "shape",
+           "topology", "offered", "chosen"]
+V2_EXTRA = ["chooser", "bound", "legal_id", "run_before", "state_before", "proposed",
+            "chosen_params", "rationale"]
+
+PROPOSAL = {"action": "embed", "params": {}, "probabilities": {"embed": 0.6, "cluster": 0.4},
+            "confidence": 0.4, "chooser": "agent:x", "bound": "schema"}
+
+
+def _row(tmp_path, index=-1):
+    return json.loads(decisions.index_path(tmp_path).read_text().splitlines()[index])
+
+
+def test_v1_row_unchanged_without_chooser(tmp_path):
+    """No `chooser`, no change: the row a person's ledger choice writes today, key for key."""
+    _write(tmp_path)
+    row = _row(tmp_path)
+    assert list(row) == V1_KEYS
+    assert row["schema_version"] == 1
+
+
+def test_v2_row_has_proposal_and_choice_side_by_side(tmp_path):
+    from manyruns import actions
+
+    lid = actions.legal_id(["embed", "cluster"], "0.1.0 · revision unavailable")
+    _write(tmp_path, chosen="cluster", chooser="human", bound="none", legal_id=lid,
+           proposed=PROPOSAL, run_before="e89076c7b8e4",
+           state_before={"n_obs": 2700, "n_vars": 32738, "g_vector": {}},
+           rationale="the groups matter more than the layout", surface="cli")
+    row = _row(tmp_path)
+    assert list(row) == V1_KEYS + V2_EXTRA
+    assert row["schema_version"] == 2
+    assert row["chosen"] == "cluster" and row["proposed"] == PROPOSAL
+    assert row["chooser"] == "human" and row["bound"] == "none" and row["legal_id"] == lid
+    assert row["run_before"] == "e89076c7b8e4"
+    assert row["state_before"] == {"n_obs": 2700, "n_vars": 32738, "g_vector": {}}
+    assert row["chosen_params"] is None
+    assert row["rationale"] == "the groups matter more than the layout"
+
+
+def test_v2_row_fills_nothing_it_was_not_given(tmp_path):
+    _write(tmp_path, chooser="rule:my-lab")
+    row = _row(tmp_path)
+    assert row["schema_version"] == 2
+    assert all(row[k] is None for k in V2_EXTRA if k != "chooser")
+
+
+def test_check_proposal_accepts_a_valid_proposal():
+    assert decisions.check_proposal(PROPOSAL, OFFERED) == []
+
+
+def test_check_proposal_rejects_bad_probabilities():
+    for probabilities in ({"embed": 0.5, "cluster": 0.4},          # sums to 0.9
+                          {"embed": 0.6, "contrast": 0.4},         # contrast is not legal here
+                          {"embed": 1.1, "cluster": -0.1}):        # a value outside [0, 1]
+        problems = decisions.check_proposal({**PROPOSAL, "probabilities": probabilities},
+                                            OFFERED)
+        assert problems, probabilities
+    assert decisions.check_proposal(
+        {**PROPOSAL, "probabilities": {"embed": 0.6004, "cluster": 0.4}}, OFFERED) == []
+
+
+def test_check_proposal_rejects_illegal_action():
+    problems = decisions.check_proposal({**PROPOSAL, "action": "contrast"}, OFFERED)
+    assert problems and "needs a healthy/disease column" in " ".join(problems)
+    assert decisions.check_proposal({**PROPOSAL, "action": "nonesuch"}, OFFERED)
+
+
+def test_check_proposal_rejects_bad_chooser_and_bound():
+    assert decisions.check_proposal({**PROPOSAL, "chooser": ""}, OFFERED)
+    assert decisions.check_proposal({**PROPOSAL, "chooser": None}, OFFERED)
+    assert decisions.check_proposal({**PROPOSAL, "bound": "trust me"}, OFFERED)
+    assert decisions.BOUNDS == ("logits", "schema", "prompt", "none")
+
+
+def test_check_proposal_accepts_no_probabilities():
+    proposal = {"action": "embed", "chooser": "rule:my-lab", "bound": "prompt"}
+    assert decisions.check_proposal(proposal, OFFERED) == []
+
+
+def test_proposal_meta_stored_verbatim(tmp_path):
+    meta = {"model": "m", "stage": 0}
+    proposal = {**PROPOSAL, "meta": meta}
+    assert decisions.check_proposal(proposal, OFFERED) == []
+    _write(tmp_path, chooser="human", bound="none", proposed=proposal)
+    assert _row(tmp_path)["proposed"]["meta"] == meta
+    nested = {**PROPOSAL, "meta": {"model": {"name": "m"}}}
+    assert decisions.check_proposal(nested, OFFERED)
+    wide = {**PROPOSAL, "meta": {f"k{i}": i for i in range(17)}}
+    assert decisions.check_proposal(wide, OFFERED)
+    assert decisions.check_proposal({**PROPOSAL, "meta": {f"k{i}": i for i in range(16)}},
+                                    OFFERED) == []
+
+
+def test_examples_excludes_policy_rows(tmp_path):
+    """Environment contract §6 item 3: a row a policy chose is not an example of a person's
+    choice, so `examples` leaves it out by construction."""
+    _write(tmp_path, chosen="embed", chooser="agent:x", bound="schema")
+    _write(tmp_path, chosen="cluster", chooser="human", bound="none")
+    assert [e["chosen"] for e in decisions.examples(tmp_path)] == ["cluster"]
+
+
+def test_examples_marks_override(tmp_path):
+    _write(tmp_path)                                                       # version 1
+    _write(tmp_path, chosen="cluster", chooser="human", bound="none", proposed=PROPOSAL)
+    _write(tmp_path, chosen="embed", chooser="human", bound="none", proposed=PROPOSAL)
+    _write(tmp_path, chosen="embed", chooser="human", bound="none")        # nothing proposed
+    assert [e["overrode"] for e in decisions.examples(tmp_path)] == [None, True, False, None]
+
+
+def test_examples_reads_mixed_versions(tmp_path):
+    """Review focus: one file, both versions, and a version 1 line with no version at all."""
+    _write(tmp_path, chosen="embed")
+    _write(tmp_path, chosen="cluster", chooser="human", bound="none", proposed=PROPOSAL)
+    legacy = json.loads(decisions.index_path(tmp_path).read_text().splitlines()[0])
+    legacy.pop("schema_version")
+    legacy["chosen"] = "cluster"
+    with decisions.index_path(tmp_path).open("a") as fh:
+        fh.write(json.dumps(legacy) + "\n")
+    rows = list(decisions.read(tmp_path))
+    assert [r["schema_version"] for r in rows] == [1, 2, 1]
+    examples = decisions.examples(tmp_path)
+    assert [e["chosen"] for e in examples] == ["embed", "cluster", "cluster"]
+    assert [e["overrode"] for e in examples] == [None, True, None]
+    assert decisions.default_rate(tmp_path) == 1 / 3

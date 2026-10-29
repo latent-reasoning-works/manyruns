@@ -59,7 +59,7 @@ _STDLIB = frozenset({
     "fcntl",
     "io", "itertools", "json", "logging", "math", "os", "pathlib", "platform", "queue",
     "random", "re",
-    "shutil", "signal", "string", "subprocess", "sys", "tarfile", "tempfile", "textwrap",
+    "shutil", "signal", "socket", "string", "subprocess", "sys", "tarfile", "tempfile", "textwrap",
     "threading", "time", "traceback", "types", "typing", "urllib", "uuid", "warnings",
     "webbrowser", "zipfile",
 })

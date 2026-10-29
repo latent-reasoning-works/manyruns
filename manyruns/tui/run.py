@@ -370,6 +370,13 @@ class RunScreen(Screen):
         # goes into the field — which is the channel. The two halves never both fire, and that is
         # the mechanism rather than a coincidence to be careful about.
         Binding("question_mark", "ask", "ask the record", show=True),
+        # THE DRIVER'S KEYS, and all three are PRIORITY bindings with a control modifier, because
+        # they must work while the ask field has focus: a focused `Input` swallows plain letters
+        # (the note above), and a handbrake that only works when the cursor is elsewhere is not
+        # a handbrake. With no driver attached the first two do nothing and say so.
+        Binding("ctrl+g", "wheel", "driver level", show=True, priority=True),
+        Binding("ctrl+b", "handbrake", "manual / auto", show=True, priority=True),
+        Binding("ctrl+y", "take_proposal", "take the proposal", show=False, priority=True),
     ]
 
     DEFAULT_CSS = """
@@ -378,6 +385,7 @@ class RunScreen(Screen):
     RunScreen #tune-strip:focus { background: $boost; }
     RunScreen #figures-pane:focus { border: heavy $warning; }
     RunScreen #heading { height: auto; padding: 0 2; }
+    RunScreen #on-air { height: auto; padding: 0 2; }
     /* Above the panes, not inside one: a caveat is about the whole run, and putting it in the
        top-right pane would make it read as a note on whatever that pane holds — one number
        when it held the g-vector, one answer now. `height: auto` collapses it to nothing while
@@ -558,6 +566,20 @@ class RunScreen(Screen):
             if self.route is not None:
                 self.answer, self.model = self.route.text, self.route.model
 
+    class DriverEffect(Message):
+        """Something an attached driver was allowed to do (`driver.handle`), for the UI thread."""
+
+        def __init__(self, effect: dict) -> None:
+            super().__init__()
+            self.effect = effect
+
+    class DriverControl(Message):
+        """Who has control changed: a driver attached or hung up, or the scientist moved a key."""
+
+        def __init__(self, ctrl: dict) -> None:
+            super().__init__()
+            self.ctrl = ctrl
+
     class Finished(Message):
         """The run ended — cleanly (`results`) or not (`error`). One message for both, because
         a screen that only hears about success leaves the app with no way to tell a run that is
@@ -616,6 +638,11 @@ class RunScreen(Screen):
                  # before filtering?`) cannot be answered from a run started in the app: its
                  # whole answer is the QC numbers, and they are not in the prompt yet.
                  entry: Optional[Any] = None, concerns: Optional[Any] = (),
+                 # THE SEAT: a `tui.driver_socket.DriverSocket` an outside driver attaches to, or
+                 # None. The caller's, for the gate's reason — it is built beside the gate, before
+                 # this screen exists. None is every screen before the seam, and lays out and
+                 # behaves exactly as they did.
+                 seat: Optional[Any] = None,
                  # `name` / `id` / `classes` are Textual's own widget arguments, forwarded
                  # unchanged so this screen can be styled and queried like any other.
                  name: Optional[str] = None, id: Optional[str] = None,
@@ -712,10 +739,29 @@ class RunScreen(Screen):
         self.heading = heading or str((recipe or {}).get("name") or "run")
         self.results: Optional[dict] = None
         self.error: Optional[str] = None
+        from manyruns import driver as _driver
+
+        #: THE DRIVER, AS STATE, for `sync()`'s reason: a run keeps reporting while a driver
+        #: talks, and anything painted straight into a widget is wiped by the next `on_step`.
+        #: `ctrl` mirrors the seat's (it is the seat's to change); `conversation` is what the
+        #: scientist and the driver said, oldest first; `proposal` is the card on screen;
+        #: `machine_busy` names the value a driver applied while its fit runs.
+        self.seat = seat
+        self.ctrl: dict = _driver.control()
+        self.conversation: list[tuple[str, str]] = []
+        self.proposal: Optional[dict] = None
+        self.machine_busy: str = ""
+        self._armed_step: dict = {}
+        if seat is not None:
+            seat.bind(on_effect=lambda effect: self.post_message(self.DriverEffect(effect)),
+                      on_control=lambda ctrl: self.post_message(self.DriverControl(ctrl)))
 
     # ── the frame ────────────────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
         yield Static(id="heading")
+        # THE ON-AIR TAG: who has control right now. Its own row, under the heading, so it is
+        # where the eye goes first and never moves; hidden on a screen with no seat.
+        yield Static(id="on-air")
         # STAYS ABOVE THE PANES. A caveat is a settled fact about the whole run (`engine=mock —
         # every number here is invented`), not something anyone acts on, so it reads with the
         # heading rather than with the prompt.
@@ -813,6 +859,8 @@ class RunScreen(Screen):
         self.query_one("#figures-pane").border_title = "figures"
         self.query_one("#ask").display = False
         self.query_one("#tune-strip").display = False
+        self.query_one("#on-air").display = self.seat is not None
+        self._paint_on_air()
         self.sync()
         self.query_one("#steps-pane").focus()
         self._paint_focus()
@@ -846,6 +894,7 @@ class RunScreen(Screen):
             return
         self._question_id = message.question_id
         self._question_kind = message.kind
+        self._offer_question(message)
         self.query_one("#ask-prompt", Static).update(message.prompt)
         self.query_one("#ask").display = True
         field = self.query_one("#ask-input", Input)
@@ -861,6 +910,8 @@ class RunScreen(Screen):
         parameters_focused = getattr(self.focused, "id", None) == "tune-strip"
         self._question_id = None
         self._question_kind = None
+        if self.seat is not None:
+            self.seat.clear_offer()
         self.tunables = []
         self._tune_params = {}
         self.tune_constraints = {}
@@ -888,7 +939,14 @@ class RunScreen(Screen):
         # it keeps that question and the field's focus available for the eventual answer.
         typed = str(message.value).strip()
         if typed.startswith(ASK_PREFIX):
-            self._ask(typed[len(ASK_PREFIX):].strip())
+            question = typed[len(ASK_PREFIX):].strip()
+            # WITH A DRIVER ATTACHED, THE QUESTION IS FOR IT. The pane is one conversation, and
+            # the scientist slotted this driver in to be the one who answers; the rented model
+            # stays the answerer whenever nothing is attached.
+            if self.seat is not None and self.ctrl.get("chooser"):
+                self._tell_driver(question)
+            else:
+                self._ask(question)
             return
         if self.gate is None:
             return
@@ -897,17 +955,25 @@ class RunScreen(Screen):
         # Delivery is not acceptance. The loop republishes current-attempt values through `Arm`
         # when it next asks; a rejected or stale submission cannot move the strip.
         if self._question_id is not None:
-            answer, question_id = resolve(message.value), self._question_id
+            self._deliver(resolve(message.value), self._question_id)
+        self._after_answer()
 
-            def submit():
-                self.gate.answer(answer, question_id=question_id)
+    def _deliver(self, answer: str, question_id: int, by: Optional[dict] = None) -> None:
+        """Hand one answer to the waiting loop, for the scientist (`by=None`) or a driver.
 
-            # Snapshot reads must finish before the loop can rename an attempt's files.
-            # Only the short capture phase defers an answer; rendering remains independent.
-            continuation = submit
-            for exporter in list(self._figure_exports):
-                continuation = partial(exporter.after_capture, continuation)
-            continuation()
+        ONE PATH FOR BOTH, so a driver's `knn=10` waits on the figure capture exactly as a typed
+        one does: snapshot reads must finish before the loop can rename an attempt's files, and
+        only that short capture phase defers an answer."""
+        def submit():
+            self.gate.answer(answer, question_id=question_id, by=by)
+
+        continuation = submit
+        for exporter in list(self._figure_exports):
+            continuation = partial(exporter.after_capture, continuation)
+        continuation()
+
+    def _after_answer(self) -> None:
+        """The question is answered: put the row away and give the screen its keys back."""
         self._question_kind = None
         self._question_id = None
         self._set_pending("")
@@ -920,6 +986,164 @@ class RunScreen(Screen):
         self.query_one("#tune-strip").display = False
         # Keep current-attempt values between questions; the next Arm replaces them from the loop.
         self.query_one("#steps-pane").focus()
+
+    # ── the driver ───────────────────────────────────────────────────────────
+    def _offer_question(self, message: "RunScreen.Ask") -> None:
+        """Publish the step offer for exactly the question now on screen.
+
+        Built from the step the loop ARMED for this question, so a driver's `legal_id` names
+        this question and no other: an answer to the last one is stale by construction."""
+        if self.seat is None:
+            return
+        step = {k: v for k, v in self._armed_step.items() if k != "constraints"}
+        self.seat.set_offer(step, dict(self._armed_step.get("constraints") or {}),
+                            message.question_id)
+        self.seat.emit({"event": "question", "kind": message.kind,
+                        "question_id": message.question_id, "prompt": message.prompt})
+        if self.proposal and self.proposal.get("question_id") != message.question_id:
+            self.proposal = None  # a card for a question nobody is asking any more
+        self.machine_busy = ""
+        self._paint_on_air()
+        self.sync()
+
+    def _tell_driver(self, text: str) -> None:
+        self.conversation.append(("you", text))
+        self.seat.emit({"event": "message", "text": text})
+        self.sync()
+
+    def on_run_screen_driver_control(self, message: "RunScreen.DriverControl") -> None:
+        attached = bool(message.ctrl.get("chooser"))
+        if attached and not self.ctrl.get("chooser"):
+            self.conversation.append(("", f"{message.ctrl['chooser']} attached · "
+                                          f"{message.ctrl['level']}"))
+        elif not attached and self.ctrl.get("chooser"):
+            self.conversation.append(("", f"{self.ctrl['chooser']} hung up · you have control"))
+            self.proposal = None
+            self.machine_busy = ""
+        self.ctrl = dict(message.ctrl)
+        from manyruns import agents
+
+        # THE BORDER SAYS WHO ANSWERS (`on_mount`'s rule), and with a driver attached that is it.
+        self.query_one("#answer-pane").border_title = (self.ctrl.get("chooser")
+                                                       or agents.ask_model())
+        self._paint_on_air()
+        self.sync()
+
+    def on_run_screen_driver_effect(self, message: "RunScreen.DriverEffect") -> None:
+        effect = message.effect
+        kind = effect.get("kind")
+        if kind == "say":
+            self.conversation.append((str(effect.get("by") or "driver"), str(effect["text"])))
+        elif kind == "propose":
+            self.proposal = dict(effect)
+        elif kind == "apply":
+            self._apply_from_driver(effect)
+        self.sync()
+
+    def _apply_from_driver(self, effect: dict) -> None:
+        """Run a driver's choice, if it may still run NOW.
+
+        Checked again on this thread, because the scientist may have pulled the handbrake, or
+        answered, between the seat's check and this message: the level must still be `drive`
+        and the question the choice was made for must still be the one waiting."""
+        from manyruns import driver as _driver
+
+        qid = effect.get("question_id")
+        if not _driver.tag(self.ctrl).startswith("MACHINE"):
+            reason = "the scientist has control"
+        elif (self.gate is None or qid != self._question_id
+              or not self.gate.is_pending(qid)):
+            reason = "that question is no longer waiting"
+        else:
+            reason = ""
+        if reason:
+            self.seat.emit({"event": "refused", "line": effect.get("line"), "reason": reason})
+            return
+        self.machine_busy = str(effect.get("line"))
+        self.conversation.append((str(effect.get("by")), f"applied {effect['line']}"))
+        self._deliver(effect["line"], qid, by={"chooser": effect.get("by"),
+                                               "bound": effect.get("bound"),
+                                               "legal_id": effect.get("legal_id")})
+        self._after_answer()
+        self.seat.emit({"event": "applied", "line": effect["line"], "question_id": qid})
+        self._paint_on_air()
+
+    def action_wheel(self) -> None:
+        """The scientist's level key: interpret → propose → drive → interpret."""
+        if self.seat is None or not self.ctrl.get("chooser"):
+            self.notify("no driver is attached to this session")
+            return
+        self.seat.cycle()
+
+    def action_handbrake(self) -> None:
+        """The manual/auto toggle. To manual: the scientist has control at once, the driver's next
+        `apply` is refused, and the values stay where its last completed attempt left them. Back
+        to auto: the driver resumes at the level it had.
+
+        A fit the driver already started is left to finish rather than killed: cancelling it
+        mid-fit would discard the whole step (`run_tune_loop`'s `ComputeCancelled` path puts the
+        step back to before it ran), which is the opposite of keeping the values."""
+        if self.seat is None or not self.ctrl.get("chooser"):
+            self.notify("no driver is attached to this session")
+            return
+        ctrl = self.seat.handbrake()
+        if ctrl.get("braked"):
+            self.machine_busy = ""
+            self.conversation.append(("", "manual · you have control"))
+        else:
+            self.conversation.append(("", f"auto · {ctrl['chooser']} back at {ctrl['level']}"))
+        self.sync()
+
+    def action_take_proposal(self) -> None:
+        """Accept the driver's card: its line goes to the loop as the SCIENTIST's answer."""
+        card = self.proposal
+        if not card or self.gate is None:
+            return
+        qid = card.get("question_id")
+        if qid != self._question_id or not self.gate.is_pending(qid):
+            self.proposal = None
+            self.notify("that proposal was for a question that is no longer waiting")
+            self.sync()
+            return
+        self.proposal = None
+        self.conversation.append(("you", f"took {card['line']}"))
+        self._deliver(card["line"], qid, by={
+            "chooser": "human", "bound": "none", "legal_id": card.get("legal_id"),
+            "proposed": {"params": card.get("params") or {}, "line": card["line"],
+                         "chooser": card.get("by"), "bound": card.get("bound"),
+                         "rationale": card.get("rationale")}})
+        self._after_answer()
+        self.seat.emit({"event": "taken", "line": card["line"], "question_id": qid})
+        self.sync()
+
+    def _paint_on_air(self) -> None:
+        """The tag: `HUMAN`, or `MACHINE · <chooser>` while a driver drives, and what it is
+        doing. Painted from `ctrl` only; nothing else writes `#on-air`."""
+        if self.seat is None:
+            return
+        from rich.text import Text
+
+        from manyruns import driver as _driver
+
+        tag = _driver.tag(self.ctrl)
+        line = Text()
+        if tag.startswith("MACHINE"):
+            line.append(f" ● ON AIR · {tag} ", style="bold white on red")
+            if self.machine_busy:
+                line.append(f"  fitting {self.machine_busy} …", style="bold red")
+            line.append("   ctrl+b manual", style="dim")
+        elif tag.startswith("MANUAL"):
+            line.append(f" ● {tag} ", style="bold black on yellow")
+            line.append(f"   ctrl+b back to auto ({self.ctrl.get('resume')})", style="dim")
+        else:
+            line.append(f" ● {tag} ", style="bold black on green")
+            chooser = self.ctrl.get("chooser")
+            if chooser:
+                line.append(f"  {chooser} attached · {self.ctrl.get('level')}", style="dim")
+                line.append("   ctrl+g level", style="dim")
+            else:
+                line.append("  no driver attached", style="dim")
+        self.query_one("#on-air", Static).update(line)
 
     # ── the ask ──────────────────────────────────────────────────────────────
     def ask_context(self) -> str:
@@ -1309,6 +1533,7 @@ class RunScreen(Screen):
         self.tune_constraints = dict((step or {}).get("constraints") or {})
         self.tune_at = 0
         self.tune_step = str((step or {}).get("name") or "")
+        self._armed_step = dict(step or {})
         self.moved = None
         self._paint_strip()
         # Repainted here rather than left to the next progress event: the loop is about to BLOCK
@@ -1402,6 +1627,8 @@ class RunScreen(Screen):
         """The loop talking, as opposed to asking. Kept on its own line rather than folded into
         `#caveats`, which renders from `self.results` — a run-level fact, not a running log."""
         self.said.append(message.text)
+        if self.seat is not None:
+            self.seat.emit({"event": "said", "text": message.text})
         if (message.text == self.FINALIZING and not self._finished
                 and (self.gate is None or not self.gate.closed)):
             self._stop_finalizing()
@@ -1448,6 +1675,8 @@ class RunScreen(Screen):
         self._color_cancel.set()
         self._export.cancel()
         self.cancel_run()
+        if self.seat is not None:
+            self.seat.close()
 
     def cancel_run(self) -> None:
         """Signal immediately, without joining a thread or process on the UI loop."""
@@ -1472,6 +1701,9 @@ class RunScreen(Screen):
         if self.gate is not None:
             self.gate.close()
         self._invalidate_question()
+        if self.seat is not None:
+            self.seat.emit({"event": "finished", "run_id": (message.results or {}).get("run_id"),
+                            "error": message.error})
         self.sync()
 
     def _drive(self) -> None:
@@ -1568,8 +1800,10 @@ class RunScreen(Screen):
         # rest)` at 289f214 — so the crash was live, not hypothetical; filtering is a line, and a
         # screen that dies because a tune changed nothing is a worse report of that fact than an
         # empty pane.
+        talking = bool(self.conversation or self.proposal or self.ctrl.get("chooser"))
         blocks = [moved_view(*self.moved, step=self.tune_step) if self.moved else None,
-                  answer_view(self.asked, self.answer, self.ask_note)
+                  conversation_view(self.conversation, self.proposal, self.ctrl) if talking
+                  else answer_view(self.asked, self.answer, self.ask_note)
                   if self.asked else Text(self.AT_REST, style="dim")]
         self.query_one("#answer", Static).update(Group(*[b for b in blocks if b is not None]))
         pane = self.query_one(FiguresPane)
@@ -1932,6 +2166,37 @@ def caveats_view(results: Optional[dict]) -> Any:
         line.append(f"{row.mark} ", style=style)
         line.append(row.text, style=style)
         blocks.append(line)
+    return Group(*blocks)
+
+
+def conversation_view(lines: list, proposal: Optional[dict], ctrl: dict) -> Any:
+    """The scientist and the driver, oldest first, then the driver's card if there is one.
+
+    Speaker names are dim and the driver's words are in the pane's own ink: they are generated
+    prose beside measured deltas, and the border (the driver's name) says whose."""
+    from rich.console import Group
+    from rich.text import Text
+
+    blocks: list[Any] = []
+    for who, text in lines[-12:]:
+        line = Text(overflow="fold")
+        if who:
+            line.append(f"{who}: ", style="dim")
+            line.append(text)
+        else:
+            line.append(f"— {text} —", style="dim italic")
+        blocks.append(line)
+    if proposal:
+        card = Text(overflow="fold")
+        card.append(f"{proposal.get('by') or 'driver'} proposes ", style="bold")
+        card.append(str(proposal.get("line")), style="bold yellow")
+        if proposal.get("rationale"):
+            card.append(f" · {proposal['rationale']}")
+        card.append("   ctrl+y take it", style="dim")
+        blocks.append(card)
+    if not blocks:
+        blocks.append(Text(f"{ctrl.get('chooser') or 'driver'} is attached · ask with "
+                           f"{ASK_PREFIX}", style="dim"))
     return Group(*blocks)
 
 

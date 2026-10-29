@@ -1093,6 +1093,51 @@ async def test_the_front_door_builds_the_gate_and_gives_it_to_both(prepared_entr
         assert isinstance(app.screen.gate, Gate)
 
 
+@drives
+async def test_the_front_door_gives_the_run_a_driver_seat_beside_its_outputs(
+        prepared_entries, tmp_path, monkeypatch):
+    """A stepped run opens a driver seat, and its pointer lands in the run's own folder, so a
+    driver finds the session it means. Leaving the screen closes it."""
+    import json
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MANYRUNS_DRIVER_SOCKET", raising=False)
+    app = _App()
+    async with app.run_test() as pilot:
+        app.open_run(_entry(), "embed")
+        await pilot.pause()
+        seat = app.screen.seat
+        assert seat is not None
+        pointer = tmp_path / "outputs" / "swissroll" / "driver.json"
+        assert json.loads(pointer.read_text())["socket"] == seat.path
+        app.screen.on_unmount()
+        assert not pointer.exists()
+
+
+@drives
+async def test_the_driver_seat_can_be_turned_off(prepared_entries, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MANYRUNS_DRIVER_SOCKET", "0")
+    app = _App()
+    async with app.run_test() as pilot:
+        app.open_run(_entry(), "embed")
+        await pilot.pause()
+        assert app.screen.seat is None
+        assert app.screen.query_one("#on-air").display is False
+
+
+@drives
+async def test_a_bad_launch_grant_opens_no_seat_and_still_runs(prepared_entries, tmp_path,
+                                                                 monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MANYRUNS_DRIVER_LEVEL", "root")
+    app = _App()
+    async with app.run_test() as pilot:
+        app.open_run(_entry(), "embed")
+        await pilot.pause()
+        assert isinstance(app.screen, RunScreen) and app.screen.seat is None
+
+
 def test_the_gate_is_closed_when_the_screen_goes_away():
     """A gate that can block forever turns a quit into a hang — `tui/gate.py`'s own note. The
     screen owns the close because the screen is what disappears.

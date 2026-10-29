@@ -54,7 +54,7 @@ _BULK_SUFFIXES = {".csv", ".tsv", ".txt"}
 #  defensible. `_choose_recipe` now derives from `narrate.offer`, so modality no longer
 #  selects a recipe and the table had no remaining reader.)
 
-_SUBCOMMANDS = ("init", "explore", "run", "open", "projects", "check", "audit",
+_SUBCOMMANDS = ("init", "explore", "run", "open", "projects", "check", "actions", "audit",
                 "tools", "shell")
 
 
@@ -131,6 +131,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_run = sub.add_parser("run", help="init + explore in one go (the default)")
     _add_setup_args(p_run)
+    p_run.add_argument(
+        "--ask", metavar="TEXT",
+        help="say what you want in plain words; it is routed to one legal recipe by rules "
+        "(never a model), and a request the data cannot support is declined with nothing run. "
+        "Not with --recipe.",
+    )
     p_run.set_defaults(func=cmd_run)
 
     p_open = sub.add_parser(
@@ -149,6 +155,15 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_check.add_argument("--dataset-dir", help="validate datasets from this directory instead")
     p_check.set_defaults(func=cmd_check)
+
+    p_actions = sub.add_parser(
+        "actions", help="the legal moves for a dataset, as one JSON document on stdout"
+    )
+    p_actions.add_argument("dataset", metavar="DATASET", help="a dataset name from the catalog")
+    p_actions.add_argument("--dataset-dir", help="read datasets from this directory instead")
+    p_actions.add_argument("--surface", choices=("ledger",), default="ledger",
+                           help="which choice to describe (only `ledger` exists)")
+    p_actions.set_defaults(func=cmd_actions)
 
     p_audit = sub.add_parser(
         "audit", help="run the admission gate over the declared metric suite (non-zero on reject)"
@@ -862,11 +877,18 @@ def cmd_run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     verb, which nobody guesses. Anything that says what to do (a path, `--dataset`,
     `--engine`, `--recipe`, …) keeps the one-shot, and so does a pipe or a script, so
     automation is unaffected."""
+    if getattr(args, "ask", None) and getattr(args, "recipe", None):
+        parser.error("--ask and --recipe both choose the recipe; give one of them")
     if _wants_the_console(args):
         from manyruns import shell
 
         return shell.run_shell(args)
-    proj = _setup_project(args, parser)
+    try:
+        proj = _setup_project(args, parser)
+    except _AskDeclined as declined:
+        # Declined BEFORE `write_project`, so nothing is on disk: no project.yaml, no run row.
+        print(declined.reframe)
+        return 0
     return _explore_project(
         proj, seed=args.seed,
         fast_dev_run=_smoke(args), data_kwargs=_parse_kwargs(args.data_kwargs),
@@ -949,6 +971,28 @@ def cmd_audit(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     print(f"\n{counts['admitted']} admitted · {counts['flagged']} flagged · "
           f"{counts['rejected']} rejected · {counts['deferred']} deferred")
     return 1 if counts["rejected"] else 0
+
+
+def cmd_actions(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    """Print the legal moves for one dataset as exactly one JSON document (`manyruns.actions`).
+
+    Exit 2 for a name the catalog does not have; exit 1, with nothing on stdout, when the
+    declaration exists and does not load. Diagnostics go to stderr so stdout stays parseable."""
+    import json
+
+    from manyruns import actions, catalog
+
+    ddir = getattr(args, "dataset_dir", None)
+    if args.dataset not in catalog.discover_datasets(ddir):
+        parser.error(f"unknown dataset {args.dataset!r}; known: "
+                     f"{', '.join(catalog.discover_datasets(ddir)) or '(none)'}")
+    try:
+        doc = actions.document(args.dataset, _installed_build(), ddir)
+    except Exception as exc:  # noqa: BLE001 - stdout must stay empty on any failure
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(doc, indent=2, ensure_ascii=False))
+    return 0
 
 
 def cmd_check(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
@@ -1082,7 +1126,7 @@ def _ask(prompt: str, default: str) -> str:
 
 
 #: Args that mean "I already know what I want" — any of them keeps `run` a one-shot.
-_RUN_INTENT_ARGS = ("data_folder", "data_arg", "dataset", "recipe", "engine", "project")
+_RUN_INTENT_ARGS = ("data_folder", "data_arg", "dataset", "recipe", "engine", "project", "ask")
 
 
 def _wants_the_console(args: argparse.Namespace) -> bool:
@@ -1212,6 +1256,31 @@ def _require_source_shape(engine, recipe, dataset, array, shape, embedding=None)
             "verified fit dimensions. Use a matching catalog declaration or an explicit generated data file.")
 
 
+class _AskDeclined(Exception):
+    """`run --ask` asked for something the data cannot honestly support; carries the reframe."""
+
+    def __init__(self, reframe: str) -> None:
+        super().__init__(reframe)
+        self.reframe = reframe
+
+
+def _route_ask(text: str, obs: Any) -> Optional[str]:
+    """`run --ask TEXT` → one legal recipe name, or None to fall back to auto-selection.
+
+    The rule tier only (`allow_llm=False`): a one-shot command must give the same answer on
+    every machine. The legal set is the ledger's runnable rows, so `--ask` can only reach a
+    recipe the ledger would let a person pick. Raises `_AskDeclined` on a refusal.
+    """
+    from manyruns import intent
+    from manyruns.tui import state
+
+    legal = [r.recipe for r in state.ledger(obs, obs.provides()) if r.can_run]
+    recipe, refusal = intent.route_recipe(text, obs, legal, allow_llm=False)
+    if refusal:
+        raise _AskDeclined(refusal)
+    return recipe
+
+
 def _setup_project(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict:
     """Prompt for the minimum (#11), detect modality (#10), pick the recipe, persist it.
 
@@ -1233,6 +1302,8 @@ def _setup_project(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         raw = _data_from_drop_folder()
     project = args.project or _ask("project name", _project_name_for(raw))
 
+    ask = getattr(args, "ask", None)
+    routed = None
     dataset_name = None
     src = Path(raw)
     if src.exists():                                  # a file or folder → manyruns loads it
@@ -1241,6 +1312,10 @@ def _setup_project(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
             modality = detect_modality(src)
         except ValueError as e:
             parser.error(str(e))
+        if ask:
+            from manyruns import narrate
+
+            routed = _route_ask(ask, narrate.read_data(src, modality, source=src.name))
     elif _looks_like_path(raw):                       # meant as a path, but missing → clear error
         parser.error(f"data path not found: {raw}")
     else:
@@ -1248,6 +1323,13 @@ def _setup_project(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         # engine name; sending a file alias to Hydra loses the data before step one.
         from manyruns.shell import _resolve_dataset
 
+        if ask:
+            # Routed BEFORE the fetch, on what is already here: a declined request must not
+            # download anything. `_resolve_dataset` opens no network and keeps the declared shape.
+            try:
+                routed = _route_ask(ask, _resolve_dataset(raw)[3])
+            except (FileNotFoundError, ValueError, KeyError):
+                pass                                  # the resolution below reports it
         try:
             _fetch_cli_source(raw, parser)
             data_folder, dataset, modality, _ = _resolve_dataset(raw)
@@ -1262,7 +1344,10 @@ def _setup_project(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
             parser.error(f"catalog handle {raw!r} resolved to missing data {data_folder}; "
                          f"put the file there or in the data drop folder, or supply its existing path")
 
-    recipe, rationale = select_analysis(modality, data_folder, override=getattr(args, "recipe", None))
+    if routed:
+        print(f"ask: {ask!r} → {routed}")
+    recipe, rationale = select_analysis(modality, data_folder,
+                                        override=getattr(args, "recipe", None) or routed)
     print(f"analysis: {recipe['name']} — {rationale}")
     # `--transform` reaches `init`/`run` HERE, at the one line where this command decides what
     # its recipe is — not at each of the four consumers downstream (`_explore_project` for
@@ -1609,9 +1694,9 @@ def _inspect_obs(path: Path) -> tuple[bool, Optional[list], Optional[tuple]]:
       `cluster` (it declares `suits: [clusters]`), so `_choose_recipe`'s head — it takes
       `offer(...)[0]["recipe"]` — flips `embed` → `cluster`, a recipe that runs leiden and
       *discovers* groups while ignoring the eight curated ones, still carrying the `embed`
-      rationale string. And `narrate.refusal` does not list `clusters` among the shapes it
-      declines a trajectory on, so the app's headline honesty behaviour would go silent on
-      exactly the two demo fixtures. `narrate.describe` has no `clusters` branch either and
+      rationale string. (`narrate.refusal` now declines a trajectory on `clusters` as well,
+      so that half of the honesty behaviour would survive the move.) `narrate.describe` has
+      no `clusters` branch and
       falls through to the *harder* denial ("No labels I recognize").
 
     So the shape stays `single` and only the sentence learns the labels. Moving the shape is a
