@@ -436,20 +436,47 @@ class ManyrunsApp(App):
         # Both calls exist already and neither is new work here: `state.measurement` is the
         # accessor the ledger reads, and `narrate.concerns` is the function that drew the ⚠ the
         # person saw. The model is handed what the person was shown, not a third opinion.
+        seat = self._seat_for(entry)
         try:
             screen = RunScreen(
                 recipe, gate=gate,
                 start=self.start_for(entry, recipe_name, decision, gate=gate),
                 on_worker=lambda thread: self._worker_started(path, reservation.token, thread),
                 heading=f"{recipe_name} · {entry.name}", entry=entry,
-                concerns=narrate.concerns(recipe, state.measurement(entry)))
+                concerns=narrate.concerns(recipe, state.measurement(entry)), seat=seat)
             reservation.screen = screen
             self.push_screen(screen, callback=lambda _: self.open_ledger(
                 entry, selected_recipe=recipe_name))
         except Exception:
+            if seat is not None:
+                seat.close()
             if self._run_reservations.get(path) is reservation and reservation.thread is None:
                 del self._run_reservations[path]
             raise
+
+    def _seat_for(self, entry: DataEntry) -> Optional[Any]:
+        """The driver seat for a stepped run, in the session's own output folder, or None.
+
+        ON BY DEFAULT, for this user only (the socket is 0600), because a seat nobody can find is
+        a seam nobody has; `$MANYRUNS_DRIVER_SOCKET=0` (or empty) turns it off. The folder is the
+        one `start` computes, by the same two calls, so `driver.json` lands beside the run it
+        names. A seat that cannot open is no reason to refuse a run: None, and the screen lays out
+        as it did before the seam."""
+        from manyruns import app as _app
+        from manyruns import env as _env
+        from manyruns import shell as _shell
+        from manyruns.tui.driver_socket import DriverSocket
+
+        if _env.get("DRIVER_SOCKET", "1") in ("", "0"):
+            return None
+        try:
+            obs = entry.as_source()[3]
+            seat = DriverSocket(Path("outputs") / _app._slug(_shell._slugish(obs.source)),
+                                tool_version=_app._installed_build())
+            seat.start()
+        except OSError:
+            return None
+        return seat
 
     def start_for(self, entry: DataEntry, recipe_name: str,
                   decision: Optional[str] = None,
