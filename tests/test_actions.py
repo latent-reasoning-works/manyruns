@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -400,7 +401,11 @@ def test_no_heavy_import_no_session_and_no_write(tmp_path):
         "             or k == 'manyruns.session')\n"
         "print(json.dumps({'code': code, 'bad': bad}), file=sys.stderr)\n"
     )
-    done = subprocess.run([sys.executable, "-c", probe], cwd=cwd, capture_output=True,
+    # CI supplies a relative PYTHONPATH; the child starts in a different directory.
+    root = Path(__file__).resolve().parents[1]
+    assert root.is_dir()
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join((str(root), *sys.path))}
+    done = subprocess.run([sys.executable, "-c", probe], cwd=cwd, env=env, capture_output=True,
                           text=True, timeout=120)
     assert done.returncode == 0, done.stderr
     report = json.loads(done.stderr.strip().splitlines()[-1])
