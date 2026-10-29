@@ -244,3 +244,30 @@ def test_an_unknown_verb_is_refused():
 def test_a_request_that_is_not_an_object_is_refused():
     reply, effect = driver.handle(["apply"], _driving("drive"), _offer())
     assert reply["ok"] is False and effect is None
+
+
+# ── conformance fixtures: the verdicts the seam owes every driver ─────────────────────────────
+
+def _conformance():
+    import json
+    from pathlib import Path
+
+    path = Path(__file__).parent / "fixtures" / "driver_conformance.json"
+    assert path.parent.is_dir()
+    return json.loads(path.read_text())["cases"]
+
+
+@pytest.mark.parametrize("case", _conformance(), ids=lambda c: c["id"])
+def test_every_conformance_probe_gets_its_verdict(case):
+    if case["probe"] is None:
+        pytest.skip("no choice to probe: the right move is to say something, not act")
+    offer = driver.step_surface(case["step"], case["constraints"], 1, "conformance")
+    problems = driver.check_choice(offer, {"legal_id": offer["legal_id"], **case["probe"]})
+    assert (problems == []) == (case["verdict"] == "ok"), problems
+
+
+def test_every_intent_names_a_knob_the_offer_has():
+    for case in _conformance():
+        if isinstance(case["intent"], dict):
+            offer = driver.step_surface(case["step"], case["constraints"], 1, "conformance")
+            assert set(case["intent"]["params"]) <= set(offer["params"]), case["id"]

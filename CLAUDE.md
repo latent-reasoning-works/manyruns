@@ -66,9 +66,11 @@ Rules for the seam:
 - The driver owns its loop. manyruns answers one request at a time, and `agents.py`
   stays the only place manyruns asks a model: a rented one, one call at a time.
 
-Status on 2026-10-29: `manyruns actions` (the `ledger` surface) and version 2 decision
-rows exist. The socket, the `step` surface, the levels, the tag, and the handbrake are
-being built.
+Status on 2026-10-29: built and tested. The pure half is `manyruns/driver.py`; the
+socket is `tui/driver_socket.py`; the screen half is in `tui/run.py`; `tui/app.py`
+opens a seat for every stepped run. The protocol a driver author reads is
+§8 of [the environment contract](docs/environment-contract.md). The `ledger` surface is not on the
+socket yet; a driver reads it with `manyruns actions`.
 
 ## No track to a learner — the arrow points one way
 

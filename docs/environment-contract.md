@@ -310,3 +310,118 @@ with their data, and consent for that is not implied by installing the product.
    caller outside the learner's own workflow?
 4. **What is the minimum override rate for the corpus to be worth training on?** §4 says defaults
    dominate. Measure it on the rows that exist before building anything that consumes them.
+
+## 8 · The driver protocol
+
+A **driver** is any program that attaches to a running manyruns session and talks, proposes,
+or drives. It may have any model behind it, or none. manyruns never calls a driver; the driver
+connects (environment contract §3.5). This page is everything a driver needs. It needs no
+import from manyruns.
+
+### Find the seat
+
+Every stepped run opens a **seat**: a Unix socket for this user only. The run's output folder
+holds a pointer to it:
+
+```json
+outputs/<project>/driver.json
+{"socket": "/tmp/mr-xxxx/d.sock", "pid": 4242, "tool_version": "manyruns 0.1.0 · …"}
+```
+
+`MANYRUNS_DRIVER_SOCKET=0` turns seats off. One driver may attach at a time; a second
+connection gets one refusal and is closed.
+
+### Talk
+
+One JSON object per line, both ways. A line with an `event` key is pushed by the session; every
+other line is the reply to your last request, in order.
+
+#### `hello` (first, once)
+
+```json
+{"verb": "hello", "chooser": "llm:qwen3:1.7b", "bound": "schema"}
+→ {"ok": true, "level": "interpret", "tag": "HUMAN", "verbs": [...], "offer": {...} | null}
+```
+
+`chooser` names you on every decision row (contract §2.1). `bound` says how your choices are
+constrained: `logits`, `schema`, `prompt`, or `none` (§2.2). The reply carries the offer for
+the question already waiting, if any, because events are not replayed.
+
+#### Levels
+
+The scientist sets your level with one key (`ctrl+g`); no request can raise it.
+
+| Level | You may send |
+|---|---|
+| `interpret` | `hello`, `actions`, `say` |
+| `propose` | the above, and `propose` |
+| `drive` | the above, and `apply` |
+
+The **handbrake** (`ctrl+b`) drops you to `interpret` at once. You stay attached and may still
+talk. `ctrl+g` hands the wheel back.
+
+#### `actions`
+
+```json
+{"verb": "actions"} → {"ok": true, "level": "drive", "tag": "...", "offer": {...} | null}
+```
+
+The **offer** is the step the tune loop is waiting on:
+
+```json
+{"surface": "step", "step": "phate", "question_id": 2, "legal_id": "a1b2c3d4e5f6",
+ "params": {"knn": {"current": 5, "type": "integer", "minimum": 1,
+                    "maximum": null, "maximum_known": false},
+            "t":   {"current": "auto", "type": "integer", "also": ["auto"], "minimum": 1, ...}},
+ "tool_version": "..."}
+```
+
+A maximum nobody declared is `null` with `maximum_known: false`. It is unknown, not unlimited.
+`presets` appears only when the recipe step declares them.
+
+#### `say`, `propose`, `apply`
+
+```json
+{"verb": "say", "text": "the side branch separates at knn=3"}
+{"verb": "propose", "legal_id": "a1b2c3d4e5f6", "params": {"knn": 3}, "rationale": "..."}
+{"verb": "apply",   "legal_id": "a1b2c3d4e5f6", "params": {"knn": 3}}
+{"verb": "apply",   "legal_id": "a1b2c3d4e5f6", "decision": "accept"}
+```
+
+`propose` puts a card on screen; the scientist takes it with `ctrl+y`. `apply` runs at once.
+
+A choice is checked by manyruns whatever schema you used. These are refused with a reason, and
+nothing runs:
+
+- a `legal_id` that is not the current offer's (`stale`: ask for `actions` again);
+- an unknown parameter, or a wrong type;
+- a value below `minimum`, or above a known `maximum` (refused, never clamped);
+- a value equal to the current one.
+
+An `apply` that passed the check can still be refused when it reaches the screen, if the
+scientist pulled the handbrake or answered first. You get a `refused` event.
+
+### Events
+
+| `event` | Carries |
+|---|---|
+| `control` | `level`, `tag`, `braked` |
+| `offer` | the new offer, or `null` when nothing is waiting |
+| `question` | `kind` (`decision` or `params`), `question_id`, `prompt` |
+| `message` | `text`: the scientist asked you something (`? …` in the ask field) |
+| `said` | `text`: a line the run wrote |
+| `applied`, `taken`, `refused` | `line`, `question_id`, and for `refused` a `reason` |
+| `finished` | `run_id`, `error` |
+
+### What is recorded
+
+Every tune loop a driver touched writes a version 2 decision row: each tried value names its
+chooser (`by`), and `chooser`/`bound` say who made the final choice. When the scientist takes
+your card, the chooser is `human` and your card is in `proposed`. Those rows are the training
+data `decisions.examples()` will read.
+
+### Conformance
+
+`tests/fixtures/driver_conformance.json` holds cases: what the scientist said, the offer, a
+probe choice with the verdict the seam must give it, and an `intent` label. manyruns tests the
+verdicts. A driver scores itself against the intents with its own harness.

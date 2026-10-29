@@ -1,0 +1,437 @@
+{
+ "schema_version": 1,
+ "about": "Driver conformance cases. `probe` is one choice and `verdict` is what the seam must answer it (manyruns tests this). `intent` labels what a good driver does with `said`: a parameter and direction or value, `outside` for a request the offer cannot meet, `none` when no change is right. Scoring a driver against `intent` lives with the driver, never in manyruns.",
+ "cases": [
+  {
+   "id": "phate-branches",
+   "step": {
+    "group": "latent",
+    "name": "phate",
+    "params": {
+     "knn": 5
+    }
+   },
+   "constraints": {},
+   "said": "I need these to look more like branches",
+   "intent": {
+    "params": [
+     "knn",
+     "t"
+    ],
+    "direction": "down"
+   },
+   "probe": {
+    "params": {
+     "knn": 3
+    }
+   },
+   "verdict": "ok"
+  },
+  {
+   "id": "phate-smoother",
+   "step": {
+    "group": "latent",
+    "name": "phate",
+    "params": {
+     "knn": 5
+    }
+   },
+   "constraints": {},
+   "said": "this looks too noisy, make the trajectories smoother",
+   "intent": {
+    "params": [
+     "t",
+     "knn"
+    ],
+    "direction": "up"
+   },
+   "probe": {
+    "params": {
+     "t": 40
+    }
+   },
+   "verdict": "ok"
+  },
+  {
+   "id": "phate-lost-branch",
+   "step": {
+    "group": "latent",
+    "name": "phate",
+    "params": {
+     "knn": 5
+    }
+   },
+   "constraints": {},
+   "said": "it's over-smoothed, I lost the small side branch",
+   "intent": {
+    "params": [
+     "t",
+     "knn"
+    ],
+    "direction": "down"
+   },
+   "probe": {
+    "params": {
+     "t": 5
+    }
+   },
+   "verdict": "ok"
+  },
+  {
+   "id": "phate-one-line",
+   "step": {
+    "group": "latent",
+    "name": "phate",
+    "params": {
+     "knn": 5
+    }
+   },
+   "constraints": {},
+   "said": "make it look more like a single line",
+   "intent": {
+    "params": [
+     "t",
+     "knn"
+    ],
+    "direction": "up"
+   },
+   "probe": {
+    "params": {
+     "t": 60
+    }
+   },
+   "verdict": "ok"
+  },
+  {
+   "id": "phate-set-knn",
+   "step": {
+    "group": "latent",
+    "name": "phate",
+    "params": {
+     "knn": 5
+    }
+   },
+   "constraints": {},
+   "said": "set knn to 20",
+   "intent": {
+    "params": [
+     "knn"
+    ],
+    "value": 20
+   },
+   "probe": {
+    "params": {
+     "knn": 20
+    }
+   },
+   "verdict": "ok"
+  },
+  {
+   "id": "phate-connect",
+   "step": {
+    "group": "latent",
+    "name": "phate",
+    "params": {
+     "knn": 5
+    }
+   },
+   "constraints": {},
+   "said": "the clusters are disconnected, connect them more",
+   "intent": {
+    "params": [
+     "knn",
+     "decay"
+    ],
+    "direction": null
+   },
+   "probe": {
+    "params": {
+     "knn": 15
+    }
+   },
+   "verdict": "ok"
+  },
+  {
+   "id": "umap-global",
+   "step": {
+    "group": "latent",
+    "name": "umap",
+    "params": {}
+   },
+   "constraints": {},
+   "said": "it's too fragmented, show me more global structure",
+   "intent": {
+    "params": [
+     "n_neighbors"
+    ],
+    "direction": "up"
+   },
+   "probe": {
+    "params": {
+     "n_neighbors": 50
+    }
+   },
+   "verdict": "ok"
+  },
+  {
+   "id": "umap-piled",
+   "step": {
+    "group": "latent",
+    "name": "umap",
+    "params": {}
+   },
+   "constraints": {},
+   "said": "points are all piled on top of each other",
+   "intent": {
+    "params": [
+     "min_dist"
+    ],
+    "direction": "up"
+   },
+   "probe": {
+    "params": {
+     "min_dist": 0.5
+    }
+   },
+   "verdict": "ok"
+  },
+  {
+   "id": "umap-tighter",
+   "step": {
+    "group": "latent",
+    "name": "umap",
+    "params": {}
+   },
+   "constraints": {},
+   "said": "make the clumps tighter",
+   "intent": {
+    "params": [
+     "min_dist"
+    ],
+    "direction": "down"
+   },
+   "probe": {
+    "params": {
+     "min_dist": 0.05
+    }
+   },
+   "verdict": "ok"
+  },
+  {
+   "id": "umap-30",
+   "step": {
+    "group": "latent",
+    "name": "umap",
+    "params": {}
+   },
+   "constraints": {},
+   "said": "use 30 neighbours",
+   "intent": {
+    "params": [
+     "n_neighbors"
+    ],
+    "value": 30
+   },
+   "probe": {
+    "params": {
+     "n_neighbors": 30
+    }
+   },
+   "verdict": "ok"
+  },
+  {
+   "id": "leiden-more",
+   "step": {
+    "group": "analysis",
+    "name": "leiden",
+    "params": {}
+   },
+   "constraints": {},
+   "said": "I want to see more clusters",
+   "intent": {
+    "params": [
+     "resolution"
+    ],
+    "direction": "up"
+   },
+   "probe": {
+    "params": {
+     "resolution": 2.0
+    }
+   },
+   "verdict": "ok"
+  },
+  {
+   "id": "leiden-fewer",
+   "step": {
+    "group": "analysis",
+    "name": "leiden",
+    "params": {}
+   },
+   "constraints": {},
+   "said": "too many clusters, merge some",
+   "intent": {
+    "params": [
+     "resolution"
+    ],
+    "direction": "down"
+   },
+   "probe": {
+    "params": {
+     "resolution": 0.5
+    }
+   },
+   "verdict": "ok"
+  },
+  {
+   "id": "leiden-finer",
+   "step": {
+    "group": "analysis",
+    "name": "leiden",
+    "params": {}
+   },
+   "constraints": {},
+   "said": "split cluster structure much finer",
+   "intent": {
+    "params": [
+     "resolution"
+    ],
+    "direction": "up"
+   },
+   "probe": {
+    "params": {
+     "resolution": 3.0
+    }
+   },
+   "verdict": "ok"
+  },
+  {
+   "id": "phate-knn-cap",
+   "step": {
+    "group": "latent",
+    "name": "phate",
+    "params": {
+     "knn": 5
+    }
+   },
+   "constraints": {
+    "knn": {
+     "status": "resolved",
+     "cap": 120
+    }
+   },
+   "said": "set knn to 500",
+   "intent": "outside",
+   "probe": {
+    "params": {
+     "knn": 500
+    }
+   },
+   "verdict": "refused"
+  },
+  {
+   "id": "phate-knn-zero",
+   "step": {
+    "group": "latent",
+    "name": "phate",
+    "params": {
+     "knn": 5
+    }
+   },
+   "constraints": {},
+   "said": "use zero neighbours",
+   "intent": "outside",
+   "probe": {
+    "params": {
+     "knn": 0
+    }
+   },
+   "verdict": "refused"
+  },
+  {
+   "id": "umap-min-dist-negative",
+   "step": {
+    "group": "latent",
+    "name": "umap",
+    "params": {}
+   },
+   "constraints": {},
+   "said": "set min_dist to -1",
+   "intent": "outside",
+   "probe": {
+    "params": {
+     "min_dist": -1.0
+    }
+   },
+   "verdict": "refused"
+  },
+  {
+   "id": "phate-colour",
+   "step": {
+    "group": "latent",
+    "name": "phate",
+    "params": {
+     "knn": 5
+    }
+   },
+   "constraints": {},
+   "said": "change the colour map to viridis",
+   "intent": "outside",
+   "probe": {
+    "params": {
+     "colour": "viridis"
+    }
+   },
+   "verdict": "refused"
+  },
+  {
+   "id": "phate-unchanged",
+   "step": {
+    "group": "latent",
+    "name": "phate",
+    "params": {
+     "knn": 5
+    }
+   },
+   "constraints": {},
+   "said": "keep knn at 5",
+   "intent": "none",
+   "probe": {
+    "params": {
+     "knn": 5
+    }
+   },
+   "verdict": "refused"
+  },
+  {
+   "id": "phate-question",
+   "step": {
+    "group": "latent",
+    "name": "phate",
+    "params": {
+     "knn": 5
+    }
+   },
+   "constraints": {},
+   "said": "what does this plot show?",
+   "intent": "none",
+   "probe": null,
+   "verdict": null
+  },
+  {
+   "id": "leiden-thanks",
+   "step": {
+    "group": "analysis",
+    "name": "leiden",
+    "params": {}
+   },
+   "constraints": {},
+   "said": "looks good, thanks",
+   "intent": "none",
+   "probe": {
+    "decision": "accept"
+   },
+   "verdict": "ok"
+  }
+ ]
+}
