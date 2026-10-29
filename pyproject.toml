@@ -34,8 +34,8 @@ readme = "README.md"
 # DECLARED, not implied. The README carried an MIT badge and this field was absent, so the
 # claim had no text behind it anywhere — and a badge is not a grant. PEP 639 SPDX form, so the
 # identifier travels into the wheel metadata where a consumer's tooling can actually read it.
-license = "MIT"
-license-files = ["LICENSE"]
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.11,<3.13"
 # THE COMPUTE IS NOT OPTIONAL. Until now the core was "tiny + fully public" so that
 # `uv tool install manyruns` worked with no GitHub token — and what it installed could not
@@ -204,7 +204,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "/manyruns/", "/tests/", "/README.md", "/LICENSE", "/CHANGELOG.md", "/pyproject.toml",
+    "/manyruns/", "/tests/", "/README.md", "/LICENSE", "/NOTICE", "/CHANGELOG.md", "/pyproject.toml",
 ]
 
 [tool.hatch.build.targets.wheel]

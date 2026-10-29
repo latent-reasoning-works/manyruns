@@ -78,3 +78,7 @@ manyruns check
 
 Do not announce on social media for this open beta. Track feedback in the public
 issues and changes in [CHANGELOG.md](CHANGELOG.md).
+
+## License of contributions
+
+Unless you state otherwise, any contribution you intentionally submit for inclusion in manyruns is licensed under the Apache License, Version 2.0, as section 5 of the license describes, without any additional terms or conditions. That includes the license's patent grant (section 3).
