@@ -138,7 +138,7 @@ class DriverSocket:
         return self._set_ctrl(driver.cycle)
 
     def handbrake(self) -> dict:
-        """The scientist's handbrake key."""
+        """The scientist's manual/auto toggle (`driver.handbrake`)."""
         return self._set_ctrl(driver.handbrake)
 
     def emit(self, event: dict) -> None:
@@ -155,7 +155,7 @@ class DriverSocket:
             ctrl = dict(self.ctrl)
         self._on_control(ctrl)
         self.emit({"event": "control", "level": ctrl["level"], "tag": driver.tag(ctrl),
-                   "braked": ctrl["braked"]})
+                   "braked": ctrl["braked"], "resume": ctrl.get("resume")})
         return ctrl
 
     def _send(self, client: socket.socket, obj: dict) -> None:

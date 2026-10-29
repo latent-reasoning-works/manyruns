@@ -198,9 +198,16 @@ async def test_the_handbrake_takes_the_wheel_back_and_refuses_the_next_apply(tmp
         await pilot.press("ctrl+b")
         await _until(pilot, lambda: screen.ctrl.get("braked"), "the handbrake")
         text = _screen_text(app)
-        assert "ON AIR" not in text and "HUMAN" in text and "handbrake on" in text
+        assert "ON AIR" not in text and "MANUAL · llm:qwen3:1.7b standing by" in text
         reply = c.ask({"verb": "apply", "legal_id": offer["legal_id"], "params": {"t": 20}})
-        assert reply["ok"] is False and "handbrake" in reply["error"]
+        assert reply["ok"] is False and "manual" in reply["error"]
+        # One more press and the driver is back on air at drive.
+        await pilot.press("ctrl+b")
+        await _until(pilot, lambda: not screen.ctrl.get("braked"), "auto again")
+        assert screen.ctrl["level"] == "drive"
+        assert "ON AIR · MACHINE · llm:qwen3:1.7b" in _screen_text(app)
+        await pilot.press("ctrl+b")
+        await _until(pilot, lambda: screen.ctrl.get("braked"), "manual again")
         assert gate.prompt is not None, "the question still waits for the scientist"
         assert offer["params"]["knn"]["current"] == 5  # nothing moved
         gate.answer("accept")

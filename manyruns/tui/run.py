@@ -375,7 +375,7 @@ class RunScreen(Screen):
         # (the note above), and a handbrake that only works when the cursor is elsewhere is not
         # a handbrake. With no driver attached the first two do nothing and say so.
         Binding("ctrl+g", "wheel", "driver level", show=True, priority=True),
-        Binding("ctrl+b", "handbrake", "handbrake", show=True, priority=True),
+        Binding("ctrl+b", "handbrake", "manual / auto", show=True, priority=True),
         Binding("ctrl+y", "take_proposal", "take the proposal", show=False, priority=True),
     ]
 
@@ -1076,8 +1076,9 @@ class RunScreen(Screen):
         self.seat.cycle()
 
     def action_handbrake(self) -> None:
-        """Stop a driving driver at once. Its next `apply` is refused; the values stay where its
-        last completed attempt left them, for the scientist to change.
+        """The manual/auto toggle. To manual: the scientist has control at once, the driver's next
+        `apply` is refused, and the values stay where its last completed attempt left them. Back
+        to auto: the driver resumes at the level it had.
 
         A fit the driver already started is left to finish rather than killed: cancelling it
         mid-fit would discard the whole step (`run_tune_loop`'s `ComputeCancelled` path puts the
@@ -1085,9 +1086,12 @@ class RunScreen(Screen):
         if self.seat is None or not self.ctrl.get("chooser"):
             self.notify("no driver is attached to this session")
             return
-        self.seat.handbrake()
-        self.machine_busy = ""
-        self.conversation.append(("", "handbrake · you have control"))
+        ctrl = self.seat.handbrake()
+        if ctrl.get("braked"):
+            self.machine_busy = ""
+            self.conversation.append(("", "manual · you have control"))
+        else:
+            self.conversation.append(("", f"auto · {ctrl['chooser']} back at {ctrl['level']}"))
         self.sync()
 
     def action_take_proposal(self) -> None:
@@ -1127,14 +1131,15 @@ class RunScreen(Screen):
             line.append(f" ● ON AIR · {tag} ", style="bold white on red")
             if self.machine_busy:
                 line.append(f"  fitting {self.machine_busy} …", style="bold red")
-            line.append("   ctrl+b handbrake", style="dim")
+            line.append("   ctrl+b manual", style="dim")
+        elif tag.startswith("MANUAL"):
+            line.append(f" ● {tag} ", style="bold black on yellow")
+            line.append(f"   ctrl+b back to auto ({self.ctrl.get('resume')})", style="dim")
         else:
             line.append(f" ● {tag} ", style="bold black on green")
             chooser = self.ctrl.get("chooser")
             if chooser:
-                level = self.ctrl.get("level")
-                note = " · handbrake on" if self.ctrl.get("braked") else ""
-                line.append(f"  {chooser} attached · {level}{note}", style="dim")
+                line.append(f"  {chooser} attached · {self.ctrl.get('level')}", style="dim")
                 line.append("   ctrl+g level", style="dim")
             else:
                 line.append("  no driver attached", style="dim")

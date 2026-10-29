@@ -47,14 +47,27 @@ def test_cycle_without_a_driver_stays_at_interpret():
     assert driver.cycle(driver.control())["level"] == "interpret"
 
 
-def test_the_handbrake_drops_to_interpret_and_hands_control_back():
+def test_manual_is_one_press_away_and_auto_is_one_press_back():
+    """Like a paddle shift: one press takes control, the same press hands it back at the level
+    the driver had, with no cycling through the levels in between."""
     ctrl = driver.cycle(driver.cycle(driver.attach(driver.control(), "llm:x", "schema")))
-    braked = driver.handbrake(ctrl)
-    assert braked["level"] == "interpret"
-    assert braked["braked"] is True
-    assert driver.tag(braked) == "HUMAN"
+    manual = driver.handbrake(ctrl)
+    assert manual["level"] == "interpret" and manual["braked"] is True
+    assert driver.tag(manual) == "MANUAL · llm:x standing by"
     # The driver stays attached: it may still talk, it may no longer act.
-    assert braked["chooser"] == "llm:x"
+    assert manual["chooser"] == "llm:x"
+    auto = driver.handbrake(manual)
+    assert auto["level"] == "drive" and auto["braked"] is False
+    assert driver.tag(auto) == "MACHINE · llm:x"
+
+
+def test_manual_from_propose_returns_to_propose():
+    ctrl = driver.cycle(driver.attach(driver.control(), "llm:x", "schema"))
+    assert driver.handbrake(driver.handbrake(ctrl))["level"] == "propose"
+
+
+def test_the_handbrake_with_no_driver_changes_nothing():
+    assert driver.handbrake(driver.control()) == driver.control()
 
 
 def test_a_detach_returns_control_to_the_human():

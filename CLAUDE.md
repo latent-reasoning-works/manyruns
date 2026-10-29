@@ -26,11 +26,12 @@ A **driver** is any outside program attached to the run's **seat** (below).
 | interpret | scientist + driver | `interpret`: talks only | `HUMAN` |
 | propose | scientist + driver | `propose`: puts up cards the scientist takes | `HUMAN` |
 | drive, watched | scientist + driver | `drive`: applies its own choices | `ON AIR · MACHINE · <chooser>` |
+| manual | scientist, driver standing by | `interpret` until `ctrl+b` again | `MANUAL · <chooser> standing by` |
 | driver alone | driver | `drive`, granted at launch | `ON AIR · MACHINE · <chooser>` |
 
 Keys on the run screen, all priority bindings so they work while the ask field has
-focus: `ctrl+g` cycles the level (interpret → propose → drive), `ctrl+b` is the
-handbrake, `ctrl+y` takes the driver's card. With a driver attached, `? question` in
+focus: `ctrl+g` cycles the level (interpret → propose → drive), `ctrl+b` toggles
+manual and auto, `ctrl+y` takes the driver's card. With a driver attached, `? question` in
 the ask field goes to the driver, and the answer pane's border names it.
 
 ## The driver seam
@@ -67,9 +68,11 @@ Rules:
   `params.tunable_for`, minimums from `params.FLOOR`, caps from
   `bounds.resolved_constraints`. An undeclared maximum is `maximum_known: false`, never
   invented. A knob at a word that takes a number (`t: auto`) is offered as the number.
-- **An apply is checked twice**: by the seat, and again on the UI thread, so a handbrake
-  or a human answer that lands in between wins.
-- **The handbrake** drops the level to `interpret` and refuses the driver's next move.
+- **An apply is checked twice**: by the seat, and again on the UI thread, so a switch to
+  manual or a human answer that lands in between wins.
+- **Manual is a toggle** (`driver.handbrake`), like a paddle shift: one press drops the
+  driver to `interpret`, keeps its level in `resume`, and refuses its next move; the tag
+  reads `MANUAL · <chooser> standing by`. The same press returns it to `resume`.
   A fit already running is left to finish: cancelling mid-fit would discard the whole
   step (`run_tune_loop`'s `ComputeCancelled` path), the opposite of keeping the values.
 - **Every move is attributed.** A tune loop a driver touched writes a version 2 decision

@@ -10,9 +10,10 @@ out. That split is what makes the whole seam testable without a socket or a term
 may also put a choice on screen for the scientist to accept; `drive` may also apply its own
 choices. The level is the scientist's, never the driver's: no request can raise it.
 
-**The handbrake** drops a driving driver to `interpret` at once and marks the control `braked`.
-The driver stays attached, so it can still talk; it cannot act until the scientist hands the
-wheel back with the same key that set the level.
+**The handbrake is a manual/auto toggle**, like a paddle shift. One press takes control at once:
+the driver drops to `interpret`, the control is marked `braked`, and its level is kept. The same
+press hands the wheel back at that level. The driver stays attached throughout, so it can still
+talk while the scientist drives.
 
 **The step offer is built from what this product already offers**, never from a list a caller
 supplies: `params.tunable_for` for the names and current values, `params.FLOOR` for the
@@ -82,26 +83,36 @@ def detach(ctrl: dict) -> dict:
 
 
 def cycle(ctrl: dict) -> dict:
-    """The scientist's key: the next level, wrapping. Releases the handbrake.
+    """The scientist's level key: the next level, wrapping. Leaves manual.
 
     With nothing attached there is nobody to hand the wheel to, so it stays at `interpret`."""
     if not ctrl.get("chooser"):
         return {**ctrl, "level": "interpret"}
     at = LEVELS.index(ctrl.get("level", "interpret"))
-    return {**ctrl, "level": LEVELS[(at + 1) % len(LEVELS)], "braked": False}
+    return {**ctrl, "level": LEVELS[(at + 1) % len(LEVELS)], "braked": False, "resume": None}
 
 
 def handbrake(ctrl: dict) -> dict:
-    """Stop a driving driver now: `interpret`, and `braked` until the scientist cycles again."""
-    return {**ctrl, "level": "interpret", "braked": True}
+    """The manual/auto toggle. To manual: `interpret`, `braked`, the level kept in `resume`.
+    Back to auto: the kept level, unbraked. With nobody attached there is nothing to take
+    control from, so nothing changes."""
+    if not ctrl.get("chooser"):
+        return ctrl
+    if ctrl.get("braked"):
+        return {**ctrl, "level": ctrl.get("resume") or "interpret", "braked": False,
+                "resume": None}
+    return {**ctrl, "level": "interpret", "braked": True, "resume": ctrl.get("level")}
 
 
 def tag(ctrl: dict) -> str:
     """The on-air tag: who has control right now.
 
-    The driver's name only while it drives; at `propose` every choice still passes through the
-    scientist's key, so the human has control."""
-    if ctrl.get("level") == "drive" and ctrl.get("chooser") and not ctrl.get("braked"):
+    The driver's name while it drives; `MANUAL` while the scientist has taken the wheel from an
+    attached driver; otherwise the human, because at `interpret` and `propose` every change still
+    passes through the scientist's key."""
+    if ctrl.get("chooser") and ctrl.get("braked"):
+        return f"MANUAL · {ctrl['chooser']} standing by"
+    if ctrl.get("level") == "drive" and ctrl.get("chooser"):
         return f"MACHINE · {ctrl['chooser']}"
     return HUMAN
 
@@ -209,7 +220,7 @@ def handle(request: Any, ctrl: dict, offer: Optional[dict]) -> tuple[dict, Optio
         return {"ok": False, "error": f"unknown verb {verb!r}; known: {sorted(KNOWN)}"}, None
     level = ctrl.get("level", "interpret")
     if verb not in VERBS[level]:
-        why = " (the handbrake is on)" if ctrl.get("braked") else ""
+        why = " (the scientist is driving in manual)" if ctrl.get("braked") else ""
         return {"ok": False, "error": f"`{verb}` needs a higher level than {level!r}{why}; "
                                       "only the scientist can raise it"}, None
     by = ctrl.get("chooser")

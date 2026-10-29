@@ -43,8 +43,8 @@ Four ways to use it:
   recipe over every dataset, and rank which geometric metrics actually separate the
   workflows. The `experiment` harness.
 - **Bring your own model** → attach any model to a run while it is open: it can explain,
-  suggest, or tune for you, a tag on screen always says who has control, and a handbrake
-  takes it back. (See [bring your own model](#bring-your-own-model).)
+  suggest, or tune for you, a tag on screen always says who has control, and one key
+  switches to manual and back. (See [bring your own model](#bring-your-own-model).)
 
 New here? Start with the install below, then open `manyruns`.
 
@@ -209,7 +209,7 @@ to the run.
 |---|---|
 | `ctrl+g` | Next level: **interpret** (it talks) → **propose** (it puts up a card you can take) → **drive** (it changes values itself) |
 | `ctrl+y` | Take the model's card |
-| `ctrl+b` | Handbrake: control comes back to you at once, and the values stay where they are |
+| `ctrl+b` | Manual / auto: one press and you are driving, with the values where they are; press again and the model takes over at its level |
 | `? question` | In the ask field: ask the attached model |
 
 **What it can and cannot do.** The model only chooses among the values manyruns offers for the

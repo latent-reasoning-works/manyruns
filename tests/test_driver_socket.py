@@ -210,8 +210,10 @@ def test_the_handbrake_stops_apply_at_once(seat):
     legal = c.ask({"verb": "actions"})["offer"]["legal_id"]
     seat.handbrake()
     reply = c.ask({"verb": "apply", "legal_id": legal, "params": {"knn": 10}})
-    assert reply["ok"] is False and "handbrake" in reply["error"]
+    assert reply["ok"] is False and "manual" in reply["error"]
     assert seat.ctrl["braked"] is True
+    seat.handbrake()  # the same key hands the wheel back
+    assert c.ask({"verb": "apply", "legal_id": legal, "params": {"knn": 10}})["ok"] is True
     c.close()
 
 

@@ -366,8 +366,9 @@ The scientist sets your level with one key (`ctrl+g`); no request can raise it.
 An unattended run has nobody at the keys, so whoever starts it may grant a level up front
 with `MANYRUNS_DRIVER_LEVEL` (`interpret` by default); you get it on attach.
 
-The **handbrake** (`ctrl+b`) drops you to `interpret` at once. You stay attached and may still
-talk. `ctrl+g` hands the wheel back.
+**Manual** (`ctrl+b`) is a toggle. One press drops you to `interpret` at once and keeps your
+level in `resume`; you stay attached and may still talk. The same press puts you back at that
+level. `ctrl+g` also leaves manual, at the next level.
 
 #### `actions`
 
@@ -408,13 +409,13 @@ nothing runs:
 - a value equal to the current one.
 
 An `apply` that passed the check can still be refused when it reaches the screen, if the
-scientist pulled the handbrake or answered first. You get a `refused` event.
+scientist switched to manual or answered first. You get a `refused` event.
 
 ### Events
 
 | `event` | Carries |
 |---|---|
-| `control` | `level`, `tag`, `braked` |
+| `control` | `level`, `tag`, `braked` (in manual), `resume` (the level manual returns to) |
 | `offer` | the new offer, or `null` when nothing is waiting |
 | `question` | `kind` (`decision` or `params`), `question_id`, `prompt` |
 | `message` | `text`: the scientist asked you something (`? …` in the ask field) |
