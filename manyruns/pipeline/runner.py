@@ -34,7 +34,7 @@ from manyruns.pipeline import stubs as _stubs
 from manyruns.pipeline import suite as _suite
 from manyruns.pipeline.io import _numeric_quiet
 from manyruns.pipeline.loading import as_matrix, dense as _dense
-from manyruns.vocab import CATEGORICAL_KINDS, INPROC, STEP_GROUPS
+from manyruns.vocab import CATEGORICAL_KINDS, INPROC, STEP_GROUPS, STEP_PRODUCES
 from manyruns.watch import describe
 
 
@@ -611,6 +611,12 @@ def _persist(rec: dict, state: dict, ctx: dict, index: int, name: str, written: 
 ENGINE_CLAIMED = ("embeddings", "scores", "label", "metadata")
 
 
+def _is_scalar(value: Any) -> bool:
+    """The g-vector's value test: an `int` or `float`, and not a `bool`. One function for
+    a top-level byproduct and for a sub-value of a dict byproduct, so the two cannot drift."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def _collect_extras(name: str, out: Any, state: dict, g: dict) -> None:
     """Route whatever the engine returned BESIDES the embedding, instead of dropping it.
 
@@ -632,7 +638,12 @@ def _collect_extras(name: str, out: Any, state: dict, g: dict) -> None:
         so it is comparable across runs by the same fixed-key rule everything else obeys;
       * anything with a shape goes to the **artifact channel**, which already has the atomic
         write, the manifest and the size cap. Namespaced the same way, so two steps that both
-        emit `affinity` do not overwrite each other.
+        emit `affinity` do not overwrite each other;
+      * a dict is opened ONE level: each scalar sub-value goes to the g-vector as
+        `<step>.<key>.<subkey>` (the flattened extra key, `subkey` through `str()`). Lists,
+        strings, bools, arrays and nested dicts inside it are not recorded. This is how the
+        Reeb graph `structural_summary` counts reach the record, without its
+        variable-length `degree_sequence`.
 
     Nothing here decides whether a byproduct is *interesting*. It decides that a byproduct
     which crossed the boundary is written down — the same argument `artifacts.py` makes about
@@ -645,7 +656,11 @@ def _collect_extras(name: str, out: Any, state: dict, g: dict) -> None:
             continue
         if hasattr(value, "shape"):
             state.setdefault("extras", {})[f"{name}.{key}"] = value
-        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+        elif isinstance(value, dict):
+            for sub, v in value.items():
+                if _is_scalar(v):
+                    g[f"{name}.{key}.{sub}"] = v
+        elif _is_scalar(value):
             g[f"{name}.{key}"] = value
 
 
@@ -1611,6 +1626,16 @@ def _display_scatter(emb, state, ctx, fname, title, *, trajectories=None):
     return result
 
 
+def _label_valued(name: str) -> bool:
+    """Whether a latent step leaves a PARTITION in ``state["emb"]`` rather than coordinates.
+
+    Read off `vocab.STEP_PRODUCES` — the one table that already says `leiden` yields
+    `clusters` — so this cannot drift from the calculus the first time a second clustering
+    step is added. What such a step leaves behind is an (N, 1) label column (the shape
+    `test_analysis_readouts` measured), and the geometry suite has nothing to measure in it."""
+    return "clusters" in STEP_PRODUCES.get(name, ())
+
+
 def _ml_latent(name, params, state, g, ctx):
     """A latent step → ``manylatents.api.run(algorithms={'latent': name})``."""
     import numpy as np
@@ -1626,8 +1651,21 @@ def _ml_latent(name, params, state, g, ctx):
     kwargs.update(params or {})
     # The declared metric suite. manylatents' registry computes these and returns them in
     # `scores`, which we fold into the g-vector below — this is the whole mechanism by which
-    # "a suite of 10-20 metrics" reaches the experiment table. Omitted → engine defaults.
-    if ctx.get("metrics"):
+    # "a suite of 10-20 metrics" reaches the experiment table. Omitted → NO engine metrics
+    # (`api._resolve_metrics(None)` is "no metrics", not a default bundle).
+    #
+    # NOT FOR A PARTITION STEP. The engine evaluates the suite inside `run()` on the step's own
+    # output, and its list-of-names path has no per-metric catch (manylatents `evaluate.py`,
+    # `_evaluate_registry`): the first metric that declines takes the whole call down, output
+    # included. `leiden` leaves an (N, 1) label column, and `lid` refuses fewer than k+1
+    # distinct points — so on the bundled `cluster` recipe over swissroll 800×10 (17 clusters,
+    # k=20) the step recorded `error: MeasurementUnavailable: only 17 distinct points for k=20`,
+    # the run `ok=False`, exit 1, with the partition computed and lost. The suite is geometry
+    # on coordinates; a partition has none, so it is not sent, and the absence is stated below
+    # rather than implied by a missing `leiden.lid` key (`suite.py`, "declared, not
+    # conditional"). One metric declining is the metric's absence, never the step's error —
+    # the rule `suite.measure` already applies to the final suite.
+    if ctx.get("metrics") and not _label_valued(name):
         kwargs["metrics"] = list(ctx["metrics"])
     # "first" is derived from the state, not a flag: a flag that only cleared on full
     # success meant a step failing *after* producing an embedding sent the next step back
@@ -1659,6 +1697,9 @@ def _ml_latent(name, params, state, g, ctx):
         ctx["metadata_aligned"] = True
     _check_metadata_alignment(emb, state, ctx, out.get("obs_names", out.get("sample_ids")))
     state["emb"] = emb
+    if ctx.get("metrics") and _label_valued(name):
+        g[f"{name}.suite_note"] = ("geometry suite not measured: this step produces a "
+                                   "partition (clusters), not coordinates")
     for k, v in (out.get("scores") or {}).items():
         g[f"{name}.{k}"] = v
         if not k.endswith("_note"):

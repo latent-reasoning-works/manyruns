@@ -6,11 +6,20 @@ During the open beta, the CLI and record schema can still change.
 
 ## [Unreleased]
 
+### Added
+
+- An engine byproduct that is a dict of scalars, such as the Reeb graph
+  `structural_summary`, is flattened one level into the g-vector as
+  `<step>.<key>.<subkey>`; non-scalar sub-values are not recorded.
+
 ### Fixed
 
 - Installation and runtime repair guidance consistently uses uv tool installs for
   the application and `uv sync` for developer checkouts, with uv's official installer
   for first-time setup.
+- A latent step that produces a partition, such as `leiden`, is no longer scored by
+  the declared geometry suite, so one declining metric no longer fails the run; the
+  g-vector records `<step>.suite_note` instead.
 
 ## [0.1.0] - 2026-09-17
 
