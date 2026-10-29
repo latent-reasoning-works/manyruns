@@ -10,6 +10,66 @@ algorithms belong in `manylatents`.
 **observe → legal moves → step → record**; `Session.step` accepts a step name or a
 step dictionary, and `vocab.unmet` checks preconditions.
 
+## Bring your own intelligence — the driver seam
+
+Any model, trained on anything, may drive manyruns. That is the product: manyruns
+defines what is legal, checks every proposal, runs it, and records it; the driver
+brings the intelligence. Swapping, retraining, or cloning a driver changes nothing
+about what counts as a valid or reproducible run.
+
+The seam keeps the arrow of the next section: **a driver attaches to manyruns, and
+manyruns never calls a driver.** A running session opens a local socket in its own
+output folder. Any program may connect to it, as it may run the CLI. The socket names
+no caller and is the same for every program.
+
+The verbs, as JSON lines:
+
+- `actions`: the legal moves, as `manyruns actions` prints them. The `ledger` surface
+  lists the recipes; the `step` surface lists the current step's parameters, current
+  values, presets, and ranges. Both carry a `legal_id` (contract §2.3).
+- `events`: what happened, as it happens: runs, the scientist's messages, and changes of
+  control.
+- `say`: text for the conversation pane.
+- `propose`: a choice shown to the scientist as a card, which one key accepts.
+- `apply`: a choice that runs at once. manyruns checks it against the current offer,
+  whatever schema the driver used. A stale `legal_id`, an unknown parameter, a wrong
+  type, or a value out of range is refused with its reason and recorded, and nothing
+  runs. A valid choice goes through the tune loop's own gate, so the figure pane updates
+  as it does for a human step.
+
+The scientist sets the driver's level with one key, and the level decides which verbs
+the driver may use:
+
+| Level | The driver may use |
+|---|---|
+| `interpret` | `actions`, `events`, `say` |
+| `propose` | the above, and `propose` |
+| `drive` | the above, and `apply` |
+
+Rules for the seam:
+
+- A tag on the screen always says who has control: `HUMAN`, or the driver's chooser
+  (`llm:<model>`) while it drives. It changes the moment control changes.
+- The handbrake key stops a driving driver at once: the level drops to `interpret`, a
+  fit the driver started is cancelled, and the parameters stay where the last completed
+  attempt left them, for the scientist to change.
+- The driver passes `chooser` and `bound` in, and they are recorded as told (contract
+  §2.1, §2.2). manyruns records its own verdict beside them. The verdict is the only
+  check manyruns enforces, and it never trusts a schema to have held.
+- Each `propose` and `apply` writes a version 2 decision row: `proposed`, `chosen`,
+  `chooser`, `legal_id`, `state_before`, the turn's text when the driver sends it, and
+  the `run_id`. `decisions.examples()` is the training shape; extend it there.
+- The documents are plain JSON. A driver needs no import or type from manyruns.
+- Name no driver, model, or trainer here. Conformance fixtures (offers, with the verdict
+  each reply must get) ship in this repository; the check that calls a model lives with
+  the driver.
+- The driver owns its loop. manyruns answers one request at a time, and `agents.py`
+  stays the only place manyruns asks a model: a rented one, one call at a time.
+
+Status on 2026-10-29: `manyruns actions` (the `ledger` surface) and version 2 decision
+rows exist. The socket, the `step` surface, the levels, the tag, and the handbrake are
+being built.
+
 ## No track to a learner — the arrow points one way
 
 manyruns names no learner: no dependency, import, engine value, config, or CLI path.
@@ -47,7 +107,8 @@ backends. Mock output is not scientific evidence.
 Tools currently run as declared recipe steps. `manyruns actions <DATASET>` is the one
 action-enumeration interface: it prints the ledger for a dataset's declaration as one
 JSON document (`manyruns/actions.py`), for any outside program that drives the CLI. Add
-further planning or enumeration interfaces only against a concrete caller's needs.
+further planning or enumeration interfaces only against a concrete caller's needs;
+the driver seam below is one, and nothing goes into it that no driver needs.
 
 ## Config and record handling
 
@@ -73,6 +134,9 @@ passing the suffix after the prefix. User cache state lives in `~/.cache/manyrun
 ## Distribution
 
 The distribution name is `manyruns`; `co-science` is a console-script alias.
+manyruns is Apache-2.0; releases up to 0.1.0 are MIT (see `NOTICE`). Contributions
+come in under section 5 of the license. Add no code whose license restricts use, such
+as non-commercial terms; `NOTICE` lists the MIOFlow files already carved out.
 Once published to PyPI:
 
 ```sh
