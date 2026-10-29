@@ -137,6 +137,19 @@ def declared_facts(ds: "dict | None") -> frozenset:
     return dataset_provides(shape, ds.get("handle")) - dataset_provides(shape)
 
 
+def declared_observation(ds: dict, name: str) -> Observation:
+    """A dataset DECLARATION → the Observation it states, with no file opened.
+
+    THE ONE CONSTRUCTION of a declared Observation: `tui.state.catalog_entry`,
+    `shell._resolve_dataset` and `manyruns actions` all call it, so no two surfaces disagree
+    about `declared`. Shape and modality come from the YAML, `declared` from `declared_facts`,
+    sorted so that two builds of one declaration are equal. Everything about the bytes stays
+    None: this is what is known before anything is read.
+    """
+    return Observation(shape=ds.get("shape", "unknown"), modality=ds.get("modality", "unknown"),
+                       source=name, declared=tuple(sorted(declared_facts(ds))))
+
+
 def read_data(data_path: Optional[Path], modality: str, *, source: Optional[str] = None) -> Observation:
     """Inspect the data's shape (reuses app's detection) → an Observation. Never raises."""
     from manyruns import app
