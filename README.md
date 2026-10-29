@@ -329,6 +329,7 @@ boundary between this application and its callers.
 | [CHANGELOG.md](CHANGELOG.md) | user-visible changes |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | community standards and reporting |
 | [docs/environment-contract.md](docs/environment-contract.md) | the environment contract |
+| [docs/guides/](docs/guides/) | worked examples: start from a published figure in minutes, then change it yourself |
 | [docs/sidecars/](docs/sidecars/) | out-of-process sidecar tools: the pyrovelocity brief, its fixture generator and recipe |
 
 Source comments keep their reasoning self-contained; cited documentation paths are checked
