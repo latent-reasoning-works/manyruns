@@ -118,3 +118,25 @@ def test_valid_labels():
     assert "cycle" in VALID_LABELS
     assert "surface" in VALID_LABELS
     assert "other" in VALID_LABELS
+
+
+def test_valid_labels_are_the_labeler_table():
+    """One source of truth: the old name is derived from the vocab table, and still exported."""
+    import manyruns.harness
+    from manyruns import vocab
+    from manyruns.harness.labeler import VALID_LABELS
+
+    assert VALID_LABELS == frozenset(vocab.LABELER_TOPOLOGY)
+    assert manyruns.harness.VALID_LABELS is VALID_LABELS
+
+
+def test_label_workflow_adds_the_canonical_topology(sample_result):
+    """The raw label is kept as typed; `topology` is its canonical name, `None` for `other`."""
+    from manyruns.harness.labeler import label_workflow
+
+    traj = label_workflow(sample_result, "trajectory", ["trustworthiness"], "a3")
+    assert traj["label"] == "trajectory" and traj["topology"] == "single-trajectory"
+    assert list(traj).index("topology") == list(traj).index("label") + 1
+
+    other = label_workflow(sample_result, "other", ["trustworthiness"], "a3")
+    assert other["label"] == "other" and other["topology"] is None
