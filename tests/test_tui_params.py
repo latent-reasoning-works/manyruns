@@ -135,3 +135,43 @@ def test_draft_has_distinct_ink_and_does_not_replace_the_current_attempt():
     draft_start = row.plain.index("[DRAFT")
     assert any(span.start <= draft_start < span.end and span.style == "bold yellow"
                for span in row.spans)
+
+
+def test_every_offered_knob_has_a_domain():
+    """A knob without a domain cannot tell a caller which values the step accepts."""
+    offered = {n for names in params.TUNABLE.values() for n in names}
+    assert offered <= set(params.DOMAIN)
+    for entry in params.DOMAIN.values():
+        assert set(entry) == {"kind", "min", "min_open", "max", "max_open", "also"}
+        assert entry["kind"] in ("int", "number")
+        assert isinstance(entry["also"], tuple)
+
+
+def _inside(value, domain) -> bool:
+    if domain["kind"] == "int" and (isinstance(value, bool) or not isinstance(value, int)):
+        return False
+    if domain["min"] is not None and (value <= domain["min"] if domain["min_open"]
+                                      else value < domain["min"]):
+        return False
+    if domain["max"] is not None and (value >= domain["max"] if domain["max_open"]
+                                      else value > domain["max"]):
+        return False
+    return True
+
+
+def test_every_floor_lies_inside_its_domain():
+    """An arrow stops at the floor, so a floor outside the domain composes a value the library
+    refuses."""
+    for name, floor in params.FLOOR.items():
+        assert _inside(floor, params.DOMAIN[name]), name
+    assert params.FLOOR["n_neighbors"] == 2
+
+
+def test_t_domain_allows_auto():
+    assert params.DOMAIN["t"] == {"kind": "int", "min": 1, "min_open": False, "max": None,
+                                  "max_open": False, "also": ("auto",)}
+
+
+def test_n_neighbors_arrow_stops_at_two():
+    """UMAP refuses `n_neighbors < 2`."""
+    assert params.step_value("n_neighbors", 2, -1) == 2

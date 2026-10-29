@@ -260,6 +260,16 @@ manyruns check
 exercise — a recipe no dataset can run is flagged (not silently pruned at sweep time). It
 exits non-zero on a real error, so CI gates on it. This whole loop is **stackless** (mock).
 
+A program that decides what to run next reads the legal action space with `manyruns actions`
+instead of parsing `check`. The verb is read-only and prints one JSON document: the ledger of a
+dataset (which recipes can run, and why not), the knobs of one recipe's tunable steps
+(`--surface tune --recipe R`), or the scorer's rung tables (`--surface ladder`). The same overlays
+apply as for `check`.
+
+```bash
+manyruns actions pbmc3k --surface tune --recipe cluster
+```
+
 Keep experimental variants out of the shipped app with `$MANYRUNS_RECIPE_DIR` /
 `$MANYRUNS_DATASET_DIR` overlays — the wheel ships the blessed few; your sweep's many arms
 live in your own directory.

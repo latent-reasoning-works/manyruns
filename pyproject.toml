@@ -194,8 +194,8 @@ manyruns = "manyruns.app:main"
 #
 # The learner stays OUT of this package (CLAUDE.md, "No track to a learner"): the world-models
 # harness observes the record and drives this interface from outside, exactly as any user does.
-# When it needs to enumerate the action space rather than filter it, that is `actions()` and it
-# does not exist yet — design it against that harness, not ahead of it.
+# When it needs to enumerate the action space rather than filter it, it reads `manyruns actions`,
+# the read-only verb that prints that space as one JSON document (`manyruns/actions.py`).
 "co-science" = "manyruns.app:main"
 
 [build-system]

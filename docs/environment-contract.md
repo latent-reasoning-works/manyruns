@@ -186,6 +186,10 @@ and its artifacts are the observation.** `outputs/<project>/` — `project.yaml`
 `plots/`, `index.jsonl`, `decisions.jsonl` — is the full state, on disk, in formats this repository
 documents. Nothing new has to be built for the learner to see everything.
 
+A caller reads the action space through `manyruns actions`: one JSON document of the legal moves
+for a dataset, the knobs of a recipe, or the rung tables. It is part of the CLI, it is read-only,
+and it does not know who calls it. It takes no argument that names a caller.
+
 **What this buys, and it is why the rule is absolute rather than a preference:**
 
 * manyruns is genuinely standalone open source, with no vestigial hooks whose purpose a reader
