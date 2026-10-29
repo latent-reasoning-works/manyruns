@@ -11,6 +11,11 @@ During the open beta, the CLI and record schema can still change.
 
 ### Added
 
+- Decision rows carry `chooser`, `bound` and `legal_id` (still `schema_version` 1;
+  older rows are read unchanged). `decisions.examples()` gains `surface` and
+  `exclude_chooser` filters. `vocab` gains `VERSION` and the scShapeBench and harness
+  labeler topology mappings. The labeler's `VALID_LABELS` is now derived from
+  `vocab.LABELER_TOPOLOGY`, and labeled entries gain a canonical `topology`.
 - An engine byproduct that is a dict of scalars, such as the Reeb graph
   `structural_summary`, is flattened one level into the g-vector as
   `<step>.<key>.<subkey>`; non-scalar sub-values are not recorded.

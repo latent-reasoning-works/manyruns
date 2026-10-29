@@ -4,8 +4,9 @@ title:       The environment contract, and where the learner ends
 subtitle:    manyruns decides what is LEGAL and records what HAPPENED; the learner decides what is GOOD and learns from it. Most of that line is already drawn in the code and nowhere written down — so a decision row cannot say who chose it or under what constraint, and the first model tier to ship will make human and machine choices indistinguishable in the one file the moat is built on.
 author:      César M. Valdez
 date:        2026-08-19
-status:      Spec — NOTHING IMPLEMENTED. §2 is a three-field change to `decisions.append`;
-             §3 is a rule a reviewer can apply, not code. §3.5 was added 2026-08-19 and REVERSES
+status:      Spec — §2 IMPLEMENTED: `decisions.append` writes `chooser`, `bound` and `legal_id`.
+             NOT implemented: §6 item 2, a test that a dropped schema cannot be recorded as
+             `schema`. §3 is a rule a reviewer can apply, not code. §3.5 was added 2026-08-19 and REVERSES
              this document's own §5, which is struck in place rather than edited away.
 status_kind: open
 ---
