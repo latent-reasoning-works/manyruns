@@ -50,7 +50,7 @@ def test_a_driver_applied_value_and_accept_write_a_version_2_row(tmp_path, monke
 
 
 def test_the_scientist_accepting_a_drivers_card_is_the_humans_choice(tmp_path, monkeypatch):
-    card = {"chooser": "human", "bound": "none",
+    card = {"chooser": "human", "bound": "none", "legal_id": "card0000card",
             "proposed": {"params": {"knn": 10}, "chooser": "llm:qwen3:1.7b", "bound": "schema",
                          "rationale": "fewer neighbours keep the side branch"}}
     accepted, rows = _drive(tmp_path, monkeypatch, [("knn=10", card), ("accept", None)])
@@ -63,6 +63,7 @@ def test_the_scientist_accepting_a_drivers_card_is_the_humans_choice(tmp_path, m
     assert row["proposed"]["chooser"] == "llm:qwen3:1.7b"
     assert row["proposed"]["params"] == {"knn": 10}
     assert row["offered"][1]["proposed_by"] == "llm:qwen3:1.7b"
+    assert row["legal_id"] == "card0000card"  # the offer the kept value was chosen against
 
 
 def test_a_loop_no_driver_touched_writes_the_version_1_row(tmp_path, monkeypatch):

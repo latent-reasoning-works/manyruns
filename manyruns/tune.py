@@ -374,6 +374,8 @@ def _record_decision(session: Any, attempts: list[dict], chosen: Optional[str],
         kept = next((a for a in reversed(attempts) if a["label"] == chosen), None)
         if not final.get("proposed") and kept and (kept.get("by") or {}).get("proposed"):
             final["proposed"] = kept["by"]["proposed"]
+        if not final.get("legal_id") and kept and (kept.get("by") or {}).get("legal_id"):
+            final["legal_id"] = kept["by"]["legal_id"]
         v2 = {"chooser": final.get("chooser") or "human", "bound": final.get("bound") or "none",
               "proposed": final.get("proposed"), "legal_id": final.get("legal_id"),
               "rationale": (final.get("proposed") or {}).get("rationale")}
