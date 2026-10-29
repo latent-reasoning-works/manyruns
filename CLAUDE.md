@@ -44,8 +44,10 @@ lineage, rewind, and branch tests use `pipeline.run_inproc` (`vocab.INPROC`). Th
 in-process loop is a test substrate, absent from product engine choices and serving
 backends. Mock output is not scientific evidence.
 
-Tools currently run as declared recipe steps. Add planning or action-enumeration
-interfaces only against a concrete caller's needs.
+Tools currently run as declared recipe steps. `manyruns actions` is the one
+action-enumeration interface: it is read-only, prints the legal action space as one JSON
+document, and any harness reads it like any other user. Add planning interfaces only
+against a concrete caller's needs.
 
 ## Config and record handling
 

@@ -11,6 +11,11 @@ During the open beta, the CLI and record schema can still change.
 
 ### Added
 
+- `manyruns actions [DATASET] [--surface ledger|tune|ladder]` prints the legal action space as
+  one JSON document: the ledger of a dataset, the knobs of a recipe's tunable steps with their
+  domains, or the scorer's rung tables. It is read-only. `--gate on|off` and `--seed N` record
+  the geometry mask and select the probe run it reads. Every tunable knob declares its domain
+  in `tui.params.DOMAIN`, and the `n_neighbors` arrow floor moves from 1 to 2.
 - Decision rows carry `chooser`, `bound` and `legal_id` (still `schema_version` 1;
   older rows are read unchanged). `decisions.examples()` gains `surface` and
   `exclude_chooser` filters. `vocab` gains `VERSION` and the scShapeBench and harness
