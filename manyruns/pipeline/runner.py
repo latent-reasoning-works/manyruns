@@ -611,6 +611,12 @@ def _persist(rec: dict, state: dict, ctx: dict, index: int, name: str, written: 
 ENGINE_CLAIMED = ("embeddings", "scores", "label", "metadata")
 
 
+def _is_scalar(value: Any) -> bool:
+    """The g-vector's value test: an `int` or `float`, and not a `bool`. One function for
+    a top-level byproduct and for a sub-value of a dict byproduct, so the two cannot drift."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def _collect_extras(name: str, out: Any, state: dict, g: dict) -> None:
     """Route whatever the engine returned BESIDES the embedding, instead of dropping it.
 
@@ -632,7 +638,12 @@ def _collect_extras(name: str, out: Any, state: dict, g: dict) -> None:
         so it is comparable across runs by the same fixed-key rule everything else obeys;
       * anything with a shape goes to the **artifact channel**, which already has the atomic
         write, the manifest and the size cap. Namespaced the same way, so two steps that both
-        emit `affinity` do not overwrite each other.
+        emit `affinity` do not overwrite each other;
+      * a dict is opened ONE level: each scalar sub-value goes to the g-vector as
+        `<step>.<key>.<subkey>` (the flattened extra key, `subkey` through `str()`). Lists,
+        strings, bools, arrays and nested dicts inside it are not recorded. This is how the
+        Reeb graph `structural_summary` counts reach the record, without its
+        variable-length `degree_sequence`.
 
     Nothing here decides whether a byproduct is *interesting*. It decides that a byproduct
     which crossed the boundary is written down — the same argument `artifacts.py` makes about
@@ -645,7 +656,11 @@ def _collect_extras(name: str, out: Any, state: dict, g: dict) -> None:
             continue
         if hasattr(value, "shape"):
             state.setdefault("extras", {})[f"{name}.{key}"] = value
-        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+        elif isinstance(value, dict):
+            for sub, v in value.items():
+                if _is_scalar(v):
+                    g[f"{name}.{key}.{sub}"] = v
+        elif _is_scalar(value):
             g[f"{name}.{key}"] = value
 
 
