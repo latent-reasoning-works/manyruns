@@ -17,7 +17,7 @@ import json
 
 import pytest
 
-from manyruns import decisions  # noqa: E402
+from manyruns import decisions, vocab  # noqa: E402
 
 OFFERED = [
     {"recipe": "embed", "can_run": True, "blocked": [], "recommended": True},
@@ -82,8 +82,8 @@ def test_the_row_carries_no_data(tmp_path):
 
     text = decisions.index_path(tmp_path).read_text()
     row = json.loads(text)
-    assert set(row) == {"schema_version", "decision_id", "run_id", "at", "surface", "dataset", "shape",
-                        "topology", "offered", "chosen"}
+    assert set(row) == {"schema_version", "decision_id", "run_id", "at", "surface", "chooser",
+                        "bound", "legal_id", "dataset", "shape", "topology", "offered", "chosen"}
 
 
 def test_a_choice_from_nothing_is_not_a_decision(tmp_path):
@@ -115,6 +115,127 @@ def test_rows_accumulate_and_a_corrupt_one_is_skipped(tmp_path):
     _write(tmp_path, chosen="markers")
 
     assert [r["chosen"] for r in decisions.read(tmp_path)] == ["embed", "cluster", "markers"]
+
+
+# ── who chose, how the choice was bound, and over which task space ──────────
+def _row(tmp_path):
+    (row,) = list(decisions.read(tmp_path))
+    return row
+
+
+def test_an_existing_caller_records_a_human_with_no_bound(tmp_path):
+    """Environment contract §2.1-2.2: the two callers that exist pass neither field, and both
+    are a person choosing from a rendered list."""
+    decisions.append(offered=OFFERED, chosen="embed", out_dir=tmp_path)
+    row = _row(tmp_path)
+    assert row["chooser"] == "human" and row["bound"] == "none"
+
+
+def test_a_model_chooser_is_recorded(tmp_path):
+    decisions.append(offered=OFFERED, chosen="embed", chooser="llm:claude-opus-4-8",
+                     bound="schema", out_dir=tmp_path)
+    row = _row(tmp_path)
+    assert row["chooser"] == "llm:claude-opus-4-8" and row["bound"] == "schema"
+
+
+def test_an_unknown_bound_is_a_caller_bug_not_a_row(tmp_path):
+    """A wrong `bound` is the silent lie §2.2 warns about, so it raises rather than records."""
+    assert decisions.BOUNDS == ("logits", "schema", "prompt", "none")
+    with pytest.raises(ValueError, match="enum"):
+        decisions.append(offered=OFFERED, chosen="embed", bound="enum", out_dir=tmp_path)
+    assert list(decisions.read(tmp_path)) == []
+
+
+def test_an_empty_chooser_raises_before_the_file_is_opened(tmp_path):
+    with pytest.raises(ValueError):
+        decisions.append(offered=OFFERED, chosen="embed", chooser="", out_dir=tmp_path)
+    assert not (tmp_path / "decisions.jsonl").exists()
+
+
+def test_a_non_string_chooser_raises(tmp_path):
+    with pytest.raises(ValueError):
+        decisions.append(offered=OFFERED, chosen="embed", chooser=None, out_dir=tmp_path)
+    assert list(decisions.read(tmp_path)) == []
+
+
+def test_validation_runs_before_the_empty_offer_check(tmp_path):
+    """A caller bug does not hide behind the empty-offer no-op."""
+    with pytest.raises(ValueError):
+        decisions.append(offered=[], chosen="embed", bound="enum", out_dir=tmp_path)
+
+
+def test_the_legal_id_of_a_ledger_offer_with_one_blocked_recipe(tmp_path):
+    """The id is a hash of the legal set and the vocabulary version, and nothing else: the
+    blocked `contrast` is not in it."""
+    assert decisions._legal_set(OFFERED) == ["cluster", "embed"]
+    _write(tmp_path)
+    assert _row(tmp_path)["legal_id"] == "d293a2ccd28b"
+
+
+def test_the_order_of_the_offer_does_not_change_the_legal_id(tmp_path):
+    _write(tmp_path, offered=list(reversed(OFFERED)))
+    assert _row(tmp_path)["legal_id"] == "d293a2ccd28b"
+
+
+def test_an_entry_without_can_run_is_legal(tmp_path):
+    """The offer `tests/test_record_schema.py` writes."""
+    assert decisions._legal_set([{"recipe": "embed"}]) == ["embed"]
+    _write(tmp_path, offered=[{"recipe": "embed"}])
+    assert _row(tmp_path)["legal_id"] == "85075bbaef66"
+
+
+def test_an_offer_with_no_named_entry_has_an_empty_legal_set(tmp_path):
+    """The offer `tests/test_tui_run.py` writes. The row is still written."""
+    assert decisions._legal_set([{"a": 1}, {"b": 2}]) == []
+    _write(tmp_path, offered=[{"a": 1}, {"b": 2}])
+    assert _row(tmp_path)["legal_id"] == "25931395e736"
+
+
+def test_the_vocabulary_version_changes_the_legal_id(tmp_path, monkeypatch):
+    """`append` reads `vocab.VERSION` at call time, so a bump takes effect without a reload."""
+    monkeypatch.setattr(vocab, "VERSION", "2")
+    _write(tmp_path)
+    assert _row(tmp_path)["legal_id"] == "63c20f253f6b"
+
+
+def test_a_tune_offer_is_named_by_its_label():
+    """Two attempts of one step differ only by params, and the label renders the params."""
+    offered = [{"step": "pca", "params": {}, "label": "b"},
+               {"step": "pca", "params": {}, "label": "a"}]
+    assert decisions._legal_set(offered) == ["a", "b"]
+
+
+def test_duplicate_tune_labels_count_once(tmp_path):
+    offered = [{"step": "pca", "params": {"n_components": 2}, "label": "pca n_components=2"}] * 2
+    assert decisions._legal_set(offered) == ["pca n_components=2"]
+    _write(tmp_path, offered=offered)
+    assert _row(tmp_path)["legal_id"] == "e28f4684e82c"
+
+
+def test_a_caller_cannot_set_the_legal_id(tmp_path):
+    """A caller that passes its own id can compute it another way, and the corpus cannot tell."""
+    with pytest.raises(TypeError):
+        decisions.append(offered=OFFERED, chosen="embed", legal_id="x", out_dir=tmp_path)
+    assert list(decisions.read(tmp_path)) == []
+
+
+def test_the_new_keys_follow_surface_and_the_version_stays_1(tmp_path):
+    _write(tmp_path)
+    row = json.loads(decisions.index_path(tmp_path).read_text())
+    assert list(row) == ["schema_version", "decision_id", "run_id", "at", "surface", "chooser",
+                         "bound", "legal_id", "dataset", "shape", "topology", "offered", "chosen"]
+    assert row["schema_version"] == 1
+
+
+def test_a_legacy_row_is_read_unchanged(tmp_path):
+    """No migration: a row written before these fields existed reads without them."""
+    path = decisions.index_path(tmp_path)
+    path.write_text(json.dumps({"offered": OFFERED, "chosen": "embed"}) + "\n")
+    before = path.read_bytes()
+
+    row = next(decisions.read(tmp_path))
+    assert not {"chooser", "bound", "legal_id"} & set(row)
+    assert path.read_bytes() == before
 
 
 # ── the training shape ───────────────────────────────────────────────────────

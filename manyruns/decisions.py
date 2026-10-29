@@ -31,7 +31,12 @@ it is ambiguous — interrupted, changed their mind, mis-keyed — and recording
 step onto interaction telemetry, which this product has no reason to collect.
 
 Version 1 core top-level keys are ``schema_version`` (written first), ``decision_id``,
-``run_id``, ``at``, ``surface``, ``dataset``, ``shape``, ``topology``, ``offered`` and ``chosen``.
+``run_id``, ``at``, ``surface``, ``chooser``, ``bound``, ``legal_id``, ``dataset``, ``shape``,
+``topology``, ``offered`` and ``chosen``. ``chooser``, ``bound`` and ``legal_id`` (who chose,
+which tier enforced the legal set, and which task space the choice was over) are core fields
+from the environment contract §2, not downstream fields, so the ``extra.<caller>`` rule below
+does not apply to them. They were added without a version bump; a row written before them
+simply lacks them, and ``read`` does not fill them in.
 Missing versions mean 1; readers preserve unknown keys and explicit versions for ordinary
 JSON read/write round trips. Future downstream fields reserve ``extra.<caller>`` only;
 no existing core field moves there. This writer creates new decisions, not row rewrites.
@@ -43,11 +48,18 @@ drawn (geometry and steps leave; the person's data does not).
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
 import json
 import os
 import uuid
 from pathlib import Path
 from typing import Any, Iterator, Optional, Sequence
+
+from manyruns import vocab
+
+#: The tiers that can enforce a legal set, strongest first (environment contract §2.2). `none`
+#: is a person choosing from a rendered list.
+BOUNDS = ("logits", "schema", "prompt", "none")
 
 
 def index_path(out_dir: Path | str = "outputs") -> Path:
@@ -65,6 +77,7 @@ def append(*, offered: Sequence[dict], chosen: Optional[str],
            dataset: Optional[str] = None, shape: Optional[str] = None,
            topology: Any = None, surface: str = "ledger",
            run_id: Optional[str] = None,
+           chooser: str = "human", bound: str = "none",
            out_dir: Path | str = "outputs") -> Optional[str]:
     """Write one decision. Returns its `decision_id`, or `None` if nothing was written.
 
@@ -89,7 +102,19 @@ def append(*, offered: Sequence[dict], chosen: Optional[str],
     to `run_manylatents`, the REPL's through `Session`, and the mock server mints none at all.
     Two successive attempts to state the mechanism in this docstring were both factually wrong.
     The timing is the reason; the mechanism is not, and it is not stable enough to cite here.
+
+    `chooser` is set by the CALLER that made the choice: `"human"` for a person, or a policy
+    identifier such as `"llm:<model>"`. It is checked only for being a non-empty string.
+    `bound` must come from the code path that ENFORCED the legal set (logit mask, schema,
+    prompt, or `none`), never from what the caller intended. These two raise `ValueError`
+    instead of returning `None`: a bad value is a caller bug, not an I/O failure, and a wrong
+    `bound` is a silent lie in the corpus. `legal_id` is computed here and cannot be passed in,
+    so every row's id is made the same way (see `_legal_set`).
     """
+    if not isinstance(chooser, str) or not chooser:
+        raise ValueError(f"chooser must be a non-empty string, got {chooser!r}")
+    if bound not in BOUNDS:
+        raise ValueError(f"bound must be one of {BOUNDS}, got {bound!r}")
     if not offered:
         # A choice from an empty offer set is not a decision anyone can learn from, and writing
         # it would put rows in the corpus whose label has no alternatives to be a label against.
@@ -101,6 +126,9 @@ def append(*, offered: Sequence[dict], chosen: Optional[str],
         "run_id": run_id,
         "at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
         "surface": surface,
+        "chooser": chooser,
+        "bound": bound,
+        "legal_id": _legal_id(offered),
         "dataset": dataset,
         "shape": shape,
         # the TRUTH side, and the only field here that is not about the offer
@@ -122,6 +150,30 @@ def append(*, offered: Sequence[dict], chosen: Optional[str],
     except OSError:
         return None
     return decision_id
+
+
+def _legal_set(offered: Sequence[dict]) -> list[str]:
+    """The sorted, distinct names of the entries that could run.
+
+    An entry's name is its `recipe` (ledger), else its `label` (tune), else its `step`; an entry
+    with none of them is skipped. A tune attempt is named by `label` rather than `step` because
+    two attempts of one step differ only by params, and the label renders them. An entry is
+    legal unless it says `can_run` is false: a tune attempt carries no `can_run`, and it ran.
+    """
+    names = set()
+    for entry in offered:
+        name = entry.get("recipe", entry.get("label", entry.get("step")))
+        if name is not None and entry.get("can_run", True):
+            names.add(name)
+    return sorted(names)
+
+
+def _legal_id(offered: Sequence[dict]) -> str:
+    """Twelve hex characters of a hash of the legal set and `vocab.VERSION`, read now so a
+    version bump takes effect. Another repository can recompute it from a row's `offered` and
+    a pinned `VERSION` without importing manyruns."""
+    legal = _legal_set(offered)
+    return hashlib.sha256((json.dumps(sorted(set(legal))) + vocab.VERSION).encode()).hexdigest()[:12]
 
 
 def read(out_dir: Path | str = "outputs") -> Iterator[dict]:
