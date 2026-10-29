@@ -377,3 +377,36 @@ def test_catalog_validation_and_loading_never_fetch_or_verify_data_bytes(tmp_pat
     assert tmp_path.is_dir()
     assert catalog.load_dataset("sample", config_dir=tmp_path) == ds
     assert catalog.check_dataset(ds) == []
+
+
+_GOLDEN_CHECK = """\
+recipes
+  ok    solo           latent:pca
+
+datasets
+  ok    plane          manylatents:swissroll  shape=manifold
+
+coverage (recipe × dataset legality)
+  ok    solo           runs on manifold
+
+1 recipes, 1 datasets — all valid
+"""
+
+
+def test_check_output_is_golden_on_a_fixed_catalog(tmp_path, monkeypatch, capsys):
+    """`check` is the authors' transcript, and `actions` is the callers' document; adding the
+    second must not move a byte of the first. An inline catalog, so a recipe added to the
+    bundled set does not change the golden string."""
+    rdir, ddir = tmp_path / "recipes", tmp_path / "datasets"
+    rdir.mkdir()
+    ddir.mkdir()
+    (rdir / "solo.yaml").write_text(
+        "name: solo\nid: test.solo\n"
+        "steps:\n  - {name: pca, group: latent, params: {n_components: 2}, via: manylatents}\n"
+        'question: "What is here?"\nsuits: [manifold]\nclaims: surface\n')
+    (ddir / "plane.yaml").write_text(
+        "name: plane\nhandle: {kind: manylatents, ref: swissroll}\nshape: manifold\n")
+    assert rdir.is_dir() and ddir.is_dir()
+    monkeypatch.setenv("MANYRUNS_RECIPE_DIR", str(rdir))
+    assert _check(dataset_dir=str(ddir)) == 0
+    assert capsys.readouterr().out == _GOLDEN_CHECK
