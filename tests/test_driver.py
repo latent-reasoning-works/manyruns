@@ -271,3 +271,11 @@ def test_every_intent_names_a_knob_the_offer_has():
         if isinstance(case["intent"], dict):
             offer = driver.step_surface(case["step"], case["constraints"], 1, "conformance")
             assert set(case["intent"]["params"]) <= set(offer["params"]), case["id"]
+
+
+def test_the_fixtures_are_pinned_to_the_protocol_they_test():
+    import json
+    from pathlib import Path
+
+    doc = json.loads((Path(__file__).parent / "fixtures" / "driver_conformance.json").read_text())
+    assert doc["protocol_version"] == driver.PROTOCOL_VERSION

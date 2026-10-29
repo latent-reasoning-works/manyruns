@@ -88,7 +88,8 @@ class DriverSocket:
         self._server = server
         self.folder.mkdir(parents=True, exist_ok=True)
         (self.folder / POINTER).write_text(json.dumps(
-            {"socket": self.path, "pid": os.getpid(), "tool_version": self.tool_version}))
+            {"socket": self.path, "pid": os.getpid(), "tool_version": self.tool_version,
+             "protocol_version": driver.PROTOCOL_VERSION}))
         threading.Thread(target=self._accept, name="manyruns-driver-accept", daemon=True).start()
         return self.path
 
@@ -239,7 +240,8 @@ class DriverSocket:
                 offer = self.offer
             # THE CURRENT OFFER RIDES ON THE REPLY. Events are not replayed, and a driver that
             # attaches while a question is already waiting would otherwise never see it.
-            return {"ok": True, "level": ctrl["level"], "tag": driver.tag(ctrl),
+            return {"ok": True, "protocol_version": driver.PROTOCOL_VERSION,
+                    "level": ctrl["level"], "tag": driver.tag(ctrl),
                     "verbs": sorted(driver.VERBS[ctrl["level"]]), "offer": offer}, True
         if not attached:
             return {"ok": False, "error": "send `hello` with your `chooser` and `bound` first"}, attached

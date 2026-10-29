@@ -1,5 +1,6 @@
 {
  "schema_version": 1,
+ "protocol_version": 1,
  "about": "Driver conformance cases. `probe` is one choice and `verdict` is what the seam must answer it (manyruns tests this). `intent` labels what a good driver does with `said`: a parameter and direction or value, `outside` for a request the offer cannot meet, `none` when no change is right. Scoring a driver against `intent` lives with the driver, never in manyruns.",
  "cases": [
   {

@@ -31,6 +31,12 @@ import hashlib
 import json
 from typing import Any, Optional
 
+#: THE PROTOCOL'S VERSION, on the pointer file and on every `hello` reply. A driver lives in
+#: another repository and must refuse a seat whose protocol it does not speak, so any change to a
+#: verb, a reply, an event or the offer that an existing driver could misread bumps this, and the
+#: conformance fixtures are pinned to it.
+PROTOCOL_VERSION = 1
+
 #: The scientist's three settings for an attached driver, in the order the key cycles them.
 LEVELS = ("interpret", "propose", "drive")
 

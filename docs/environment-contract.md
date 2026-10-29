@@ -325,7 +325,8 @@ holds a pointer to it:
 
 ```json
 outputs/<project>/driver.json
-{"socket": "/tmp/mr-xxxx/d.sock", "pid": 4242, "tool_version": "manyruns 0.1.0 · …"}
+{"socket": "/tmp/mr-xxxx/d.sock", "pid": 4242, "tool_version": "manyruns 0.1.0 · …",
+ "protocol_version": 1}
 ```
 
 `MANYRUNS_DRIVER_SOCKET=0` turns seats off. One driver may attach at a time; a second
@@ -340,8 +341,13 @@ other line is the reply to your last request, in order.
 
 ```json
 {"verb": "hello", "chooser": "llm:qwen3:1.7b", "bound": "schema"}
-→ {"ok": true, "level": "interpret", "tag": "HUMAN", "verbs": [...], "offer": {...} | null}
+→ {"ok": true, "protocol_version": 1, "level": "interpret", "tag": "HUMAN", "verbs": [...],
+   "offer": {...} | null}
 ```
+
+`protocol_version` changes whenever a verb, reply, event or the offer changes in a way an
+existing driver could misread. Refuse a seat whose version you do not speak. The conformance
+fixtures carry the version they test.
 
 `chooser` names you on every decision row (contract §2.1). `bound` says how your choices are
 constrained: `logits`, `schema`, `prompt`, or `none` (§2.2). The reply carries the offer for

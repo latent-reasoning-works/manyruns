@@ -99,6 +99,18 @@ def test_a_driver_that_arrives_mid_question_gets_the_offer_in_its_hello(seat):
     c.close()
 
 
+def test_hello_and_the_pointer_name_the_protocol_version(seat, tmp_path):
+    """A driver in another repo refuses a seat whose protocol it does not speak."""
+    from manyruns import driver
+
+    assert json.loads((tmp_path / "driver.json").read_text())["protocol_version"] == \
+        driver.PROTOCOL_VERSION
+    c = Client(seat.path)
+    reply = c.ask({"verb": "hello", "chooser": "llm:x", "bound": "schema"})
+    assert reply["protocol_version"] == driver.PROTOCOL_VERSION
+    c.close()
+
+
 def test_nothing_but_hello_is_allowed_before_hello(seat):
     c = Client(seat.path)
     reply = c.ask({"verb": "say", "text": "hi"})
