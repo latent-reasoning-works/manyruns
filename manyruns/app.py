@@ -25,6 +25,7 @@ import argparse
 import contextlib
 import os
 from manyruns import env as _env
+from manyruns import vocab as _vocab
 import re
 import sys
 from pathlib import Path
@@ -54,8 +55,8 @@ _BULK_SUFFIXES = {".csv", ".tsv", ".txt"}
 #  defensible. `_choose_recipe` now derives from `narrate.offer`, so modality no longer
 #  selects a recipe and the table had no remaining reader.)
 
-_SUBCOMMANDS = ("init", "explore", "run", "open", "projects", "check", "actions", "audit",
-                "tools", "shell")
+_SUBCOMMANDS = ("init", "explore", "run", "open", "projects", "check", "actions", "label",
+                "import-labels", "rate", "correct", "audit", "tools", "shell")
 
 
 def _load_dotenv() -> None:
@@ -186,6 +187,52 @@ def _build_parser() -> argparse.ArgumentParser:
                            help="the seed whose probe run the gate reads (default 42)")
     p_actions.set_defaults(func=cmd_actions)
 
+    # The four verbs that write `outputs/annotations.jsonl` (`manyruns.annotations`): a judgment
+    # about a run, never a committed choice. Each needs `--annotator`, because every row names
+    # its chooser. They are CLI verbs, not `manyruns>` prompt commands, so `commands.py` does
+    # not list them.
+    p_label = sub.add_parser("label", help="record the topologies a stored run shows")
+    p_label.add_argument("run", metavar="RUN", help="a run_id from outputs/index.jsonl")
+    p_label.add_argument("--topology", required=True, metavar="T[,T...]",
+                         help="comma list from: " + ", ".join(_vocab.TOPOLOGIES))
+    _add_annotator_arg(p_label)
+    p_label.add_argument("--raw-label", action="append", default=[], metavar="L",
+                         help="a free-text label to keep beside the topology (repeatable)")
+    p_label.set_defaults(func=cmd_label)
+
+    p_import = sub.add_parser(
+        "import-labels", help="import a benchmark's topology labels, one row per dataset per "
+        "annotator")
+    p_import.add_argument("benchmark", metavar="BENCHMARK", help="the benchmark: scshapebench")
+    p_import.add_argument("--source", required=True, metavar="FILE",
+                          help="a local JSON-lines file of {dataset, annotator, labels}")
+    p_import.add_argument("--revision", required=True, metavar="SHA",
+                          help="the benchmark revision the file was cut from (7-40 hex)")
+    p_import.set_defaults(func=cmd_import_labels)
+
+    p_rate = sub.add_parser("rate", help="rate stored runs: a rank, a rubric, or a blind score")
+    p_rate.add_argument("runs", nargs="+", metavar="RUN", help="run_ids from outputs/index.jsonl")
+    _add_annotator_arg(p_rate)
+    p_rate.add_argument("--rank", metavar="R,R,...",
+                        help="rank mode: a permutation of 1..n, one rank per run (2+ runs)")
+    p_rate.add_argument("--novelty", metavar="N,...", help="with --rank: 1-5, one per run")
+    p_rate.add_argument("--impact", metavar="N,...", help="with --rank: 1-5, one per run")
+    p_rate.add_argument("--rubric", metavar="FILE",
+                        help="rubric mode: a YAML mapping of axis to a 1-5 score (one run)")
+    p_rate.add_argument("--blind", action="store_true", help="blind mode (one run)")
+    p_rate.add_argument("--accuracy", metavar="N", help="with --blind: 1-5")
+    p_rate.add_argument("--completeness", metavar="N", help="with --blind: 1-5")
+    p_rate.set_defaults(func=cmd_rate)
+
+    p_correct = sub.add_parser("correct", help="record the step a run should have taken")
+    p_correct.add_argument("run", metavar="RUN", help="a run_id from outputs/index.jsonl")
+    p_correct.add_argument("--step", required=True, metavar="N",
+                           help="the position in the run's steps (0 is the first)")
+    p_correct.add_argument("--should", required=True, metavar="STEP",
+                           help="the step that should have run there")
+    _add_annotator_arg(p_correct)
+    p_correct.set_defaults(func=cmd_correct)
+
     p_audit = sub.add_parser(
         "audit", help="run the admission gate over the declared metric suite (non-zero on reject)"
     )
@@ -212,6 +259,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_shell.set_defaults(func=cmd_shell)
 
     return parser
+
+
+def _add_annotator_arg(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--annotator", required=True, metavar="P",
+                   help="your pseudonym, never a real name: lowercase letters, digits, _ and -, "
+                        "at most 32 characters (recorded as human:P)")
 
 
 def _add_setup_args(p: argparse.ArgumentParser) -> None:
@@ -1021,6 +1074,319 @@ def cmd_actions(args: argparse.Namespace, parser: argparse.ArgumentParser) -> in
         print(f"error: cannot load {exc}", file=sys.stderr)
         return 1
     print(json.dumps(doc, indent=2))
+    return 0
+
+
+# ── annotation verbs ─────────────────────────────────────────────────────────
+# Exit codes follow `check` and `actions`: a malformed flag is 2 through `parser.error`; the
+# record saying no (an unknown run, a step out of range, a repeated import), a bad input file,
+# or a failed write is 1 with a message on stderr; success prints each `annotation_id`.
+_REVISION = re.compile(r"[0-9a-f]{7,40}")
+
+
+def _annotator(args: argparse.Namespace, parser: argparse.ArgumentParser) -> str:
+    from manyruns import annotations
+
+    if not re.fullmatch(annotations.PSEUDONYM_PATTERN, args.annotator):
+        parser.error(f"--annotator {args.annotator!r} is not a pseudonym: lowercase letters, "
+                     "digits, _ and -, at most 32 characters, starting with a letter or digit")
+    return "human:" + args.annotator
+
+
+def _last_runs(run_ids) -> dict[str, dict]:
+    """The LAST row of `outputs/index.jsonl` for each wanted run, so a re-run row wins."""
+    from manyruns import store
+
+    wanted, found = set(run_ids), {}
+    for row in store.read("outputs"):
+        if row.get("run_id") in wanted:
+            found[row["run_id"]] = row
+    return found
+
+
+def _missing_runs(run_ids, found: dict) -> int:
+    missing = [r for r in run_ids if r not in found]
+    print(f"error: no run {', '.join(missing)} in outputs/index.jsonl", file=sys.stderr)
+    return 1
+
+
+def _not_written() -> int:
+    print("error: the annotation was not recorded (outputs/annotations.jsonl could not be "
+          "written)", file=sys.stderr)
+    return 1
+
+
+def cmd_label(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    """Write one `label` row: the topologies a stored run shows."""
+    from manyruns import annotations
+
+    given = [t.strip() for t in args.topology.split(",") if t.strip()]
+    unknown = [t for t in given if t not in _vocab.TOPOLOGIES]
+    if unknown:
+        parser.error(f"unknown topology {', '.join(unknown)}: must be from "
+                     f"{', '.join(_vocab.TOPOLOGIES)}")
+    if not given:
+        parser.error("--topology needs at least one value")
+    chooser = _annotator(args, parser)
+    found = _last_runs([args.run])
+    if args.run not in found:
+        return _missing_runs([args.run], found)
+    run = found[args.run]
+    dataset = run.get("dataset_name")
+    if dataset is None:
+        dataset = run.get("dataset")
+    payload = {"dataset": dataset,
+               "topology": [t for t in _vocab.TOPOLOGIES if t in given],
+               "raw": list(args.raw_label)}
+    aid = annotations.append("label", run_id=args.run, chooser=chooser, payload=payload,
+                             out_dir="outputs")
+    if aid is None:
+        return _not_written()
+    print(aid)
+    return 0
+
+
+def _read_benchmark_lines(data: bytes) -> tuple[list[dict], Optional[str]]:
+    """Every source line, validated whole; `(lines, None)` or `([], the first problem)`."""
+    from manyruns import annotations
+    import json
+
+    out: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return [], "the source is not UTF-8 text"
+    for n, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            return [], f"line {n}: not valid JSON"
+        if not isinstance(obj, dict):
+            return [], f"line {n}: not a JSON object"
+        for key, kind in (("dataset", str), ("annotator", str), ("labels", list)):
+            if key not in obj:
+                return [], f"line {n}: no {key!r} key"
+            if not isinstance(obj[key], kind):
+                return [], f"line {n}: {key!r} must be a {kind.__name__}"
+        if not all(isinstance(label, str) for label in obj["labels"]):
+            return [], f"line {n}: every label must be a str"
+        if not re.fullmatch(annotations.PSEUDONYM_PATTERN, obj["annotator"]):
+            return [], (f"line {n}: annotator {obj['annotator']!r} is not a pseudonym "
+                        "(lowercase letters, digits, _ and -, at most 32 characters)")
+        pair = (obj["dataset"], obj["annotator"])
+        if pair in seen:
+            return [], f"line {n}: dataset {pair[0]!r} and annotator {pair[1]!r} repeat a line"
+        seen.add(pair)
+        out.append(obj)
+    return out, None
+
+
+def cmd_import_labels(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    """Import a benchmark's labels: one `label` row per dataset per annotator, `run_id=None`.
+
+    The row records the file's SHA-256, never its path: a path names a home directory, and the
+    digest is what makes a second import of the same file detectable. The whole file is
+    validated before the first row is written.
+    """
+    import hashlib
+
+    from manyruns import annotations
+
+    if args.benchmark != "scshapebench":
+        parser.error(f"unknown benchmark {args.benchmark!r}: the only one is scshapebench")
+    if not _REVISION.fullmatch(args.revision):
+        parser.error(f"--revision {args.revision!r} must be 7 to 40 lowercase hex characters")
+    source = Path(args.source)
+    try:
+        data = source.read_bytes()
+    except OSError as exc:
+        print(f"error: cannot read the source file: {exc.strerror or exc}", file=sys.stderr)
+        return 1
+    lines, problem = _read_benchmark_lines(data)
+    if problem:
+        print(f"error: {problem}; nothing was imported", file=sys.stderr)
+        return 1
+    digest = hashlib.sha256(data).hexdigest()
+    for row in annotations.read("outputs"):
+        src = (row.get("payload") or {}).get("source") if row.get("kind") == "label" else None
+        if isinstance(src, dict) and src.get("sha256") == digest:
+            print(f"error: this file was already imported (sha256 {digest[:12]}…); nothing was "
+                  "imported", file=sys.stderr)
+            return 1
+    meta = {"name": "scshapebench", "revision": args.revision, "sha256": digest}
+    written = skipped = 0
+    for obj in lines:
+        topology = annotations.benchmark_topology(obj["labels"])
+        if not topology:
+            skipped += 1
+            continue
+        payload = {"dataset": obj["dataset"], "topology": topology,
+                   "raw": list(obj["labels"]), "source": dict(meta)}
+        if annotations.append("label", run_id=None, chooser="human:" + obj["annotator"],
+                              payload=payload, out_dir="outputs") is None:
+            print(f"error: the write failed after {written} rows", file=sys.stderr)
+            return 1
+        written += 1
+    print(written)
+    if skipped:
+        print(f"skipped {skipped} rows with no mappable class", file=sys.stderr)
+    return 0
+
+
+def _int_list(flag: str, value: str, parser: argparse.ArgumentParser) -> list[int]:
+    try:
+        return [int(v) for v in value.split(",")]
+    except ValueError:
+        parser.error(f"{flag} {value!r} must be a comma list of integers")
+
+
+def _score(flag: str, value: int, parser: argparse.ArgumentParser) -> int:
+    if not 1 <= value <= 5:
+        parser.error(f"{flag} score {value} must be an integer from 1 to 5")
+    return value
+
+
+def _load_rubric(path: str) -> tuple[Optional[dict], Optional[str], str]:
+    """`(scores, sha256, "")`, or `(None, None, the problem)`."""
+    import hashlib
+
+    from omegaconf import DictConfig, OmegaConf
+
+    try:
+        data = Path(path).read_bytes()
+    except OSError as exc:
+        return None, None, f"cannot read the rubric file: {exc.strerror or exc}"
+    try:
+        cfg = OmegaConf.load(path)
+    except Exception as exc:  # noqa: BLE001 - a malformed file is one problem, not a crash
+        return None, None, f"the rubric is not readable YAML: {type(exc).__name__}"
+    if not isinstance(cfg, DictConfig):
+        return None, None, "the rubric must be a mapping of axis to score"
+    scores = OmegaConf.to_container(cfg, resolve=True)
+    if not scores:
+        return None, None, "the rubric holds no scores"
+    for axis, value in scores.items():
+        if not isinstance(axis, str):
+            return None, None, f"rubric axis {axis!r} must be a name"
+        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 5:
+            return None, None, f"rubric score {axis}: {value!r} must be an integer from 1 to 5"
+    return scores, hashlib.sha256(data).hexdigest(), ""
+
+
+def cmd_rate(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    """Write one `rating` row per run, in rank, rubric or blind mode.
+
+    Rows from one call share `payload.compared` in rank mode, so a reader can rebuild the
+    preference pairs from the rows alone.
+    """
+    from manyruns import annotations
+
+    runs = list(args.runs)
+    n = len(runs)
+    modes = [m for m, on in (("--rank", args.rank is not None),
+                             ("--rubric", args.rubric is not None),
+                             ("--blind", args.blind)) if on]
+    if len(modes) != 1:
+        parser.error("give exactly one of --rank, --rubric or --blind"
+                     + (f" (got {', '.join(modes)})" if modes else ""))
+    mode = modes[0]
+    if args.rank is None:
+        given = [f for f, v in (("--novelty", args.novelty), ("--impact", args.impact)) if v]
+        if given:
+            parser.error(f"{', '.join(given)} needs --rank")
+    if not args.blind:
+        given = [f for f, v in (("--accuracy", args.accuracy),
+                                ("--completeness", args.completeness)) if v is not None]
+        if given:
+            parser.error(f"{', '.join(given)} needs --blind")
+    if mode == "--rank" and n < 2:
+        parser.error("--rank compares 2 or more runs")
+    if mode != "--rank" and n != 1:
+        parser.error(f"{mode} rates exactly one run")
+    if len(set(runs)) != n:
+        parser.error("a run is given twice")
+    chooser = _annotator(args, parser)
+
+    payloads: list[dict]
+    if mode == "--rank":
+        ranks = _int_list("--rank", args.rank, parser)
+        if sorted(ranks) != list(range(1, n + 1)):
+            parser.error(f"--rank must be a permutation of 1..{n}, one per run")
+        extra = {}
+        for flag, value in (("--novelty", args.novelty), ("--impact", args.impact)):
+            if value is None:
+                extra[flag] = [None] * n
+                continue
+            scores = _int_list(flag, value, parser)
+            if len(scores) != n:
+                parser.error(f"{flag} needs {n} values, one per run, got {len(scores)}")
+            extra[flag] = [_score(flag, s, parser) for s in scores]
+        payloads = [{"mode": "rank", "rank": ranks[i], "compared": list(runs),
+                     "novelty": extra["--novelty"][i], "impact": extra["--impact"][i]}
+                    for i in range(n)]
+    elif mode == "--blind":
+        if args.accuracy is None or args.completeness is None:
+            parser.error("--blind needs --accuracy and --completeness")
+        if "," in args.accuracy or "," in args.completeness:
+            parser.error("--accuracy and --completeness take one score each")
+        acc = _score("--accuracy", _int_list("--accuracy", args.accuracy, parser)[0], parser)
+        com = _score("--completeness",
+                     _int_list("--completeness", args.completeness, parser)[0], parser)
+        payloads = [{"mode": "blind", "blind": True, "accuracy": acc, "completeness": com}]
+    else:
+        payloads = []   # filled after the run check: a bad file must not hide an unknown run
+
+    found = _last_runs(runs)
+    if any(r not in found for r in runs):
+        return _missing_runs(runs, found)
+    if mode == "--rubric":
+        scores, digest, problem = _load_rubric(args.rubric)
+        if problem:
+            print(f"error: {problem}; nothing was written", file=sys.stderr)
+            return 1
+        payloads = [{"mode": "rubric", "scores": scores, "rubric_sha256": digest}]
+    for run_id, payload in zip(runs, payloads):
+        aid = annotations.append("rating", run_id=run_id, chooser=chooser, payload=payload,
+                                 out_dir="outputs")
+        if aid is None:
+            return _not_written()
+        print(aid)
+    return 0
+
+
+def cmd_correct(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    """Write one `correction` row: at step N, the run should have taken STEP instead."""
+    from manyruns import annotations, session
+
+    try:
+        step = int(args.step)
+    except ValueError:
+        parser.error(f"--step {args.step!r} must be a non-negative integer")
+    if step < 0:
+        parser.error(f"--step {step} must be a non-negative integer")
+    resolved = session.resolve_step(args.should)
+    if resolved is None:
+        parser.error(f"unknown step {args.should!r} for --should")
+    chooser = _annotator(args, parser)
+    found = _last_runs([args.run])
+    if args.run not in found:
+        return _missing_runs([args.run], found)
+    run = found[args.run]
+    steps = run.get("steps") or []
+    if step >= len(steps):
+        print(f"error: --step {step} is past the end: run {args.run} has {len(steps)} "
+              f"step{'s' if len(steps) != 1 else ''}", file=sys.stderr)
+        return 1
+    did = steps[step].get("name") if isinstance(steps[step], dict) else None
+    aid = annotations.append("correction", run_id=args.run, chooser=chooser,
+                             payload={"did": did}, decision_id=run.get("decision_id"),
+                             step=step, should=resolved["name"], out_dir="outputs")
+    if aid is None:
+        return _not_written()
+    print(aid)
     return 0
 
 
