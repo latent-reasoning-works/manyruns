@@ -370,6 +370,12 @@ class RunScreen(Screen):
         # goes into the field — which is the channel. The two halves never both fire, and that is
         # the mechanism rather than a coincidence to be careful about.
         Binding("question_mark", "ask", "ask the record", show=True),
+        # LABELING: keys 1-6 toggle `vocab.TOPOLOGIES` in order, `enter` commits the set as one
+        # `annotations` label row. NOT priority bindings, for the reason `question_mark` gives
+        # above: a focused `#ask-input` takes the digit and the enter first, so typing `2` into
+        # the field never toggles a topology, and enter there submits the field.
+        *(Binding(str(i + 1), f"toggle_topology({i})", "label", show=i == 0) for i in range(6)),
+        Binding("enter", "commit_labels", "commit label", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -412,6 +418,7 @@ class RunScreen(Screen):
        `height: auto` for `#caveats`' reason: nothing to say collapses to nothing, so a run that
        is not being stepped is laid out exactly as it was before the gate existed. */
     RunScreen #said { height: auto; padding: 0 2; color: $text-muted; }
+    RunScreen #label-strip { height: auto; padding: 0 2; }
     RunScreen #tune-strip { height: auto; padding: 0 2; }
     RunScreen #ask { height: auto; padding: 0 2; }
     RunScreen #ask-prompt { width: auto; padding: 0 1 0 0; }
@@ -712,6 +719,9 @@ class RunScreen(Screen):
         self.heading = heading or str((recipe or {}).get("name") or "run")
         self.results: Optional[dict] = None
         self.error: Optional[str] = None
+        #: The topologies toggled with keys 1-6, not yet committed. In memory only: a toggle is
+        #: interaction, not a judgment, and `annotations` records no interaction telemetry.
+        self.topologies: set[str] = set()
 
     # ── the frame ────────────────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
@@ -751,6 +761,10 @@ class RunScreen(Screen):
         # actually docked, and panes that stop repainting under it, are a separate change.
         yield Static(id="pane-focus")
         yield Static(id="said")
+        # The toggled topologies, painted by `_paint_labels` alone. Hidden while the set is
+        # empty (an empty `Static` still takes a row, measured at 13 rows), so a run nobody is
+        # labeling keeps its layout.
+        yield Static(id="label-strip")
         yield ParametersPane(id="tune-strip")
         with Horizontal(id="ask"):
             yield Static(id="ask-prompt")
@@ -813,6 +827,7 @@ class RunScreen(Screen):
         self.query_one("#figures-pane").border_title = "figures"
         self.query_one("#ask").display = False
         self.query_one("#tune-strip").display = False
+        self._paint_labels()
         self.sync()
         self.query_one("#steps-pane").focus()
         self._paint_focus()
@@ -1758,6 +1773,68 @@ class RunScreen(Screen):
         mid-run names the step alone rather than inventing an id for a lineage still being
         written."""
         return (self.results or {}).get("run_id")
+
+    # ── labeling: a judgment about the run, not a committed choice ───────────
+    def action_toggle_topology(self, index: int) -> None:
+        """Add or remove `vocab.TOPOLOGIES[index]` from the uncommitted set. Writes nothing."""
+        from manyruns import vocab
+
+        name = vocab.TOPOLOGIES[index]
+        self.topologies ^= {name}
+        self._paint_labels()
+
+    def action_commit_labels(self) -> None:
+        """Write the toggled set as one `label` row through `annotations.append`.
+
+        Nothing is written for an empty set, a run that has not finished (no `run_id` yet), or a
+        missing or malformed `MANYRUNS_ANNOTATOR`. A failed write keeps the set so the person can
+        try again; a successful one clears it.
+        """
+        import re
+
+        from manyruns import annotations, vocab
+        from manyruns import env as _env
+
+        if not self.topologies:
+            return
+        run_id = self._run_id()
+        if run_id is None:
+            self.app.notify("The run is not finished; label it once it has a run id.",
+                            severity="warning")
+            return
+        annotator = _env.get("ANNOTATOR")
+        if not annotator or not re.fullmatch(annotations.PSEUDONYM_PATTERN, annotator):
+            self.app.notify("Set MANYRUNS_ANNOTATOR to your pseudonym (lowercase letters, "
+                            "digits, _ and -, at most 32 characters) to record a label.",
+                            severity="warning")
+            return
+        results = self.results or {}
+        dataset = results.get("dataset_name")
+        if dataset is None:
+            dataset = results.get("dataset")
+        topology = [t for t in vocab.TOPOLOGIES if t in self.topologies]
+        aid = annotations.append("label", run_id=run_id, chooser="human:" + annotator,
+                                 payload={"dataset": dataset, "topology": topology, "raw": []},
+                                 out_dir="outputs")
+        if aid is None:
+            self.app.notify("The label was not recorded: outputs/annotations.jsonl could not "
+                            "be written.", severity="error")
+            return
+        self.topologies = set()
+        self._paint_labels()
+        self.app.notify(f"Label {aid} recorded: {', '.join(topology)}")
+
+    def _paint_labels(self) -> None:
+        """The ONLY writer of `#label-strip`. Names in `vocab.TOPOLOGIES` order."""
+        from manyruns import vocab
+
+        try:
+            widget = self.query_one("#label-strip", Static)
+        except NoMatches:
+            return
+        names = [t for t in vocab.TOPOLOGIES if t in self.topologies]
+        widget.update(f"label: {' · '.join(names)} · enter to record" if names else "")
+        widget.display = bool(names)
 
     def action_save(self) -> None:
         """The quickdrop. See `manyruns.tui.figure.quickdrop` — SVG, PDF and PNG at 300 dpi,

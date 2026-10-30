@@ -6,7 +6,7 @@ returns `{embeddings, scores, metadata}`, which is NOT the canonical recipe/g-ve
 The canonical step loop is `manyruns.pipeline.runner` (`_run_steps` → one g-vector schema
 across every engine, trace-proven end-to-end). Do NOT build the new orchestration harness on
 this module; build it on `pipeline.runner`. This exists only to keep the older
-`python -m manyruns.harness` CLI (run/label/rlhf) working until it is migrated onto the
+`python -m manyruns.harness` CLI (run) working until it is migrated onto the
 recipe layer. A cross-repo audit flagged this as the divergent third runner (the others:
 `pipeline.runner`, and the learner's untested expert-workflow runner).
 """

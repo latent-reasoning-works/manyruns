@@ -3,8 +3,6 @@
 
 Usage:
     python -m manyruns.harness run --preset pca_umap --dataset swissroll
-    python -m manyruns.harness label --dataset swissroll --output labeled.json
-    python -m manyruns.harness rlhf --dataset labeled.json
     python -m manyruns.harness prompt --dataset swissroll
 
 This harness uses:
@@ -192,37 +190,6 @@ def run(
         )
         if viz_path:
             console.print(f"[dim]Plot saved to: {viz_path}[/dim]")
-
-
-@cli.command()
-@click.option("--dataset", "-d", required=True, help="Dataset name")
-@click.option("--output", "-o", required=True, type=click.Path(), help="Output dataset file (JSON)")
-@click.option("--labeler", "-l", default="anonymous", help="Your name/ID")
-def label(dataset: str, output: str, labeler: str) -> None:
-    """Label a DR workflow result interactively and save to dataset.
-
-    \b
-    Example:
-        python -m manyruns.harness label -d swissroll -o labeled.json
-    """
-    console.print("[yellow]label:[/yellow] not yet implemented — stub")
-    raise SystemExit(0)
-
-
-@cli.command()
-@click.option(
-    "--dataset", "-d", required=True, type=click.Path(exists=True), help="Labeled dataset (JSON)"
-)
-@click.option("--rounds", "-r", type=int, default=10, help="Number of feedback rounds")
-def rlhf(dataset: str, rounds: int) -> None:
-    """Collect reinforcement feedback on labeled embeddings (RLHF loop).
-
-    \b
-    Example:
-        python -m manyruns.harness rlhf -d labeled.json --rounds 5
-    """
-    console.print("[yellow]rlhf:[/yellow] not yet implemented — stub")
-    raise SystemExit(0)
 
 
 def _ensure_api_key(agent: str, api_key: Optional[str]) -> None:
