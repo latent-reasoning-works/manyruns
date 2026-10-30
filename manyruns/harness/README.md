@@ -117,10 +117,6 @@ manyruns prompt "Summarize what a swiss roll dataset looks like" --agent ollama 
 manyruns prompt "Describe a swiss roll" --agent claude   # uses ANTHROPIC_API_KEY, or prompts
 ```
 
-## Stubs
-
-`label` and `rlhf` are registered but not yet implemented (print a stub notice).
-
 ## The Backend contract
 
 The harness routes every run through a single `Backend` interface (defined in `manyruns/harness/interface.py`). Any package — current or future — that implements `Backend.run(request: Request) -> Response` can be plugged in. `Request` carries the dataset name, resolved workflow steps, and requested metrics; `Response` carries the embedding array, metric scores, and execution metadata. The CLI never calls manyLatents, Manyruns, or any model directly — it only speaks to a `Backend`. This boundary is the seam where new inference engines, learned policies, and remote services attach without touching the CLI or labeling logic.
