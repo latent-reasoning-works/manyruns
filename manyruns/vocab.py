@@ -106,6 +106,11 @@ TOPOLOGIES = (
     "surface",            # a 2-manifold (likewise)
 )
 
+#: The four scShapeBench classes, spelled as `TOPOLOGIES` names and in `TOPOLOGIES` order. Not a
+#: map: it fixes the key order of the benchmark scorers (`score.soft_truth`, `score.class_auprc`).
+#: A test pins its set to the range of `SCSHAPEBENCH_TOPOLOGY`, so the two cannot drift.
+BENCHMARK_CLASSES = ("clusters", "single-trajectory", "multi-branching", "archetypal")
+
 #: The vocabulary version. `decisions.append` hashes it into every row's `legal_id`, so bump it
 #: by hand whenever `TOPOLOGIES` or any table that defines legality changes: two task spaces
 #: must not share an id. A test pins it to `TOPOLOGIES`. Not derived from a hash of the tables,
