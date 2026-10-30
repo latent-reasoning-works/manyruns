@@ -36,7 +36,6 @@ def test_readme_installs_the_public_distribution_without_org_access():
     assert "open beta" in readme.lower()
     assert "https://github.com/latent-reasoning-works/manyruns/issues" in readme
     assert "CLI and record schema can still change" in readme
-    assert "co-science" not in readme
 
 
 def test_install_opens_with_the_pypi_quickstart():
@@ -177,6 +176,13 @@ def make_recipes():
     return recipes
 
 
+def test_the_wheel_installs_one_command():
+    import tomllib
+
+    scripts = tomllib.loads(read_surface("pyproject.toml"))["project"]["scripts"]
+    assert scripts == {"manyruns": "manyruns.app:main"}
+
+
 def test_make_installs_committed_git_and_runs_a_real_demo():
     recipes = make_recipes()
     assert recipes["install"] == [
@@ -187,7 +193,7 @@ def test_make_installs_committed_git_and_runs_a_real_demo():
     assert "demo-real" not in recipes
     assert recipes["install-public"] == [TOOL_INSTALL]
     assert recipes["demo"] == [
-        "co-science run swissroll --recipe embed --engine manylatents --project demo"
+        "manyruns run swissroll --recipe embed --engine manylatents --project demo"
     ]
     assert recipes["test"] == ["uv run pytest tests/ -q"]
     assert recipes["lint"] == ["uv run ruff check manyruns tests"]

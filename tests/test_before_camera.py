@@ -276,7 +276,7 @@ def test_install_docs_pin_python():
     (None, "unavailable"), ('{"url":"file:///wheel"}', "unavailable"),
     ("malformed", "unavailable"),
 ])
-@pytest.mark.parametrize("program", ["co-science", "manyruns"])
+@pytest.mark.parametrize("program", ["geomancer", "manyruns"])
 def test_version_reports_installed_build_without_becoming_a_run(direct, revision, program, monkeypatch, capsys):
     from importlib import metadata
     from types import SimpleNamespace

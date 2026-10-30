@@ -9,6 +9,11 @@ During the open beta, the CLI and record schema can still change.
 - Relicensed from MIT to Apache-2.0. Releases up to and including 0.1.0 stay under MIT; NOTICE keeps the MIT notice and lists the MIOFlow files it does not cover.
 
 
+### Removed
+
+- The second console-script name. The wheel installs one command, `manyruns`; run
+  `manyruns` wherever you ran the other name.
+
 ### Added
 
 - `manyruns actions [DATASET] [--surface ledger|tune|ladder]` prints the legal action space as
@@ -37,6 +42,11 @@ During the open beta, the CLI and record schema can still change.
 ## [0.1.0] - 2026-09-17
 
 First public release: an open beta for macOS and Linux, Python 3.11–3.12.
+
+### Removed
+
+- The second console-script name. The wheel installs one command, `manyruns`; run
+  `manyruns` wherever you ran the other name.
 
 ### Added
 

@@ -5,8 +5,7 @@ It owns the user-facing workflow, harness, config catalog, and run artifacts. Ke
 thin on compute: training loops, geometric metrics, and dimensionality-reduction
 algorithms belong in `manylatents`.
 
-`manyruns` and `co-science` are aliases for the same program, both invoking
-`manyruns.app:main`. Keep their behavior identical. The interaction loop is
+The command is `manyruns`, which invokes `manyruns.app:main`. The interaction loop is
 **observe → legal moves → step → record**; `Session.step` accepts a step name or a
 step dictionary, and `vocab.unmet` checks preconditions.
 
@@ -72,12 +71,11 @@ passing the suffix after the prefix. User cache state lives in `~/.cache/manyrun
 
 ## Distribution
 
-The distribution name is `manyruns`; `co-science` is a console-script alias.
-Once published to PyPI:
+The distribution and command name is `manyruns`. Once published to PyPI:
 
 ```sh
 uv tool install --python 3.12 manyruns
-co-science
+manyruns
 ```
 
 The public Git install is also the runtime repair command:

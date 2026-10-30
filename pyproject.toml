@@ -179,24 +179,19 @@ agents = [
 [project.scripts]
 # this console-script IS the distributable artifact (#9 / distribution path "A").
 #
-# `manyruns` is the name. There is deliberately NO `geomancer` script here: that name is going
-# to its own repo, which will alias into this one from the outside, and declaring it here too
-# would collide with that. `shop` and `shop-spin` used to declare one as well; both dropped it
+# `manyruns` is the only name. There is deliberately NO `geomancer` script here: that name
+# belongs to the geomancer repo, which hands its command line to this `main` from outside, and
+# declaring it here too would collide with that. `shop` and `shop-spin` used to declare one as well; both dropped it
 # (two installed tools claiming one console-script name resolve by install order, silently), so
 # the name is now unclaimed and should stay that way. Do not add it back.
-manyruns = "manyruns.app:main"
-# `co-science` is the SAME program under the name the work goes by out loud. Not a mode, not a
-# second entry point, not a demo build — the identical `main`, deliberately, because the loop a
-# person drives here is the loop a policy will drive later: observe → legal moves → step →
-# record (`Session.step` takes a typed NAME or a step DICT; that is the whole
-# human/agent split). A separate name that ran a separate path would make the thing shown and
-# the thing built two different things, which is the one failure this alias exists to avoid.
 #
-# The learner stays OUT of this package (CLAUDE.md, "No track to a learner"): the world-models
-# harness observes the record and drives this interface from outside, exactly as any user does.
-# When it needs to enumerate the action space rather than filter it, it reads `manyruns actions`,
-# the read-only verb that prints that space as one JSON document (`manyruns/actions.py`).
-"co-science" = "manyruns.app:main"
+# The loop a person drives here is the loop an agent drives: observe → legal moves → step →
+# record (`Session.step` takes a typed NAME or a step DICT; that is the whole human/agent
+# split). A learner stays OUT of this package (CLAUDE.md, "No track to a learner"): it observes
+# the record and drives this interface from outside, exactly as any user does. When it needs to
+# enumerate the action space rather than filter it, it reads `manyruns actions`, the read-only
+# verb that prints that space as one JSON document (`manyruns/actions.py`).
+manyruns = "manyruns.app:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -121,9 +121,9 @@ class _Parser(argparse.ArgumentParser):
 def _build_parser() -> argparse.ArgumentParser:
     parser = _Parser(
         # NOT pinned. argparse defaults `prog` to `basename(sys.argv[0])`, so each installed
-        # console-script reports the name it was actually invoked as — `manyruns` and the
-        # `co-science` alias are one program, and a pinned `prog` would make `co-science
-        # --help` print usage for a command the reader did not type.
+        # console-script reports the name it was actually invoked as — a downstream wrapper
+        # that hands its command line to this `main` under its own name would otherwise
+        # print usage for a command the reader did not type.
         description="manyruns — geometric exploration of your data.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
