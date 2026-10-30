@@ -212,6 +212,22 @@ class DataEntry:
         return out
 
     def to_dict(self) -> dict:
+        out = self._to_dict()
+        # `MANYRUNS_BLIND_DATASET`: this mapping is what the prompt and the search view
+        # serialize, so the true name leaves `name`, `dataset`, `path` and `obs.source` HERE.
+        # The fields themselves stay true in memory: the shell loads the data from `obs.source`.
+        from manyruns import blind
+
+        if blind.enabled():
+            names = [self.name] + ([self.dataset] if isinstance(self.dataset, str) else [])
+            for key in ("name", "dataset", "path"):
+                if isinstance(out[key], str):
+                    out[key] = blind.blind_text(out[key], names)
+            if isinstance(out["obs"].get("source"), str):
+                out["obs"]["source"] = blind.blind_text(out["obs"]["source"], names)
+        return out
+
+    def _to_dict(self) -> dict:
         return {
             "name": self.name, "kind": self.kind, "size": self.size,
             "contents": self.contents, "shape": self.shape, "modality": self.modality,

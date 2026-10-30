@@ -148,3 +148,25 @@ def test_collapse_range_is_the_four_benchmark_classes():
 def test_collapse_refuses_unknown():
     with pytest.raises(ValueError, match="tree"):
         obs_keys.collapse_for_benchmark("tree")
+
+
+# ── the four benchmark classes ───────────────────────────────────────────────
+def test_benchmark_classes_match_the_scshapebench_map():
+    """One tuple fixes the key order of the benchmark scorers; its set is the map's range."""
+    assert obs_keys.BENCHMARK_CLASSES == (
+        "clusters", "single-trajectory", "multi-branching", "archetypal")
+    assert set(obs_keys.BENCHMARK_CLASSES) == set(obs_keys.SCSHAPEBENCH_TOPOLOGY.values())
+    wanted = set(obs_keys.BENCHMARK_CLASSES)
+    assert list(obs_keys.BENCHMARK_CLASSES) == [t for t in obs_keys.TOPOLOGIES if t in wanted]
+
+
+def test_collapse_lands_in_benchmark_classes():
+    for t in obs_keys.TOPOLOGIES:
+        assert obs_keys.collapse_for_benchmark(t) in obs_keys.BENCHMARK_CLASSES
+
+
+def test_no_second_raw_label_map():
+    """The raw-label maps live once; a second copy would drift from the first."""
+    names = dir(obs_keys)
+    assert "RAW_LABELS" not in names
+    assert "UNSCOREABLE_RAW_LABELS" not in names

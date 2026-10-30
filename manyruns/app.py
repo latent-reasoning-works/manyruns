@@ -56,7 +56,7 @@ _BULK_SUFFIXES = {".csv", ".tsv", ".txt"}
 #  selects a recipe and the table had no remaining reader.)
 
 _SUBCOMMANDS = ("init", "explore", "run", "open", "projects", "check", "actions", "label",
-                "import-labels", "rate", "correct", "audit", "tools", "shell")
+                "import-labels", "rate", "correct", "claim", "audit", "tools", "shell")
 
 
 def _load_dotenv() -> None:
@@ -232,6 +232,27 @@ def _build_parser() -> argparse.ArgumentParser:
                            help="the step that should have run there")
     _add_annotator_arg(p_correct)
     p_correct.set_defaults(func=cmd_correct)
+
+    # `claim` appends a VERDICT row to `outputs/index.jsonl` (`manyruns.verdict`): a structure-
+    # class prediction about a stored run. Not an annotation (that file holds the truth it is
+    # scored against) and not a `manyruns>` prompt command, so `commands.py` does not list it.
+    from manyruns import decisions as _decisions
+
+    p_claim = sub.add_parser(
+        "claim", help="record a structure-class verdict about a stored run: one probability per "
+        "topology")
+    p_claim.add_argument("run_id", metavar="RUN", help="a run_id from outputs/index.jsonl")
+    p_claim.add_argument("--topology", required=True, metavar="NAME=P[,NAME=P...]",
+                         help="independent probabilities in [0, 1]; an unnamed topology is 0. "
+                              "Names: " + ", ".join(_vocab.TOPOLOGIES))
+    p_claim.add_argument("--chooser", required=True, metavar="C",
+                         help="who predicted: human:<pseudonym>, llm:<model>, learner:<id> or "
+                              "prior:<id>; never a real name")
+    p_claim.add_argument("--bound", default=None, metavar="B",
+                         help="how the chooser's output was constrained: "
+                              + ", ".join(_decisions.BOUNDS)
+                              + " (required unless the chooser is human:<pseudonym>)")
+    p_claim.set_defaults(func=cmd_claim)
 
     p_audit = sub.add_parser(
         "audit", help="run the admission gate over the declared metric suite (non-zero on reject)"
@@ -1354,6 +1375,31 @@ def cmd_rate(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         if aid is None:
             return _not_written()
         print(aid)
+    return 0
+
+
+def cmd_claim(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    """Append one verdict row: a structure-class prediction about a stored run.
+
+    A usage error (bad topology, chooser or bound) exits 2; an unknown run exits 1, as the
+    annotation verbs do."""
+    import json
+
+    from manyruns import verdict
+
+    try:
+        probs = verdict.parse_topology(args.topology)
+    except ValueError as exc:
+        parser.error(str(exc))
+    try:
+        payload = verdict.write_verdict(args.run_id, probs, chooser=args.chooser,
+                                        bound=args.bound, out_dir="outputs")
+    except ValueError as exc:
+        parser.error(str(exc))
+    except LookupError as exc:
+        print(f"error: {exc.args[0] if exc.args else exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(payload))
     return 0
 
 

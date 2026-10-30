@@ -27,6 +27,20 @@ The ``extra=`` argument remains a top-level merge, not a new envelope around cor
 Readers return ordinary dictionaries that can be serialized without dropping unknown keys;
 ``append`` projects execution results into new records, rather than rewriting stored rows.
 
+**Verdict rows.** `manyruns claim` (`manyruns.verdict`) appends a structure-class prediction
+about a stored run as a row of this file, nested under ``extra.verdict``. A verdict row copies
+its run's identity fields, so it SHARES that run's ``run_id``: the file is no longer one line
+per run, and ``run_id`` is not unique per row. It has ``ok`` and ``complete`` null and empty
+``steps`` and ``g_vector``. A reader that counts runs skips every row for which
+``score.verdict_of(row)`` is not ``None``.
+
+**Blinding.** With ``MANYRUNS_BLIND_DATASET`` on (`manyruns.blind`), ``append`` writes a
+blinded name in ``dataset_name`` and in the true-name occurrences of ``dataset``, ``source``
+and the string leaves of ``data_kwargs``, and records the true name in
+``outputs/blind_names.jsonl``. It does NOT rewrite ``steps``, ``caveats``, ``recipe`` or
+``g_vector``: step records hold artifact paths that ``artifacts.complete()`` reads back, so a
+step path can still carry the true name. Off, ``append`` writes exactly what it wrote before.
+
 The store was deferred until it had a reader: *"blocked on having a reader. Write
 `index.jsonl` when the scorer or a stopping rule needs it, not before."* That condition is
 now met — the panel reads run records, and the admission gate produces verdicts worth
@@ -45,6 +59,8 @@ import os
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
+from manyruns import blind as _blind
+
 
 def index_path(out_dir: Path | str = "outputs") -> Path:
     return Path(out_dir) / "index.jsonl"
@@ -60,6 +76,31 @@ def _jsonable(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_jsonable(v) for v in value]
     return str(value)
+
+
+def _leaves(value: Any, names: list[str]) -> Any:
+    if isinstance(value, str):
+        return _blind.blind_text(value, names)
+    if isinstance(value, dict):
+        return {k: _leaves(v, names) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_leaves(v, names) for v in value]
+    return value
+
+
+def _blind_row(row: dict, out_dir: Path | str) -> None:
+    """`MANYRUNS_BLIND_DATASET`: the true name out of `dataset_name`, `dataset`, `source` and
+    the string leaves of `data_kwargs`, and into the side file. `steps` is NOT rewritten (see
+    `manyruns.blind`)."""
+    true = row.get("dataset_name")
+    if not isinstance(true, str) or not true:
+        return
+    row["dataset_name"] = _blind.remember(true, out_dir=out_dir)
+    names = [true]
+    for key in ("dataset", "source"):
+        if isinstance(row.get(key), str):
+            row[key] = _blind.blind_text(row[key], names)
+    row["data_kwargs"] = _leaves(row.get("data_kwargs"), names)
 
 
 def append(results: dict, *, out_dir: Path | str = "outputs",
@@ -122,6 +163,8 @@ def append(results: dict, *, out_dir: Path | str = "outputs",
         **(_jsonable(extra or {})),
     }
     row["schema_version"] = 1
+    if _blind.enabled():
+        _blind_row(row, out_dir)
     line = json.dumps(row, separators=(",", ":")) + "\n"
     # one atomic append; no read-modify-write, so concurrent pool workers cannot interleave
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)

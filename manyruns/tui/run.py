@@ -960,10 +960,19 @@ class RunScreen(Screen):
         Public and pure — no widget is touched, so a test can ask what a screen would send
         without a running app, and `_ask` can call it on the event loop before the worker starts.
         """
-        return narrate.record_for_prompt(
+        text = narrate.record_for_prompt(
             entry=_entry_mapping(self.entry), recipe=self.recipe, steps=self.feed.rows(),
             tunables=self.tunables, constraints=self.tune_constraints,
             said=self.said[-self.SAID_LINES:], concerns=self.concerns)
+        # `MANYRUNS_BLIND_DATASET`: `to_dict()` already blinded the entry, so `record_for_prompt`
+        # no longer knows the true name. The screen still holds it, and blinds `said` and
+        # `concerns` here.
+        from manyruns import blind
+
+        if blind.enabled() and self.entry is not None:
+            names = [getattr(self.entry, key, None) for key in ("name", "dataset")]
+            text = blind.blind_text(text, [n for n in names if isinstance(n, str) and n])
+        return text
 
     def _ask(self, question: str) -> None:
         """Dispatch a `?` line. Touches the gate not at all — see `on_input_submitted`.
