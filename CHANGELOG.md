@@ -24,6 +24,22 @@ During the open beta, the CLI and record schema can still change.
 - An engine byproduct that is a dict of scalars, such as the Reeb graph
   `structural_summary`, is flattened one level into the g-vector as
   `<step>.<key>.<subkey>`; non-scalar sub-values are not recorded.
+- An annotation store, `outputs/annotations.jsonl` (`manyruns.annotations`), records a
+  judgment about a run, which is not a committed choice: a topology `label`, a `rating`, or a
+  `correction`. Each row is `schema_version` 1 and names its chooser as `human:<pseudonym>` or
+  `llm:<model>`. `decisions.jsonl` and `index.jsonl` are unchanged.
+- Four verbs write it: `manyruns label RUN --topology T[,T...] --annotator P`,
+  `manyruns import-labels scshapebench --source FILE --revision SHA` (one row per dataset per
+  annotator; the file's SHA-256 is kept, its path is not), `manyruns rate RUN [RUN ...]
+  --annotator P` with `--rank`, `--rubric` or `--blind`, and
+  `manyruns correct RUN --step N --should STEP --annotator P`.
+- The run screen labels a finished run: keys `1` to `6` toggle the six topologies, and `enter`
+  records them as `human:` plus `MANYRUNS_ANNOTATOR`.
+
+### Removed
+
+- The `label` and `rlhf` stubs of `python -m manyruns.harness`, which printed "not yet
+  implemented". Use `manyruns label` and the other annotation verbs.
 
 ### Fixed
 
