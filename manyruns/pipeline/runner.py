@@ -1003,6 +1003,9 @@ def apply_step(step: dict, state: dict, g: dict, *, dispatch: dict, ctx: dict,
     started = time.perf_counter()
     try:
         before_labels = state.get("labels")
+        # The step's position, for an executor that addresses a file by it (`_ml_latent`'s
+        # `RunStepLogger`). Through `ctx`, so no executor signature changes.
+        ctx["step_index"] = index
         try:
             override = fn(name, rec["params"], state, g, ctx)
         finally:
@@ -1636,6 +1639,78 @@ def _label_valued(name: str) -> bool:
     return "clusters" in STEP_PRODUCES.get(name, ())
 
 
+class RunStepLogger:
+    """The manylatents `StepLogger` protocol, addressed by the run folder.
+
+    `SaveOutputs` writes the engine's own record of a latent step (`outputs.json`) into
+    `get_step_dir()`. Here that is `<run folder>/engine/<NN>-<step>/`, with the same `NN` as the
+    run folder's array names, so the engine's files join the run on `run_id` and pair with the
+    step's arrays by index. One subfolder per step, because `SaveOutputs` always writes the
+    fixed name `outputs.json`.
+
+    Structural, not a subclass: manylatents is not imported here, so the class works where the
+    engine is absent.
+    """
+
+    #: The engine's per-step marker. NOT `artifacts.DONE`: `COMPLETE` means the whole lineage is
+    #: finished, `finish_carry` is its only writer, and `SaveOutputs` calls the marker after
+    #: every latent step of a session that is still open.
+    MARKER = "outputs.done"
+
+    def __init__(self, out_dir, run_id: str, index: int, step: str) -> None:
+        self.out_dir = Path(out_dir)
+        self.run_id = run_id
+        self.index = int(index)
+        self.step = step
+
+    def get_step_dir(self, create: bool = False) -> Path:
+        path = _artifacts.root(self.out_dir, self.run_id) / "engine" / f"{self.index:02d}-{self.step}"
+        if create:
+            path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def get_experiment_id(self) -> str:
+        return self.run_id
+
+    def write_completion_marker(self, step_dir: Path) -> None:
+        """`step_dir / "outputs.done"`, holding the ISO-8601 UTC time. Raises nothing."""
+        try:
+            (Path(step_dir) / self.MARKER).write_text(
+                _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds") + "\n")
+        except OSError:
+            return None
+        return None
+
+
+def _save_engine_outputs(name: str, out: dict, emb: Any, ctx: dict) -> None:
+    """The engine's `SaveOutputs`, writing into this step's folder under the run folder.
+
+    Guarded whole: a failed import, constructor or write changes nothing about the step — not
+    its outcome, its state or its g-vector, and no `g` key records it (the key set is declared,
+    not conditional). The import comes first, so an engine without `SaveOutputs` creates no
+    folder. Skipped for an over-size embedding, because `SaveOutputs` writes the coordinates
+    again beside `outputs.json`.
+    """
+    if not ctx.get("run_id") or not ctx.get("out_dir") or _artifacts.too_large(emb):
+        return
+    try:
+        import manylatents
+
+        # A `manylatents` that is not a package (a test double holding only `api`) has no
+        # `callbacks`. A fresh import would fail on it; a submodule cached in `sys.modules` by
+        # an earlier import would not, so the check makes both cases agree.
+        if not hasattr(manylatents, "__path__"):
+            return
+        from manylatents.callbacks.embedding.save_outputs import SaveOutputs
+
+        logger = RunStepLogger(ctx["out_dir"], ctx["run_id"], ctx["step_index"], name)
+        SaveOutputs(save_dir=str(logger.get_step_dir(create=True)), save_format="npy",
+                    experiment_name=name, use_timestamp=False,
+                    step_logger=logger).on_latent_end(None, out)
+    except Exception:  # noqa: BLE001 - the engine's record must never fail the step
+        return
+
+
 def _ml_latent(name, params, state, g, ctx):
     """A latent step → ``manylatents.api.run(algorithms={'latent': name})``."""
     import numpy as np
@@ -1691,6 +1766,7 @@ def _ml_latent(name, params, state, g, ctx):
         kwargs["input_data"] = np.ascontiguousarray(state["emb"])  # chain
     out = run(**kwargs)
     emb = np.ascontiguousarray(np.asarray(out.get("embeddings")))
+    _save_engine_outputs(name, out, emb, ctx)
     if source_fit:
         # A fresh fit starts on the selected source axis, even after an unverified
         # resume. Check its output anew; chained coordinates retain their uncertainty.

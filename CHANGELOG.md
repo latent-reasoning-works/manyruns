@@ -55,6 +55,22 @@ During the open beta, the CLI and record schema can still change.
   `manyruns correct RUN --step N --should STEP --annotator P`.
 - The run screen labels a finished run: keys `1` to `6` toggle the six topologies, and `enter`
   records them as `human:` plus `MANYRUNS_ANNOTATOR`.
+- `MANYRUNS_PROPOSER_MODEL` sets the proposer model. `agents.proposer_model(fallback=None)`
+  returns it, else `fallback`, else `agents.MODEL`; a blank value counts as unset.
+  `agents.proposer_extra(model, agent)` puts the model on a run row under `extra.proposer`.
+- `agents.propose(session, prompt, ...)` runs manyAgents' `run_agent_loop` once with that
+  model and records it under the session's `run_id`: the transcript in
+  `<run folder>/agent/messages.jsonl` and trace events. It returns `None` and raises nothing
+  when manyAgents is absent, an event loop is running, or the loop fails.
+- New trace kinds: `step` and `run_complete` (`Session`), `decision` (`decisions.append`,
+  with the row's `chooser` as `agent_id`), and `proposer_assistant`, `proposer_tool_call`,
+  `proposer_tool_result` and `proposer_call` (`agents.propose`). `Session` gains `agent_id`
+  (default `human`), and tune decision rows name the session's driver as `chooser`.
+- A manylatents latent step writes the engine's `outputs.json` into
+  `<run folder>/engine/<NN>-<step>/` through `pipeline.runner.RunStepLogger`, with an
+  `outputs.done` marker. `COMPLETE` keeps its meaning.
+- Section 8 of the environment contract documents the run folder layout and names `run_id` as
+  the join key.
 
 ### Removed
 
