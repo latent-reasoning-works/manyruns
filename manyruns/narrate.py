@@ -995,7 +995,14 @@ def record_for_prompt(*, entry: "dict | None" = None, recipe: "dict | None" = No
         lines.append("caution:")
         lines += [f"  {c}" for c in warned]
 
-    return "\n".join(lines) + "\n"
+    text = "\n".join(lines) + "\n"
+    # `MANYRUNS_BLIND_DATASET`: the model reads a blinded name everywhere the entry's name
+    # occurs, the `dataset:` line included. Applied to the rendered text, so off is unchanged.
+    from manyruns import blind
+
+    if blind.enabled() and isinstance(e.get("name"), str) and e.get("name"):
+        text = blind.blind_text(text, [e["name"]])
+    return text
 
 
 def context_sha256(context: str) -> str:
