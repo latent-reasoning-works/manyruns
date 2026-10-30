@@ -16,7 +16,7 @@ package (io, loading, mioflow, runner, steps) along to obtain a 3-tuple of strin
 from __future__ import annotations
 
 import re
-from typing import Any, Iterable, Optional
+from typing import Any, Collection, Iterable, Mapping, Optional
 
 # ── recipe steps ─────────────────────────────────────────────────────────────
 #: What a recipe step declares. The single step vocabulary — there is no parallel `kind`.
@@ -460,6 +460,12 @@ SHAPE_PROVIDES: dict[str, tuple[str, ...]] = {
 #: one group, so declaring it would be true of one and a lie about the other — and no step
 #: needs the fact anyway. A group lands here only when both engines agree, because `unmet`
 #: takes no engine argument and its answer has to hold for every engine.
+#:
+#: ONE EXCEPTION, by name: a GRAPH-VALUED step (one whose `STEP_PRODUCES` entry contains
+#: `graph`, today `reeb_graph`) is a `latent` step that does NOT replace `state["emb"]` —
+#: `runner._ml_latent` keeps the coordinates and puts the graph beside them. So
+#: `step_provides` gives such a step only its `STEP_PRODUCES` facts and not this group's
+#: `embedding`; otherwise `[reeb_graph, dpt]` would be legal here and skip at run time.
 GROUP_PROVIDES: dict[str, tuple[str, ...]] = {
     "latent": ("embedding",),
 }
@@ -511,6 +517,11 @@ STEP_PRODUCES: dict[str, tuple[str, ...]] = {
     # must describe what manyruns actually holds, and a `probe` placed after it would find
     # nothing to ask.
     "pyrovelocity": ("velocity",),
+    # BY NAME, for the reason `leiden` is: of the engine's latent algorithms exactly one builds a
+    # Reeb graph, so keying `graph` by group would say every PCA produces one. A graph-valued
+    # step keeps the embedding (see the exception noted above `GROUP_PROVIDES`), and its
+    # membership matrix goes to the artifact channel, not to `state["emb"]`.
+    "reeb_graph": ("graph",),
 }
 
 #: What a step needs BEFORE it can run — satisfiable from EITHER source above. One needs
@@ -601,6 +612,8 @@ STEP_NEEDS: dict[str, tuple[str, ...]] = {
     # the calculus does not model order, so it cannot say "needs dpt specifically" — the
     # runtime guard (no `state['pseudotime']` -> skip) is what actually enforces the sequence.
     "discretize_time": ("embedding",),
+    # Reads the Reeb summary; refused at plan time before any step builds a graph.
+    "branch_points": ("graph",),
 }
 
 # ── how `genes` came to be declarable, and what the declaration costs ────────────────────
@@ -742,9 +755,14 @@ def step_provides(step: dict) -> frozenset:
     The union of what its GROUP provides (true of every executor in that group) and what its
     NAME provides (true of that algorithm only) — see `STEP_PRODUCES` for why one fact is
     keyed each way. A name absent from `STEP_PRODUCES` contributes nothing, so every recipe
-    that was legal before that table existed is legal now."""
-    return (frozenset(GROUP_PROVIDES.get(step.get("group"), ()))
-            | frozenset(STEP_PRODUCES.get(step.get("name"), ())))
+    that was legal before that table existed is legal now.
+
+    A graph-valued step (its `STEP_PRODUCES` entry contains `graph`) provides only that entry:
+    it does not replace `state["emb"]`, so the `latent` group's `embedding` is not true of it."""
+    produced = frozenset(STEP_PRODUCES.get(step.get("name"), ()))
+    if "graph" in produced:
+        return produced
+    return frozenset(GROUP_PROVIDES.get(step.get("group"), ())) | produced
 
 
 def recipe_needs(recipe: dict) -> frozenset:
@@ -1186,3 +1204,95 @@ def _walk(recipe: dict, shape: str,
             have &= keep
         have |= step_provides(step)
     return frozenset(missing), frozenset(cleared)
+
+
+# ── the rung-support gate ────────────────────────────────────────────────────
+# `unmet` is the STRUCTURAL half of the shield: it refuses a recipe whose steps need a fact the
+# data does not carry, and it never reads a measurement. This block is the EVIDENCE half: it
+# refuses a recipe whose `claims` the measured g-vector does not support. Pure, like `unmet`,
+# and it imports nothing — an unavailable measurement is recognised by its class NAME, so this
+# module stays free of the compute stack.
+
+#: The 1-D band of the local intrinsic dimension that supports a `single-trajectory` claim.
+#: PLACEHOLDER: a declared starting value, not a measurement. The user sets the final value
+#: after the calibration runs (probe recipe on the bundled 1-D and 2-D datasets). Until then the
+#: recipe README marks it as not calibrated.
+LID_1D_BAND: tuple[float, float] = (0.5, 1.5)
+
+#: Readouts that no registry audit covers and that a maintainer admits by hand. Empty: the Reeb
+#: summary's `n_branch_points` is not admitted, so the multi-branching rule refuses until the
+#: user decides to admit it. Whether to admit it is a scientific choice.
+ADMITTED_READOUTS: frozenset[str] = frozenset()
+
+#: A recipe's `claims` -> (evidence key in the g-vector, admission name). A claim absent from
+#: this table has no rule and is never refused by the gate.
+RUNG_EVIDENCE: dict[str, tuple[str, str]] = {
+    "clusters": ("betti_0", "betti_0"),
+    "multi-branching": ("reeb_graph.structural_summary.n_branch_points", "n_branch_points"),
+    "single-trajectory": ("lid", "lid"),
+}
+
+#: The three refusal codes, in the order the rule check tests them.
+SUPPORT_CODES: tuple[str, str, str] = ("not_admitted", "not_measured", "fails_rule")
+
+#: The closed set of refusal reasons: three evidence keys times three codes. A reason never
+#: holds a measured value, a threshold or a note, because reasons reach the ledger's `blocked`
+#: list, decision rows and the action document, which a caller that must not see the geometry
+#: reads.
+SUPPORT_REASONS: frozenset[str] = frozenset(
+    f"{key}:{code}" for key, _ in RUNG_EVIDENCE.values() for code in SUPPORT_CODES)
+
+
+def _support_rule(claim: str, v: float) -> bool:
+    if claim == "clusters":
+        return v > 1
+    if claim == "multi-branching":
+        return v >= 1
+    if claim == "single-trajectory":
+        return LID_1D_BAND[0] <= v <= LID_1D_BAND[1]
+    return True
+
+
+def _measured_number(v: Any) -> Optional[float]:
+    """`v` as a finite float, or None when it is unavailable. Never reads absence as 0."""
+    if v is None or isinstance(v, bool):
+        return None
+    if any(c.__name__ == "MeasurementUnavailable" for c in type(v).__mro__):
+        return None
+    if isinstance(v, Mapping):
+        return None  # includes `MeasurementUnavailable(...).to_dict()`
+    if isinstance(v, (int, float)):
+        out = float(v)
+    elif getattr(v, "shape", None) == () and getattr(getattr(v, "dtype", None), "kind", "") in (
+            "i", "u", "f"):
+        out = float(v)
+    else:
+        return None
+    return out if out == out and out not in (float("inf"), float("-inf")) else None
+
+
+def rung_support(recipe: dict, evidence: Mapping[str, Any],
+                 admitted: Collection[str]) -> frozenset[str]:
+    """Why the evidence does not support this recipe's claim. Empty = supported.
+
+    A recipe whose `claims` has no rule in `RUNG_EVIDENCE` is never refused. Otherwise at most
+    one reason `f"{key}:{code}"`, the first that holds of: the admission name is not in
+    `admitted` (`not_admitted`); the value is missing, None, a `MeasurementUnavailable`, its
+    `to_dict()` form, a bool, not a number, or not finite (`not_measured`); the value fails the
+    rule (`fails_rule`). An unavailable value always refuses; it is never read as 0 or a pass.
+
+    A caller that builds `admitted` from the admission audit uses the audit's own gate,
+    `admit.Verdict.ok`. This function reads no verdict strings and does no I/O.
+    """
+    claim = recipe.get("claims")
+    if not isinstance(claim, str) or claim not in RUNG_EVIDENCE:
+        return frozenset()
+    key, admission = RUNG_EVIDENCE[claim]
+    if admission not in admitted:
+        return frozenset({f"{key}:not_admitted"})
+    v = _measured_number(evidence.get(key))
+    if v is None:
+        return frozenset({f"{key}:not_measured"})
+    if not _support_rule(claim, v):
+        return frozenset({f"{key}:fails_rule"})
+    return frozenset()

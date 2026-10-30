@@ -145,15 +145,39 @@ def ladder_cost(truth: int, pred: int, *, overshoot_weight: float = 2.0) -> floa
     return gap * overshoot_weight if gap > 0 else -gap
 
 
-def unroutable_rungs(config_dir: Any = None) -> list[int]:
+def unroutable_rungs(offer: Optional[Iterable[Any]] = None, *,
+                     config_dir: Any = None) -> list[int]:
     """Rungs no recipe can claim. A perfect classifier is still capped by this.
 
-    `[3, 4]` on the bundled catalog — nothing claims `multi-branching` or `archetypal`. That
-    gap is a finding, not an oversight, and it is reported here rather than left to hide in
-    the score. Now that it reads the catalog, a recipe file that closes the gap closes this
-    too, with no edit here — which was the whole point of moving the claim into the YAML.
+    With `offer=None`, the CATALOGUE answer: the rungs no recipe in the catalog claims. A
+    recipe file that closes a gap closes this too, with no edit here — which was the whole
+    point of moving the claim into the YAML. `[]` on the bundled catalog since `branches`
+    claims `multi-branching`.
+
+    With an `offer`, the OFFER answer: the rungs no offered and runnable recipe claims. The
+    catalogue and the offer come apart exactly where a recipe is claimed but not offered (a
+    `blocked:` recipe, or one legal on no data). An entry is a recipe name (`str`) or a mapping
+    with key `recipe` and optional key `can_run` — `narrate.offer` output,
+    `LedgerRow.as_offer()` output, or a decision row's `offered` list, with no conversion. A
+    mapping whose `can_run` is false does not count: a hollow row is not an offer anyone can
+    take. A name that is not in the catalog, or that claims nothing, contributes no rung.
+
+    `config_dir` is keyword-only, so a directory passed by position cannot be read as an offer.
     """
-    claimable = set(claimed_rungs(config_dir).values())
+    claimed = claimed_rungs(config_dir)
+    if offer is None:
+        claimable = set(claimed.values())
+    else:
+        names: set = set()
+        for entry in offer:
+            if isinstance(entry, str):
+                names.add(entry)
+            elif isinstance(entry, Mapping):
+                if entry.get("can_run", True):
+                    names.add(entry.get("recipe"))
+            else:
+                raise TypeError(f"an offer entry is a recipe name or a mapping, not {entry!r}")
+        claimable = {claimed[n] for n in names if n in claimed}
     return sorted({r for r in RUNG.values() if r not in claimable})
 
 

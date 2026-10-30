@@ -2,20 +2,12 @@
 # extremal specialists and describes every cell as a mixture of them — a different question
 # from clustering, which asks which group a cell belongs to.
 #
-# BLOCKED UPSTREAM, and stated rather than worked around. `manylatents`' `aa` raises
-# `TypeError: AA.__init__() got an unexpected keyword argument 'method'` — a version skew
-# against the `archetypes` package, one line, and THEIRS not ours. The recipe ships as a file
-# because its steps are right; it does not run until that lands. The step record will say so:
-# a failing step is recorded with its error, not silently dropped.
+# RUNNABLE SINCE manylatents 0.1.9 (the `manylatents>=0.1.9` bound in `pyproject.toml`). That
+# release fixed both `aa` failures: the `method` keyword arguments the `archetypes` package no
+# longer takes, and the scikit-learn validation hook it no longer has. The recipe carried a
+# `blocked:` field until then, which `narrate.unavailable` read to draw a hollow ledger row.
 name: archetypes
 id:   sc.archetype.aa
-
-# DECLARED, not just described. The prose above has recorded this breakage since the file was
-# written and the ledger offered the recipe anyway — on `swissroll` it was the FIRST analysis
-# the front door suggested, and taking it ran `pca`, failed `aa`, and handed back a g-vector
-# with no archetypes in it. `narrate.unavailable` reads this field, so the hollow row carries
-# the reason. Delete the line when the upstream kwarg lands; the steps are already right.
-blocked: "not available yet"
 
 source:
   kind:  paper
@@ -23,7 +15,7 @@ source:
   doi:   10.1080/00401706.1994.10485840
   url:   https://www.tandfonline.com/doi/abs/10.1080/00401706.1994.10485840
   verified: 2026-07-28
-  note:  "`aa` is BROKEN UPSTREAM in manylatents (archetypes-package kwarg skew). AAnet — the deep variant, IEEE Big Data 2019 / Cancer Discovery 2025 — is a separate method and is not this recipe."
+  note:  "`aa` fits through manylatents (>=0.1.9) with 3 archetypes. AAnet — the deep variant, IEEE Big Data 2019 / Cancer Discovery 2025 — is a separate method and is not this recipe."
 
 steps:
   # THE PREAMBLE, DECLARED. These ran on every counts-like load inside
@@ -37,7 +29,9 @@ steps:
   - {name: transform, group: prep,   params: {method: log1p},     via: manylatents}
   - {name: pca,     group: latent,   params: {n_components: 10},
      limits: {n_components: [n_samples, n_features]}, via: manylatents}
-  - {name: aa,      group: latent,   params: {},                 via: manylatents}
+  # 3 archetypes, not the engine default of 50: a simplex with more vertices than the data
+  # has extremes is not a description of it, and the test fixture has few.
+  - {name: aa,      group: latent,   params: {n_components: 3},  via: manylatents}
   - {name: simplex, group: analysis, params: {},                 via: manyruns}
 
 question: "What are the extremes? — I'll find the specialists and describe everything else as a mixture of them"
@@ -51,13 +45,8 @@ suits:    [manifold]
 # claim in the ladder. `aa` fits the archetypes and `simplex` describes every cell as a mixture
 # of them; nothing weaker would be honest, and nothing stronger exists.
 #
-# MEASURED CONSEQUENCE, and it is subtler than it first looks. This is the ONLY recipe that
-# claims rung 4, so declaring it moved `unroutable_rungs()` from [3, 4] to [3] — measured. But
-# that function reads what recipes CLAIM, not what they can RUN, and this recipe is `blocked:`
-# upstream: it is hollow in the ledger and therefore never offered. So rung 4 is now closed on
-# paper and still unreachable in fact.
-#
-# `unroutable_rungs()` measures the CATALOGUE, not the OFFER, and a blocked recipe is exactly
-# where those two answers come apart. Recorded here rather than fixed: the fix is either the one
-# upstream line, or a second function that asks the question of the offer.
+# This is the ONLY recipe that claims rung 4. `score.unroutable_rungs()` reads what recipes
+# CLAIM; `score.unroutable_rungs(offer)` reads what is OFFERED and runnable, and `manyruns check`
+# prints that answer as its ladder line. The two answers agree now that this recipe runs. The
+# rung-support gate has no rule for `archetypal`, so it never refuses this claim.
 claims: archetypal

@@ -870,7 +870,9 @@ def measurement(entry: "DataEntry") -> Optional[dict]:
 
 def ledger(obs: Observation,
            provided: "frozenset | set | tuple | None" = None,
-           measured: "dict | None" = None) -> list[LedgerRow]:
+           measured: "dict | None" = None, *,
+           evidence: "dict | None" = None,
+           admitted: "frozenset | set | tuple" = ()) -> list[LedgerRow]:
     """Every recipe against this data: can it run, and if not WHICH FACT is missing.
 
     This is `vocab.unmet` rendered directly, which is what §3.2 asks for. Legality is
@@ -893,11 +895,18 @@ def ledger(obs: Observation,
 
     `contrast` needs a condition column; a sample without one gets a hollow row with an
     explanation. Recipe availability follows the data's declared and observed capabilities.
+
+    `evidence` is a measured g-vector, and `admitted` the metric names a caller trusts. When
+    `evidence` is given, the rung-support gate (`vocab.rung_support`) joins its sorted reasons
+    to each row's `blocked` list, after the data and availability reasons. When it is `None`
+    the gate is not consulted, and every row is what it was without it.
     """
     from manyruns.catalog import discover_recipes, load_recipe
+    from manyruns.vocab import rung_support
 
     rows: list[LedgerRow] = []
-    for offered in narrate.offer(obs, available=discover_recipes()):
+    for offered in narrate.offer(obs, available=discover_recipes(),
+                                 evidence=evidence, admitted=admitted):
         try:
             recipe = load_recipe(offered["recipe"])
         except Exception:  # noqa: BLE001 - a broken recipe must not empty the ledger
@@ -909,6 +918,8 @@ def ledger(obs: Observation,
         # common; see `narrate.unavailable` for why folding them into one call would cost the
         # invariant that keeps a verdict and its reason from disagreeing.
         why = narrate.blocked(recipe, obs.shape, provided) + narrate.unavailable(recipe)
+        if evidence is not None:
+            why += sorted(rung_support(recipe, evidence, admitted))
         ask, gloss = narrate.split_question(offered["label"])
         rows.append(LedgerRow(
             recipe=offered["recipe"], ask=ask, gloss=gloss, can_run=not why,

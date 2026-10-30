@@ -71,15 +71,17 @@ def test_header_keys_come_first(tmp_path):
 
 
 def test_ledger_offered_equals_tui_ledger(tmp_path):
+    """With the gate off: the gate-on document of a dataset with no probe run refuses every
+    ruled claim (`cluster` with `betti_0:not_measured`), which the gate scenarios pin below."""
     assert catalog.dataset_dir().is_dir()
-    doc = actions.enumerate_actions("ledger", dataset="pbmc3k", store=tmp_path)
+    doc = actions.enumerate_actions("ledger", dataset="pbmc3k", gate=False, store=tmp_path)
     obs = narrate.declared_observation(catalog.load_dataset("pbmc3k"), "pbmc3k")
     assert doc["offered"] == [r.as_offer() for r in state.ledger(obs, obs.provides(),
                                                                   measured=None)]
     # The base-commit values: measured, so a later recipe that moves them updates them here.
     assert list(doc)[4:] == ["dataset", "gate", "evidence", "offered", "detail"]
     assert doc["surface"] == "ledger"
-    assert doc["gate"] is True
+    assert doc["gate"] is False
     assert doc["evidence"] is None
     assert doc["dataset"] == {"name": "pbmc3k", "shape": "clusters", "topology": ["clusters"],
                               "modality": "scrna", "handle_kind": "path",
@@ -255,9 +257,14 @@ def test_gate_is_recorded_and_changes_the_digest(tmp_path, monkeypatch):
     assert on["gate"] is True and off["gate"] is False
     assert off["evidence"] is None
     assert _digest(on) != _digest(off)
-    assert _without(on, "gate", "evidence") == _without(off, "gate", "evidence")
-    for entry in on["detail"].values():
+    for entry in off["detail"].values():
         assert entry["support"] == []
+    # On the tune surface the gate changes only the keys `gate` and `evidence`.
+    t_on = actions.enumerate_actions("tune", dataset="swissroll", recipe="cluster", gate=True,
+                                     store=tmp_path)
+    t_off = actions.enumerate_actions("tune", dataset="swissroll", recipe="cluster", gate=False,
+                                      store=tmp_path)
+    assert _without(t_on, "gate", "evidence") == _without(t_off, "gate", "evidence")
 
     assert actions.enumerate_actions("ledger", dataset="swissroll", seed=101,
                                      store=tmp_path)["evidence"] is None
@@ -270,6 +277,94 @@ def test_gate_is_recorded_and_changes_the_digest(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "read", refuse)
     assert actions.enumerate_actions("ledger", dataset="swissroll", gate=False,
                                      store=tmp_path)["evidence"] is None
+
+
+# ── the gate applies the rung-support rule from the probe run ─────────────────
+
+
+def _offered(doc: dict) -> dict:
+    return {o["recipe"]: o for o in doc["offered"]}
+
+
+def test_the_probe_run_refuses_unsupported_claims(tmp_path):
+    _write_store(tmp_path, [ROW_A])
+    doc = actions.enumerate_actions("ledger", dataset="swissroll", gate=True, seed=42,
+                                    store=tmp_path)
+    offered = _offered(doc)
+    assert offered["cluster"]["can_run"] is False
+    assert "betti_0:fails_rule" in offered["cluster"]["blocked"]
+    assert offered["pseudotime"]["can_run"] is False
+    assert "lid:fails_rule" in offered["pseudotime"]["blocked"]
+    assert doc["detail"]["cluster"]["support"] == ["betti_0:fails_rule"]
+    assert offered["embed"]["can_run"] is True
+    assert doc["detail"]["embed"]["support"] == []
+
+
+def test_the_document_holds_no_measured_value(tmp_path):
+    _write_store(tmp_path, [ROW_A])
+    doc = actions.enumerate_actions("ledger", dataset="swissroll", gate=True, seed=42,
+                                    store=tmp_path)
+    assert set(doc["evidence"]) == {"run_id", "recipe", "seed"}
+    for entry in doc["detail"].values():
+        assert all(r in vocab.SUPPORT_REASONS for r in entry["support"])
+    keys = tuple(k for k, _ in vocab.RUNG_EVIDENCE.values())
+    offered = _offered(doc)
+    for name in ("cluster", "pseudotime"):
+        for reason in offered[name]["blocked"]:
+            if reason.startswith(keys):
+                assert reason in vocab.SUPPORT_REASONS, reason
+    assert "2.1" not in json.dumps(doc["offered"])
+    assert "2.1" not in json.dumps(doc["detail"])
+
+
+def test_the_reeb_readout_is_not_admitted_in_v1(tmp_path):
+    _write_store(tmp_path, [ROW_A])
+    doc = actions.enumerate_actions("ledger", dataset="swissroll", gate=True, seed=42,
+                                    store=tmp_path)
+    assert doc["detail"]["branches"]["support"] == [
+        "reeb_graph.structural_summary.n_branch_points:not_admitted"]
+
+
+def test_gate_off_removes_the_mask(tmp_path):
+    _write_store(tmp_path, [ROW_A])
+    doc = actions.enumerate_actions("ledger", dataset="swissroll", gate=False, seed=42,
+                                    store=tmp_path)
+    offered = _offered(doc)
+    assert offered["cluster"]["can_run"] is True
+    assert offered["pseudotime"]["can_run"] is True
+    assert all(entry["support"] == [] for entry in doc["detail"].values())
+    assert doc["evidence"] is None
+
+
+def test_no_probe_run_refuses_every_ruled_claim_and_keeps_the_rest(tmp_path):
+    assert tmp_path.is_dir()
+    doc = actions.enumerate_actions("ledger", dataset="swissroll", gate=True, store=tmp_path)
+    offered = _offered(doc)
+    assert doc["evidence"] is None
+    assert "betti_0:not_measured" in offered["cluster"]["blocked"]
+    assert "lid:not_measured" in offered["pseudotime"]["blocked"]
+    assert offered["embed"]["can_run"] is True
+
+
+def test_the_admitted_set_follows_the_declared_suite(tmp_path, monkeypatch):
+    mdir = tmp_path / "metrics"
+    mdir.mkdir()
+    (mdir / "default.yaml").write_text("metrics:\n  - trustworthiness\n")
+    assert mdir.is_dir()
+    monkeypatch.setenv("MANYRUNS_METRICS_DIR", str(mdir))
+    store_dir = tmp_path / "store"
+    store_dir.mkdir()
+    _write_store(store_dir, [ROW_A])
+    doc = actions.enumerate_actions("ledger", dataset="swissroll", gate=True, seed=42,
+                                    store=store_dir)
+    assert doc["detail"]["cluster"]["support"] == ["betti_0:not_admitted"]
+
+
+def test_a_gate_off_choice_is_not_a_gate_on_choice(tmp_path):
+    _write_store(tmp_path, [ROW_A])
+    on = actions.enumerate_actions("ledger", dataset="swissroll", gate=True, store=tmp_path)
+    off = actions.enumerate_actions("ledger", dataset="swissroll", gate=False, store=tmp_path)
+    assert _digest(on) != _digest(off)
 
 
 # ── task 3: the CLI ─────────────────────────────────────────────────────────────

@@ -166,7 +166,8 @@ def test_the_bundled_rungs_are_unchanged_and_now_derived():
     values are asserted individually below precisely so a future edit cannot move one of them
     under cover of adding another."""
     assert score.claimed_rungs() == {"embed": 0, "contrast": 1, "cflows": 2,
-                                     "archetypes": 4, "cluster": 1, "markers": 1,
+                                     "archetypes": 4, "branches": 3, "cluster": 1,
+                                     "markers": 1,
                                      "pseudotime": 2,
                                      # same claim as `cflows`; a probe reports on the structure
                                      # rather than asserting another one.
@@ -210,11 +211,9 @@ def test_unroutable_rungs_closes_when_a_recipe_claims_the_gap(tmp_path):
     than an oversight. It is a function of the catalog: the recipes that close it close it by
     existing, which is what makes the number worth reporting.
 
-    `[3]` on the bundled catalog since `archetypes` declared `claims: archetypal` — and the
-    honest reading of that move is in `test_decisions.py`: this function reads what recipes
-    CLAIM, not what they can RUN, and `archetypes` is `blocked:` upstream. Rung 4 is closed on
-    paper and unreachable in fact."""
-    assert score.unroutable_rungs() == [3]
+    `[]` on the bundled catalog since `branches` claims `multi-branching`. The offer form,
+    `unroutable_rungs(offer)`, is pinned in `test_score.py`."""
+    assert score.unroutable_rungs() == []
     _write(tmp_path, "tree", "name: tree\nclaims: multi-branching\n"
                              "steps: [{name: diffusionmap, group: latent}]\n")
     _write(tmp_path, "arch", "name: arch\nclaims: archetypal\n"
@@ -225,7 +224,7 @@ def test_unroutable_rungs_closes_when_a_recipe_claims_the_gap(tmp_path):
                             "steps: [{name: leiden, group: latent}]\n")
     _write(tmp_path, "line", "name: line\nclaims: single-trajectory\n"
                              "steps: [{name: phate, group: latent}]\n")
-    assert score.unroutable_rungs(tmp_path) == []
+    assert score.unroutable_rungs(config_dir=tmp_path) == []
 
 
 def test_a_broken_recipe_file_drops_out_instead_of_taking_the_scorer_down(tmp_path):

@@ -1,0 +1,37 @@
+# Does the continuum branch? A Reeb graph over the PHATE embedding summarises its shape as
+# nodes and edges, and a node of degree 3 or more is a branch point. `pseudotime` orders cells
+# along one continuum and does not look for branches; this recipe does.
+#
+# `reeb_graph` is GRAPH-VALUED (`vocab.STEP_PRODUCES`): it keeps the PHATE coordinates in
+# place and hands back a node-membership matrix and a structural summary. So the final
+# geometry suite measures the PHATE embedding, comparable with `embed`, and `branch_points`
+# reads the summary's counts.
+name: branches
+id:   sc.branch.reeb
+
+source:
+  kind:  preprint
+  cite:  "Steindl, Rocha, Di Bassinga, Warren, Scicluna, Valdez Córdova, Gupta, Torices, Neumann, Mann, Gunawan, Bhaskar, Lock, Chaffer, Wolf & Krishnaswamy, 'scShapeBench: Discovering geometry from high dimensional scRNAseq data', arXiv:2605.12662 (2026)"
+  url:   https://arxiv.org/abs/2605.12662
+  verified: 2026-10-30
+  note:  "The benchmark whose `multi-branching` structure class this recipe claims. A branch-point count is necessary evidence for branching, not a significance test: a noisy Reeb graph can show a spurious branch point."
+
+steps:
+  # THE PREAMBLE, DECLARED, as in `embed.yaml`.
+  - {name: normalize, group: prep,   params: {target_sum: 10000}, via: manylatents}
+  - {name: transform, group: prep,   params: {method: log1p},     via: manylatents}
+  - {name: pca,       group: latent, params: {n_components: 50},
+     limits: {n_components: [n_samples, n_features]},          via: manylatents}
+  - {name: phate,     group: latent, params: {n_components: 3},  via: manylatents}
+  # AFTER phate, never before it: `_ml_latent` chains a latent step on `state["emb"]`, so a
+  # step placed after a coordinate-replacing one would read the membership matrix.
+  - {name: reeb_graph,    group: latent,   params: {}, via: manylatents}
+  - {name: branch_points, group: analysis, params: {}, via: manyruns}
+
+question: "Does it branch? — I'll build a graph over the continuum and count where it splits"
+suits:    [manifold]
+
+# Several branches — `score.RUNG` grades it rung 3. The claim is what `branch_points` looks for;
+# whether the measured geometry supports it is the rung-support gate's question
+# (`vocab.rung_support`, the recipe README).
+claims: multi-branching

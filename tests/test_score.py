@@ -58,15 +58,11 @@ def test_predicted_rung_is_the_highest_offer():
 
 
 def test_unroutable_rungs_names_the_action_space_gap():
-    """No recipe claims multi-branching, so a perfect classifier is still capped. Pinned so the
-    gap is reported rather than hidden inside a mean.
-
-    `[3]`, not `[3, 4]`, since `archetypes` declared `claims: archetypal` — and the caveat that
-    goes with that is worth carrying: this reads what recipes CLAIM, not what they can RUN.
-    `archetypes` is `blocked:` upstream and never reaches the ledger, so rung 4 is closed on
-    paper and unreachable in fact. `tree_narrow`/`tree_wide` are the datasets rung 3 leaves with
-    no correct answer available at all."""
-    assert score.unroutable_rungs() == [3]
+    """Every rung has a claimant in the bundled catalogue: `branches` claims multi-branching
+    and `archetypes` claims archetypal. Pinned so a gap that reopens is reported rather than
+    hidden inside a mean. This reads what recipes CLAIM; the offer form below reads what is
+    offered and runnable."""
+    assert score.unroutable_rungs() == []
 
 
 def test_score_offer_is_multilabel():
@@ -364,3 +360,44 @@ def test_score_module_imports_only_vocab():
     modules = [n.module for n in tree.body if isinstance(n, ast.ImportFrom)]
     assert modules == ["__future__", "typing", "manyruns.vocab"]
     assert not [n for n in tree.body if isinstance(n, ast.Import)]
+
+
+# ── unroutable_rungs on an offered set ───────────────────────────────────────
+# Only recipes that were bundled before `branches` existed: `embed` 0, `cluster` 1,
+# `pseudotime` 2, `archetypes` 4.
+
+
+def test_unroutable_rungs_of_an_offer_of_names():
+    assert score.unroutable_rungs(["embed", "cluster", "pseudotime"]) == [3, 4]
+
+
+def test_unroutable_rungs_does_not_count_a_hollow_row():
+    offer = [{"recipe": "embed", "can_run": True}, {"recipe": "cluster", "can_run": True},
+             {"recipe": "pseudotime", "can_run": True}, {"recipe": "archetypes", "can_run": False}]
+    assert score.unroutable_rungs(offer) == [3, 4]
+    offer[-1] = {"recipe": "archetypes", "can_run": True}
+    assert score.unroutable_rungs(offer) == [3]
+
+
+def test_unroutable_rungs_counts_a_mapping_without_can_run():
+    assert score.unroutable_rungs([{"recipe": "archetypes"}]) == [0, 1, 2, 3]
+
+
+def test_unroutable_rungs_of_an_empty_offer_closes_nothing():
+    assert score.unroutable_rungs([]) == [0, 1, 2, 3, 4]
+
+
+def test_unroutable_rungs_ignores_unknown_names():
+    assert score.unroutable_rungs(["nonsense", "qc"]) == [0, 1, 2, 3, 4]
+
+
+def test_unroutable_rungs_takes_config_dir_by_keyword_only(tmp_path):
+    for name, claim in (("s0", "surface"), ("c1", "clusters"), ("t2", "single-trajectory"),
+                        ("b3", "multi-branching"), ("a4", "archetypal")):
+        (tmp_path / f"{name}.yaml").write_text(
+            f"name: {name}\nclaims: {claim}\nsteps: [{{name: pca, group: latent}}]\n")
+    assert tmp_path.is_dir()
+    assert score.unroutable_rungs(config_dir=tmp_path) == []
+    assert score.unroutable_rungs(None, config_dir=tmp_path) == []
+    with pytest.raises(TypeError):
+        score.unroutable_rungs(None, tmp_path)

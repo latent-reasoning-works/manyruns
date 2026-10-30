@@ -107,7 +107,7 @@ environments before publishing.
 
 | install | pulls | unlocks |
 |---|---|---|
-| *(base)* | phate, manylatents, manylatents-omics[singlecell], scanpy, scikit-learn, scipy, statsmodels, matplotlib, anndata, textual-image | 11 bundled recipes, the metric suite, terminal figures (`--engine manylatents`); available analyses depend on the data |
+| *(base)* | phate, manylatents, manylatents-omics[singlecell], scanpy, scikit-learn, scipy, statsmodels, matplotlib, anndata, textual-image | 12 bundled recipes, the metric suite, terminal figures (`--engine manylatents`); available analyses depend on the data |
 | `[harness]` | manylatents[omics], scanpy, wandb | the acquire shim + the metric sweep |
 | `[agents]` | manyagents>=0.0.1, anthropic (from PyPI) | the agentic **chat / prompt** stream |
 | `[dev]` | pytest, ruff | the test suite |

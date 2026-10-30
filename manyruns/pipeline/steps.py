@@ -751,15 +751,13 @@ def _step_simplex(state, g, params, out_dir, plots, target_dim) -> None:
     is what stops this from emitting an "archetype purity" for any 3-column PHATE embedding
     that happens to be sitting in `state["emb"]`.
 
-    **The producer does not run in this checkout, and that is measured, not assumed.**
-    `manylatents/algorithms/latent/aa.py` calls `archetypes.AA(method=…, method_kwargs=…)`;
-    the installed `archetypes` 0.6.2 takes neither — `AA.__init__` is
-    `(n_archetypes, n_init, max_iter, tol, algorithm_init, verbose, random_state)`. Calling it
-    directly with only its real arguments then raises
+    **The producer runs since manylatents 0.1.9 (the aa-fix release).** Before it, `aa` failed
+    twice upstream: `manylatents/algorithms/latent/aa.py` passed `method=…, method_kwargs=…`
+    that `archetypes.AA.__init__` no longer takes, and the estimator then raised
     `AttributeError: 'AA' object has no attribute '_validate_data'` against scikit-learn 1.9.
-    So `aa` is broken twice over, upstream of manyruns both times, and this readout has been
-    exercised on constructed weight matrices only — never end-to-end. §6 stage 0 ("fix
-    manylatents `aa` — upstream, not here") is still the blocker for rung 4.
+    0.1.9 fixes both, and `pyproject.toml` requires it, so this readout now runs end to end:
+    `tests/test_recipe_catalog.py::test_the_recipe_runs[archetypes]` asserts that
+    `simplex_purity` is a float on the real engine.
 
     **What is NOT computed: the t-ratio.** §5.4 names it, and it is the ratio of the fitted
     simplex's volume to the convex hull's. Both need the archetype POSITIONS in the ambient
@@ -981,6 +979,31 @@ def _step_velocity_field(state, g, params, out_dir, plots, target_dim) -> None:
     g["velocity_field.has_uncertainty"] = bool(unc)
 
 
+def _step_branch_points(state, g, params, out_dir, plots, target_dim) -> None:
+    """The branch points of a Reeb graph — `branches`' readout.
+
+    A Reeb step (`reeb_graph`, graph-valued) hands back a `structural_summary`, and
+    `runner._collect_extras` flattens its counts into the g-vector as
+    `<source>.structural_summary.<count>`. This copies the two counts the branching claim
+    reads to fixed keys, so a recipe's readout does not depend on the name of the step that
+    built the graph (`params.source`, default `reeb_graph`).
+
+    `n_branch_points` counts nodes of degree >= 3. A noisy graph can show a spurious one, so a
+    count is necessary evidence for branching, not a significance test.
+
+    An absent count is recorded as `None` with a note, never as `0`: "no summary" and "a graph
+    with no branch point" are different findings."""
+    source = str(_param(params, "source", "reeb_graph"))
+    for count in ("n_branch_points", "n_endpoints"):
+        key = f"{source}.structural_summary.{count}"
+        value = g.get(key)
+        g[f"branch_points.{count}"] = value
+        if value is None and count == "n_branch_points":
+            g["branch_points.n_branch_points_note"] = (
+                f"MeasurementUnavailable: no `{key}` in this run — a Reeb graph step must run "
+                "before this readout")
+
+
 def _dense_like(m):
     """A 2-D array from a possibly-sparse matrix, without importing scipy to ask."""
     return m.toarray() if hasattr(m, "toarray") else m
@@ -999,6 +1022,8 @@ _ANALYSIS_STEPS = {
     # DATA — a supplied array — not a fitted object: there is nothing here to ask a question of,
     # only a field to describe.
     "velocity_field": _step_velocity_field,
+    # READS the graph a `reeb_graph` step summarised; needs the `graph` fact.
+    "branch_points": _step_branch_points,
 }
 
 # The in-process loop's local stand-in for the engine's algorithm catalogue: latent/lightning steps

@@ -12,7 +12,7 @@ import re
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, NamedTuple, Optional
+from typing import Any, Collection, Iterable, Mapping, NamedTuple, Optional
 
 # words that mean "a process over time" — a trajectory only makes sense with a time axis.
 _TRAJECTORY_WORDS = (
@@ -316,7 +316,9 @@ def _short_cite(cite: str) -> str:
     return f"{lead} {years[-1]}" if years else lead
 
 
-def offer(obs: Observation, available: "list | None" = None) -> list[dict]:
+def offer(obs: Observation, available: "list | None" = None, *,
+          evidence: "Mapping[str, Any] | None" = None,
+          admitted: "Collection[str]" = ()) -> list[dict]:
     """The question menu — derived from the CATALOG, not from a table in this file.
 
     Each recipe declares what it answers (`question:`) and the shapes it suits (`suits:`), so
@@ -352,8 +354,14 @@ def offer(obs: Observation, available: "list | None" = None) -> list[dict]:
     mioflow] suits: [manifold]` sorted FIRST and starred here while `tui.state.ledger` drew it
     as a hollow row. Through `blocked` rather than `unmet` directly, so both surfaces ask the
     one question in the one way.
+
+    **With `evidence`, a claim the measured geometry does not support is not RECOMMENDED.**
+    `vocab.rung_support` decides it. `evidence=None` (the default) does not consult the gate,
+    and the menu is exactly what it was. `tui.state.ledger` passes the same two arguments, so
+    a row the ledger refuses is never starred here.
     """
     from manyruns.catalog import discover_recipes, load_recipe
+    from manyruns.vocab import rung_support
 
     names = list(available) if available is not None else discover_recipes()
     out: list[dict] = []
@@ -387,7 +395,9 @@ def offer(obs: Observation, available: "list | None" = None) -> list[dict]:
                     "glyph": ASSUMPTION_GLYPH.get(claims) if claims else None,
                     "cite": _short_cite((recipe.get("source") or {}).get("cite") or ""),
                     "recommended": (obs.shape in suits and not unavailable(recipe)
-                                    and not blocked(recipe, obs.shape))})
+                                    and not blocked(recipe, obs.shape)
+                                    and not (evidence is not None
+                                             and rung_support(recipe, evidence, admitted)))})
     # recommended first, then alphabetical — a stable order, so the menu does not reshuffle
     # between runs on the same data.
     out.sort(key=lambda o: (not o["recommended"], o["recipe"]))
@@ -439,6 +449,8 @@ MISSING_FACT: dict[str, str] = {
     # interpreter, which is why the sentence names where to look rather than an algorithm.
     "velocity":   "needs a velocity step first — nothing here computes a field "
                   "(`manyruns tools list`), or supply one with the data",
+    # STEP-produced, by `reeb_graph` only. The fix is to add that step before the readout.
+    "graph":      "needs a Reeb graph first — nothing here builds one over the coordinates",
 }
 
 #: The SAME fact, when a narrowing took it away rather than nothing having produced it.
@@ -469,6 +481,8 @@ CLEARED_FACT: dict[str, str] = {
     # rather than a frame fact like the LAYERS it was computed from.
     "velocity":  "needs computing again — a filter after it dropped the cells the field was "
                  "fitted over",
+    "graph":     "needs the Reeb graph again — a filter after it dropped the cells its nodes "
+                 "were built from",
 }
 
 
@@ -520,7 +534,9 @@ def unavailable(recipe: dict) -> list[str]:
     written, and the ledger offered the recipe anyway: on `swissroll` it was the FIRST analysis
     the front door suggested, and taking it ran `pca`, failed `aa`, and returned a g-vector with
     no archetypes in it. The recipe still ships, because its steps are right and the fix is one
-    line in someone else's repo — it just stops being offered as though it worked.
+    line in someone else's repo — it just stops being offered as though it worked. (manylatents
+    0.1.9 fixed `aa`, and `archetypes.yaml` no longer declares `blocked:`; the field stays for
+    the next recipe whose steps break upstream.)
 
     The reason is the recipe's own `blocked:` field, so the file that documents the breakage is
     the file that declares it. A `blocked:` with no reason is not a block: an unexplained

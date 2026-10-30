@@ -66,6 +66,14 @@ BUNDLED_LEGALITY = {
     ('archetypes', 'case-control'): set(),
     ('archetypes', 'single'): set(),
     ('archetypes', 'unknown'): set(),
+    # `branches` runs `pca` and `phate` before `reeb_graph`, so `branch_points` has its graph
+    # and nothing here needs a fact a shape must carry: legal everywhere.
+    ('branches', 'manifold'): set(),
+    ('branches', 'clusters'): set(),
+    ('branches', 'time-course'): set(),
+    ('branches', 'case-control'): set(),
+    ('branches', 'single'): set(),
+    ('branches', 'unknown'): set(),
     ('cluster', 'manifold'): set(),
     ('cluster', 'clusters'): set(),
     ('cluster', 'time-course'): set(),

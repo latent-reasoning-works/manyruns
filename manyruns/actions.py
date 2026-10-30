@@ -17,6 +17,8 @@ Three surfaces:
 YAML alone, so the document is the same on a machine that holds the data file and on one that
 does not. Nothing here opens a data file, writes anything, builds a `Session` or runs a step.
 With the gate on, the run record is read through `store.read`, and only to find the probe run.
+Its g-vector is the gate's evidence (`vocab.rung_support`); the document names the probe run
+and copies no measured value.
 
 **Plain JSON only.** Lists, never tuples, so the document a caller gets in process hashes
 equal to the one it parses from stdout.
@@ -116,17 +118,26 @@ def enumerate_actions(surface: str, *, dataset: Optional[str] = None,
                        {"run_id": probe.get("run_id"), "recipe": probe.get("recipe"),
                         "seed": probe.get("seed")})
     if surface == "ledger":
-        return {**doc, **_ledger(obs)}
+        if not gate:
+            return {**doc, **_ledger(obs, None, ())}
+        # The gate is the geometry mask. Evidence is the probe run's g-vector, or `{}` when
+        # there is none: absence refuses every ruled claim, it never passes. The admitted set
+        # is the declared suite (the audit's verified-safe set, written down) plus the
+        # readouts admitted by hand. Neither copies a measured value into the document.
+        evidence = dict((probe or {}).get("g_vector") or {})
+        admitted = set(catalog.load_suite()) | set(vocab.ADMITTED_READOUTS)
+        return {**doc, **_ledger(obs, evidence, admitted)}
     return {**doc, **_tune(recipe, step)}
 
 
-def _ledger(obs) -> dict:
+def _ledger(obs, evidence: Optional[dict], admitted) -> dict:
     from manyruns.tui import state
 
     provided = obs.provides()
-    rows = state.ledger(obs, provided, measured=None)
+    rows = state.ledger(obs, provided, measured=None, evidence=evidence, admitted=admitted)
     rank = {o["recipe"]: i for i, o in
-            enumerate(narrate.offer(obs, available=catalog.discover_recipes()))}
+            enumerate(narrate.offer(obs, available=catalog.discover_recipes(),
+                                    evidence=evidence, admitted=admitted))}
     detail = {}
     for row in rows:
         # The ledger already loaded every row's recipe and skipped any that does not load.
@@ -141,9 +152,11 @@ def _ledger(obs) -> dict:
             "unmet": sorted(vocab.unmet(recipe, obs.shape, provided)),
             "invalidated": sorted(vocab.invalidated(recipe, obs.shape, provided)),
             "unavailable": list(narrate.unavailable(recipe)),
-            # The rung-support reasons the gate refuses a recipe for. No rule refuses one yet,
-            # so the gate records itself and its evidence and changes no row.
-            "support": [],
+            # The rung-support reasons the gate refuses a recipe for: fixed codes from
+            # `vocab.SUPPORT_REASONS`, the same ones the row's `blocked` list ends with. `[]`
+            # with the gate off.
+            "support": ([] if evidence is None else
+                        sorted(vocab.rung_support(recipe, evidence, admitted))),
             "offer_rank": rank.get(row.recipe),
         }
     return {"offered": [r.as_offer() for r in rows], "detail": detail}
