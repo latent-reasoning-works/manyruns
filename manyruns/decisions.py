@@ -150,6 +150,16 @@ def append(*, offered: Sequence[dict], chosen: Optional[str],
             os.close(fd)
     except OSError:
         return None
+    # Only after the row is on disk, so an event never names a decision the corpus lacks. The
+    # trace envelope's `agent_id` is this row's `chooser`: one name for who chose, and the row
+    # itself gains no `agent_id` key. A ledger row has no run yet, so its event lands in the
+    # sink's `unknown-run` file.
+    from manyruns import trace as _trace
+
+    _trace.current().emit(_trace.stamp(
+        {"kind": "decision", "decision_id": decision_id, "surface": surface,
+         "chosen": chosen, "n_offered": len(offered)},
+        run_id=run_id, agent_id=chooser))
     return decision_id
 
 

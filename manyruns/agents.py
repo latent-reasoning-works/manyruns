@@ -1,15 +1,17 @@
 """The one place manyruns asks a model a question.
 
-**One tool call. Never a loop.** Every caller here wants the same thing: a constrained
-answer from a fixed set of legal options, decided by the shell and validated on the way back.
-`intent.route_recipe` picks one recipe from the ones the data admits; `tune` picks one parameter
-of the step in front of it. Neither hands the model control of what happens next.
+**`propose` is the one loop; everything else is one call.** `choose_one`, `call_tool` and
+`answer` each want a constrained answer from a fixed set of legal options, decided by the shell
+and validated on the way back. `intent.route_recipe` picks one recipe from the ones the data
+admits; `tune` picks one parameter of the step in front of it. Neither hands the model control of
+what happens next, and both stay single calls.
 
-THAT IS A DELIBERATE LIMIT, not an oversight. manyAgents owns a provider-agnostic agentic
-tool-loop (`manyagents/agent_loop.py`) and manyruns does NOT call it: a loop that chooses
-manyruns's next step IS the search/planner layer, and CLAUDE.md defers that until there is a
-second real tool and real data — "a general tool registry ahead of a second tool is the
-op-registry mistake". When that layer arrives it should use that loop rather than grow one here.
+`propose` is the exception, and it does not grow a loop here: it calls manyAgents'
+provider-agnostic `run_agent_loop` (`manyagents/agent_loop.py`) once, with the model that
+`proposer_model()` resolves, and records the call under the session's `run_id` — one trace event
+per loop event, the transcript in `<run folder>/agent/messages.jsonl`, and one `proposer_call`
+summary. A caller that wants a model to drive several steps calls `propose`; no CLI verb starts
+one yet.
 
 TWO BACKENDS, ONE SEAM, and the preference is manyAgents:
 
@@ -460,3 +462,165 @@ def answer(*, system: str, prompt: str) -> Optional[Answer]:
     except Exception:  # configuration failures share the unavailable contract too
         return None
     return None
+
+
+# ── the proposer: the one loop ────────────────────────────────────────────────────────────────
+
+def proposer_model(fallback: Optional[str] = None) -> str:
+    """The model a proposer call names, always a concrete string.
+
+    The first value that is not empty after `str.strip()`, returned stripped:
+    `$MANYRUNS_PROPOSER_MODEL`, then `fallback`, then `MODEL`. The proposer role has one
+    environment variable; `$MANYAGENTS_MODEL` belongs to the adapters, and `propose` always
+    passes `model=` explicitly, so that variable cannot change a proposer call.
+
+    Never `None`: `propose` stamps this value on every line it writes, and a `None` would let
+    the adapter choose a model the record does not name. `fallback` is how a non-Claude agent
+    gets its own adapter default instead of a Claude model name.
+    """
+    for value in (_env.get("PROPOSER_MODEL"), fallback, MODEL):
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return MODEL
+
+
+def proposer_extra(model: str, agent: str) -> dict:
+    """`store.append(results, **proposer_extra(...))`'s keyword: the proposer on the run row.
+
+    Under `extra.proposer`, the namespace the store rule reserves for a downstream field, so
+    the core row keys and `schema_version: 1` do not change.
+    """
+    return {"extra": {"proposer": {"model": model, "agent": agent}}}
+
+
+def propose(session, prompt: str, *, tools=None, agent: str = "claude",
+            system_prompt: Optional[str] = None, max_steps: int = 8):
+    """Run manyagents' `run_agent_loop` once, and record it under the session's `run_id`.
+
+    `session` is any object with `run_id`, `out_dir` and `agent_id`. Returns the loop's
+    `AgentResult`, or `None` on any failure; it never raises into its caller.
+
+    What it records, all joined on `session.run_id`:
+
+      - one trace event per loop event, kind `"proposer_" + kind`, with this call's `call_id`
+        and `model`. The `on_event` signature carries no `run_id`, so the callback closes over
+        the session's;
+      - one transcript line per `AgentResult.messages` element, appended to
+        `<run folder>/agent/messages.jsonl`;
+      - one `proposer_call` summary event, written whether the loop returned or failed.
+
+    The model is resolved once: `proposer_model()` for Claude, else
+    `proposer_model(<that adapter's DEFAULT_MODEL>)`, so a Claude model name never reaches
+    another provider. `max_tokens` is the adapter's `DEFAULT_MAX_TOKENS`, because
+    `run_agent_loop` sends no `max_tokens` of its own; `None` means it is not known.
+
+    `session.agent_id` is the proposer agent id `llm:<model>` for the length of the call, so a
+    step the loop's tools apply is attributed to the model, and is restored afterwards.
+    """
+    import asyncio
+    import json
+    import uuid
+
+    from manyruns import narrate as _narrate
+    from manyruns import trace as _trace
+
+    error: Optional[str] = None
+    registry: dict = {}
+    run_agent_loop = None
+    try:
+        from manyagents.agent_loop import run_agent_loop
+        from manyagents.adapters import ADAPTER_REGISTRY as registry
+    except ImportError:              # any subclass: the record must not depend on which
+        error = "ImportError"
+
+    adapter = registry.get(agent) if hasattr(registry, "get") else None
+    model = proposer_model() if agent == "claude" or error else proposer_model(
+        getattr(adapter, "DEFAULT_MODEL", None))
+    agent_id = f"llm:{model}"
+    call_id = uuid.uuid4().hex[:12]
+    max_tokens = getattr(adapter, "DEFAULT_MAX_TOKENS", None)
+    # The ask event's digest, over the two inputs a reader can reconstruct the call from.
+    context_sha256 = _narrate.context_sha256(json.dumps(
+        {"system": system_prompt, "prompt": prompt}, sort_keys=True))
+
+    def on_event(kind, payload):
+        try:
+            _trace.current().emit(_trace.stamp(
+                {"kind": "proposer_" + str(kind), **dict(payload or {}),
+                 "call_id": call_id, "model": model},
+                run_id=session.run_id, agent_id=agent_id))
+        except Exception:  # noqa: BLE001 - a sink may only ever change a duration
+            pass
+
+    result = None
+    messages_path: Optional[str] = None
+    previous = getattr(session, "agent_id", _trace.HUMAN)
+    session.agent_id = agent_id
+    try:
+        if error is None:
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                pass                 # no loop on this thread: safe to drive one
+            else:
+                error = "RuntimeError"
+        if error is None:
+            try:
+                result = asyncio.run(run_agent_loop(
+                    prompt, agent=agent, model=model, tools=tools,
+                    system_prompt=system_prompt, max_steps=max_steps, on_event=on_event))
+            except Exception as exc:  # noqa: BLE001 - the proposer never raises into its caller
+                error, result = type(exc).__name__, None
+        if result is not None:
+            messages_path = _write_transcript(
+                session, result, call_id=call_id, model=model, agent=agent,
+                max_tokens=max_tokens, context_sha256=context_sha256, agent_id=agent_id)
+    finally:
+        session.agent_id = previous
+        messages = list(getattr(result, "messages", None) or []) if result is not None else []
+        try:
+            _trace.current().emit(_trace.stamp({
+                "kind": "proposer_call", "call_id": call_id, "model": model, "agent": agent,
+                "max_tokens": max_tokens, "context_sha256": context_sha256,
+                "steps": getattr(result, "steps", 0) if result is not None else 0,
+                "stopped": getattr(result, "stopped", None) if result is not None else "error",
+                "n_messages": len(messages), "messages_path": messages_path, "error": error,
+            }, run_id=session.run_id, agent_id=agent_id))
+        except Exception:  # noqa: BLE001 - a sink may only ever change a duration
+            pass
+    return result
+
+
+def _write_transcript(session, result, *, call_id: str, model: str, agent: str,
+                      max_tokens, context_sha256: str, agent_id: str) -> Optional[str]:
+    """Append one stamped `message` line per `result.messages` element; the path, or `None`.
+
+    Appended, never truncated, so a second proposer call on one run adds its lines below the
+    first's. The lines are built before the file is opened, so a value `json` cannot hold drops
+    every line of this call rather than half of them.
+    """
+    import json
+
+    from manyruns import artifacts as _artifacts
+    from manyruns import trace as _trace
+
+    try:
+        messages = list(getattr(result, "messages", None) or [])
+        if not messages:
+            return None
+        text = "".join(json.dumps(_trace.stamp({
+            "kind": "message", "call_id": call_id, "index": i, "model": model, "agent": agent,
+            "max_tokens": max_tokens, "context_sha256": context_sha256, "message": message,
+        }, run_id=session.run_id, agent_id=agent_id), default=str) + "\n"
+            for i, message in enumerate(messages))
+        folder = _artifacts.root(session.out_dir, session.run_id) / "agent"
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / "messages.jsonl"
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+        try:
+            os.write(fd, text.encode("utf-8"))
+        finally:
+            os.close(fd)
+    except (OSError, TypeError, ValueError):
+        return None
+    return str(path)

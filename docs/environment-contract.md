@@ -309,3 +309,40 @@ with their data, and consent for that is not implied by installing the product.
    caller outside the learner's own workflow?
 4. **What is the minimum override rate for the corpus to be worth training on?** §4 says defaults
    dominate. Measure it on the rows that exist before building anything that consumes them.
+
+## 8 · The run folder and the join key
+
+`run_id` is the join key. It is minted once per lineage (`runner.identity`, twelve hex
+characters) and every record of that run carries it: the run row in `outputs/index.jsonl`, a
+decision row in `outputs/decisions.jsonl` that was written during the run, every trace event,
+and the run folder, whose name it is. A reader that holds one `run_id` finds every record of
+that run without knowing which surface wrote it.
+
+The run folder is `artifacts.root(out_dir, run_id)`, which is `<out_dir>/state/<run_id>/`. On
+product surfaces `out_dir` is `outputs/<slug>/`. Every file for one run goes under the run
+folder, in a named subfolder when a writer other than the runner owns it.
+
+| Path | Writer | Contents |
+|---|---|---|
+| `outputs/index.jsonl` | `store.append` | one run row per line; `run_id` is a core field |
+| `outputs/decisions.jsonl` | `decisions.append` | one decision row per line; `run_id` is `null` for a row written before its run opened |
+| `outputs/<slug>/state/<run_id>/NN-<step>_<slot>.npy` | `artifacts.save_array` | the arrays a step produced, `NN` its position in the lineage |
+| `outputs/<slug>/state/<run_id>/COMPLETE` | `runner.finish_carry` | the manifest; written once, when the lineage closes |
+| `outputs/<slug>/state/<run_id>/agent/messages.jsonl` | `agents.propose` | the proposer transcript, one stamped `message` line per loop message |
+| `outputs/<slug>/state/<run_id>/engine/<NN>-<step>/outputs.json` | manylatents `SaveOutputs` through `RunStepLogger` | the engine's own record of latent step `NN` |
+| `outputs/<slug>/state/<run_id>/engine/<NN>-<step>/outputs.done` | `RunStepLogger.write_completion_marker` | the ISO-8601 UTC time the engine record was written |
+| `<MANYRUNS_TRACE dir>/<run_id>.jsonl` | `trace.JsonlTracer` | the run's trace events, when `MANYRUNS_TRACE=jsonl://<dir>` is set |
+
+Three rules keep the join unambiguous.
+
+1. **`COMPLETE` means the lineage is finished, and nothing else writes it.** The engine marks
+   each of its step folders with `outputs.done`, never `COMPLETE`, because `SaveOutputs` marks
+   every latent step of a session that is still open. `artifacts.completed_runs` reads
+   `state/*/COMPLETE` one level down, so an `engine/` or `agent/` subfolder never makes a run
+   look complete.
+2. **`NN` is one index.** The engine folder `engine/03-phate/` belongs to the step that wrote
+   `03-phate_emb.npy`. The index reaches the engine through `ctx["step_index"]`, which
+   `apply_step` sets, so a branch or a re-run step cannot make the two disagree.
+3. **Every event says who acted.** Trace events and transcript lines carry `agent_id`: `human`
+   for a person, `llm:<model>` for a model chooser (§2.1). A `decision` event's `agent_id` is
+   its row's `chooser`; the decision row has no `agent_id` key.
