@@ -16,6 +16,21 @@ During the open beta, the CLI and record schema can still change.
 
 ### Added
 
+- `manyruns claim RUN --topology NAME=P[,NAME=P...] --chooser C [--bound B]` appends a
+  structure-class verdict about a stored run to `outputs/index.jsonl`: one independent
+  probability per topology, nested under `extra.verdict` with the chooser, the bound, the
+  `legal_id` and the model. The chooser is `human:<pseudonym>`, `llm:<model>`, `learner:<id>` or
+  `prior:<id>`; a non-human chooser needs `--bound`. A usage error exits 2 and an unknown run
+  exits 1. A verdict row shares its run's `run_id`; a reader that counts runs skips rows where
+  `score.verdict_of(row)` is not `None`.
+- Scorer functions in `manyruns.score`: `verdict_of`, `pred_rung`, `truth_from_annotations`,
+  `soft_truth`, `class_auprc` (macro and per-class average precision against the annotator
+  majority), `brier` and `check_raw_labels`. `vocab.BENCHMARK_CLASSES` names the four benchmark
+  classes.
+- `MANYRUNS_BLIND_DATASET`: when on, run rows, the model prompt and the roster payload carry a
+  blinded name (`ds-` plus 12 hex characters of a SHA-256) in place of the true dataset name,
+  and `outputs/blind_names.jsonl` keeps the true name so `blind.unblind_rows` can join verdicts
+  to labels. Step artifact paths are not rewritten.
 - `manyruns actions [DATASET] [--surface ledger|tune|ladder]` prints the legal action space as
   one JSON document: the ledger of a dataset, the knobs of a recipe's tunable steps with their
   domains, or the scorer's rung tables. It is read-only. `--gate on|off` and `--seed N` record

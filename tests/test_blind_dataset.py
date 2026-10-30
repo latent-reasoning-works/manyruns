@@ -175,3 +175,24 @@ def test_entry_fields_unchanged_in_memory(on):
 def test_entry_payload_off_is_unchanged(off):
     result = _entry().to_dict()
     assert (result["name"], result["dataset"], result["obs"]["source"]) == ("pbmc3k",) * 3
+
+
+# ── scoring after a blinded run ──────────────────────────────────────────────
+def test_scoring_after_blinding(tmp_path):
+    """A verdict on a blinded run and a label on the true name meet after `unblind_rows`."""
+    from manyruns import score, vocab
+
+    blind.remember("pbmc3k", out_dir=tmp_path)
+    probs = {t: 0.0 for t in vocab.TOPOLOGIES}
+    probs["clusters"] = 0.9
+    verdict_rows = [{"run_id": "r1", "dataset_name": _BLINDED, "dataset": None,
+                     "extra": {"verdict": {"topology_probs": probs, "chooser": "human:a3",
+                                           "bound": "none", "legal_id": "a37fab6bef12",
+                                           "model": None}}}]
+    truth_rows = [{"dataset": "pbmc3k", "annotator": "human:a1", "topology": ["clusters"]},
+                  {"dataset": "pbmc3k", "annotator": "human:a2", "topology": ["clusters"]}]
+    assert score.class_auprc(verdict_rows, truth_rows)["unmatched"] == 1
+    out = score.class_auprc(blind.unblind_rows(verdict_rows, out_dir=tmp_path), truth_rows)
+    assert out["unmatched"] == 0
+    assert out["n"] == 1
+    assert out["per_class"]["clusters"] == 1.0
