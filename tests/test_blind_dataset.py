@@ -196,3 +196,25 @@ def test_scoring_after_blinding(tmp_path):
     assert out["unmatched"] == 0
     assert out["n"] == 1
     assert out["per_class"]["clusters"] == 1.0
+
+
+def test_run_screen_prompt_holds_no_true_name(on):
+    # The screen hands `record_for_prompt` the already-blinded `to_dict()`, so the true name in
+    # what the loop said must be blinded by the screen, which still holds the entry itself.
+    from manyruns.tui.run import RunScreen
+
+    recipe = {"name": "embed", "steps": [{"name": "phate", "group": "latent", "params": {}}]}
+    screen = RunScreen(recipe, entry=_entry(), concerns=("pbmc3k has few cells",))
+    screen.said.append("loaded pbmc3k")
+    context = screen.ask_context()
+    assert "pbmc3k" not in context
+    assert _BLINDED in context
+
+
+def test_run_screen_prompt_off_keeps_the_name(off):
+    from manyruns.tui.run import RunScreen
+
+    recipe = {"name": "embed", "steps": [{"name": "phate", "group": "latent", "params": {}}]}
+    screen = RunScreen(recipe, entry=_entry())
+    screen.said.append("loaded pbmc3k")
+    assert "loaded pbmc3k" in screen.ask_context()
