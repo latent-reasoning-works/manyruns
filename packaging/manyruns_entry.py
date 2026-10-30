@@ -5,8 +5,7 @@ PyInstaller needs a real script to analyze; the wheel's console-script
 lives here but the call into the same `main`, so the binary and the
 `uv tool install` console-script are the identical program.
 
-The wheel also installs a `co-science` alias against the same `main`; the frozen binary
-ships under one name only.
+The wheel and the frozen binary both install one command, `manyruns`.
 """
 import sys
 

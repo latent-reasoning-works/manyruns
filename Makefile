@@ -14,7 +14,7 @@ install-public:
 	uv tool install --python 3.12 --force git+https://github.com/latent-reasoning-works/manyruns
 
 demo:
-	co-science run swissroll --recipe embed --engine manylatents --project demo
+	manyruns run swissroll --recipe embed --engine manylatents --project demo
 
 test:
 	uv run pytest tests/ -q

@@ -13,7 +13,7 @@ Include the command, a small synthetic input or bundled dataset, and the error.
 Remove credentials and private data from logs.
 
 **Environment**
-- `co-science --version` output:
+- `manyruns --version` output:
 - Platform and OS version (macOS or Linux; Windows is unsupported):
 - Python version:
 - Install method and extras:

@@ -157,9 +157,9 @@ jobs:
             mkdir "$scratch/$source-run"
             cd "$scratch/$source-run"
             "$verify_venv/bin/python" -I -c "import manyruns; import manylatents.singlecell.preprocessing"
-            "$verify_venv/bin/co-science" --version
-            "$verify_venv/bin/co-science" check
-            "$verify_venv/bin/co-science" run swissroll --recipe embed --engine mock --project release-smoke
+            "$verify_venv/bin/manyruns" --version
+            "$verify_venv/bin/manyruns" check
+            "$verify_venv/bin/manyruns" run swissroll --recipe embed --engine mock --project release-smoke
             "$verify_venv/bin/python" -I - <<'PY'
           import json
           from pathlib import Path

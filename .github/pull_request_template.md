@@ -6,7 +6,7 @@ What could a user not do before, and what can they do now? Link the issue if the
 
 - Failing test added before the behavior change (or explain why this is docs-only):
 - Tests and lint run, with results:
-- `co-science --version` output:
+- `manyruns --version` output:
 - Platform and Python version:
 
 ## Compatibility

@@ -146,6 +146,6 @@ jobs:
           smoke_dir=$(mktemp -d)
           cd "$smoke_dir"
           "$wheel_venv/bin/python" -c "import manylatents.singlecell.preprocessing"
-          "$wheel_venv/bin/co-science" --version
-          "$wheel_venv/bin/co-science" check
-          "$wheel_venv/bin/co-science" run swissroll --engine mock --project wheel-smoke
+          "$wheel_venv/bin/manyruns" --version
+          "$wheel_venv/bin/manyruns" check
+          "$wheel_venv/bin/manyruns" run swissroll --engine mock --project wheel-smoke
