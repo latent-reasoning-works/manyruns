@@ -16,6 +16,13 @@ During the open beta, the CLI and record schema can still change.
 
 ### Added
 
+- `manyruns.action_space` and `manyruns run --choice FILE`: one interface for any program that
+  decides what manyruns runs next, through the CLI or as a library. `ActionSpace.offer` returns
+  the action document and `ActionSpace.act` runs a choice document; `run --choice` checks the
+  choice against the action document whose digest it names, refuses an illegal or stale choice
+  with exit 2 before it writes anything, writes the decision row (with the new optional keys
+  `gate` and `proposed`), runs, and joins the run row by `decision_id`. Also `review`,
+  `as_tools`, `choice_from_tool_call`, `python -m manyruns`, and the page `docs/harness.md`.
 - `MANYRUNS_COMMERCIAL`: someone who builds a proprietary application on the free components
   sets it to `1`. Then every recipe with a non-commercial step (a step named in
   `commercial.NON_COMMERCIAL_STEPS`, such as `mioflow`, or a tool step whose manifest says

@@ -29,7 +29,8 @@ def test_documentation_citations_exist():
 def test_docs_keep_only_contract_sidecars_and_guides():
     docs = Path(__file__).resolve().parents[1] / "docs"
     assert docs.is_dir()
-    assert {path.name for path in docs.iterdir()} == {"environment-contract.md", "sidecars", "guides"}
+    assert {path.name for path in docs.iterdir()} == {"environment-contract.md", "guides", "harness.md",
+                                                     "sidecars"}
 
 
 def test_guides_are_markdown_pages_only():

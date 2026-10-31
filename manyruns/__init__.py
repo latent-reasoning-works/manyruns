@@ -11,8 +11,8 @@ Layering (each arrow = "depends on / drives"):
 **Nothing in this package names a learner**, and that is architecture rather than
 oversight. manyruns is the ENVIRONMENT (what is legal, and the record of what
 happened); the LEARNER decides what is good. The learner observes manyruns's
-artifacts and drives it through the CLI as any other user would — the arrow never
-points from here to there. An environment that imports its agent is not an
+artifacts and drives it through the CLI or as a library, as any other user would — the
+arrow never points from here to there. An environment that imports its agent is not an
 environment. See ``docs/environment-contract.md``
 §3.5, and CLAUDE.md's "No track to a learner".
 

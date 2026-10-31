@@ -455,3 +455,78 @@ def test_the_unreachable_rung_is_reported_rather_than_hidden():
 
     assert score.unroutable_rungs() == []
     assert narrate.unavailable(load_recipe("archetypes")) == []
+
+
+# ── the gate and the proposed block: two optional core keys that `run --choice` writes ──
+_THIRTEEN = ["schema_version", "decision_id", "run_id", "at", "surface", "chooser", "bound",
+             "legal_id", "dataset", "shape", "topology", "offered", "chosen"]
+
+
+@pytest.mark.parametrize("gate", [True, False])
+def test_append_records_gate(tmp_path, gate):
+    _write(tmp_path, gate=gate)
+    row, = decisions.read(tmp_path)
+    assert row["gate"] is gate
+    assert list(row) == [*_THIRTEEN, "gate"]
+
+
+def test_append_without_gate_writes_no_key(tmp_path):
+    _write(tmp_path)
+    row, = decisions.read(tmp_path)
+    assert list(row) == _THIRTEEN
+
+
+@pytest.mark.parametrize("gate", ["on", 1, 0])
+def test_append_refuses_non_bool_gate(tmp_path, gate):
+    with pytest.raises(ValueError, match="gate"):
+        _write(tmp_path, gate=gate)
+    assert not (tmp_path / "decisions.jsonl").exists()
+
+
+def test_row_without_gate_reads_as_missing(tmp_path):
+    hand = {"offered": [{"recipe": "embed"}], "chosen": "embed"}
+    (tmp_path / "decisions.jsonl").write_text(json.dumps(hand) + "\n")
+    decisions.append(offered=[{"recipe": "embed"}], chosen="embed", out_dir=tmp_path)
+    before = (tmp_path / "decisions.jsonl").read_bytes()
+    rows = list(decisions.read(tmp_path))
+    assert len(rows) == 2
+    assert all("gate" not in row and row.get("gate") is None for row in rows)
+    assert list(rows[1]) == _THIRTEEN
+    assert (tmp_path / "decisions.jsonl").read_bytes() == before
+
+
+def test_append_records_proposed_last(tmp_path):
+    proposed = {"chooser": "llm:x", "bound": "schema", "chosen": "embed",
+                "offer_sha256": "0" * 64}
+    decisions.append(offered=[{"recipe": "embed"}], chosen="embed", chooser="human:a3",
+                     gate=True, proposed=proposed, out_dir=tmp_path)
+    row, = decisions.read(tmp_path)
+    assert list(row)[-2:] == ["gate", "proposed"]
+    assert row["proposed"]["chooser"] == "llm:x"
+    assert row["proposed"] == proposed
+
+
+def test_append_without_proposed_writes_no_key(tmp_path):
+    _write(tmp_path, gate=True)
+    row, = decisions.read(tmp_path)
+    assert "proposed" not in row and row.get("proposed") is None
+
+
+@pytest.mark.parametrize("proposed", ["embed", ["embed"]])
+def test_append_refuses_non_dict_proposed(tmp_path, proposed):
+    with pytest.raises(ValueError, match="proposed"):
+        decisions.append(offered=[{"recipe": "embed"}], chosen="embed", proposed=proposed,
+                         out_dir=tmp_path)
+    assert not (tmp_path / "decisions.jsonl").exists()
+
+
+def test_append_copies_proposed(tmp_path):
+    proposed = {"chooser": "llm:x", "bound": "schema", "chosen": "embed",
+                "offer_sha256": "0" * 64, "meta": {"tags": ["a"]}}
+    decisions.append(offered=[{"recipe": "embed"}], chosen="embed", chooser="human:a3",
+                     proposed=proposed, out_dir=tmp_path)
+    proposed["chosen"] = "cluster"
+    proposed["meta"]["tags"].append("b")
+    row, = decisions.read(tmp_path)
+    assert row["proposed"]["chosen"] == "embed"
+    assert row["proposed"]["meta"] == {"tags": ["a"]}
