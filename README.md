@@ -274,6 +274,65 @@ Keep experimental variants out of the shipped app with `$MANYRUNS_RECIPE_DIR` /
 `$MANYRUNS_DATASET_DIR` overlays — the wheel ships the blessed few; your sweep's many arms
 live in your own directory.
 
+## tools
+
+A tool is a recipe step whose code runs in another interpreter: `{name: ..., group: ...,
+tool: <name>}`. Its manifest is a YAML file in `$MANYRUNS_TOOL_DIR`, which replaces the bundled
+tool folder while it is set. A model manifest (`output.schema: result-v1`) returns its facts in
+a `result.json` that `check_result` must accept before anything is merged: an `embedding`,
+`clusters`, a `pseudotime`, `trajectories`, a `graph` or `class_probabilities`. That check is
+the model seam, and manyruns never imports the model. Every manifest declares its `licence`
+and `commercial_use`; a run row names its non-commercial steps in `non_commercial_steps`.
+A manifest that runs code pins its distribution with `==` and an exact version, so an upstream
+release changes nothing until a person moves the pin and runs `manyruns tools verify <name>`.
+manyruns adapts to an unmodified library by one of two routes. A library that takes an array
+and returns arrays in one call needs only a call-mode manifest. A library that needs several
+steps gets a pinned adapter, written once for each pinned version.
+
+A call-mode manifest for a scikit-learn estimator (no adapter code):
+
+```yaml
+name: kmeans
+version: "1"
+mode: call
+licence: BSD-3-Clause
+commercial_use: true
+distribution: scikit-learn
+requires: ["scikit-learn==1.5.2"]
+input: {kind: state_matrix}
+produces: [clusters]
+output: {schema: result-v1}
+call:
+  target: "sklearn.cluster:KMeans"
+  method: fit
+  options: {n_clusters: 8, n_init: 10}
+  params: [n_clusters]
+  args: [matrix]
+  outputs: {clusters: "instance.labels_"}
+```
+
+A precomputed manifest, for a model output made elsewhere. manyruns starts nothing: it reads
+the one `results/*/result.json` whose `cells_sha256` matches the run's cells, checks it, and
+marks the step `precomputed` in the record:
+
+```yaml
+name: outside_partition
+version: "1"
+mode: precomputed
+licence: CC-BY-4.0
+commercial_use: true
+produces: [clusters]
+output: {schema: result-v1, root: results}
+```
+
+```bash
+manyruns tools               # what is declared, and its state
+manyruns tools verify kmeans # run it on a 12-cell fixture and check the result
+```
+
+`examples/tools/mioflow/` is a pinned adapter for upstream MIOFlow (`mioflow==0.1.14`),
+outside the wheel; its README says how to use it.
+
 ## the experiment
 
 The harness runs every recipe over every dataset, collects the g-vectors into one table, and

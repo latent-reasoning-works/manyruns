@@ -71,3 +71,43 @@ def test_no_tool_scratch_file_is_tracked_in_the_repo():
     strays = [f for f in tracked
               if f == "mlflow.db" or f.startswith("mlruns/") or f.endswith(".db")]
     assert not strays, f"tool scratch state is tracked: {strays}"
+
+
+def test_parser_accepts_verify():
+    args = app._build_parser().parse_args(["tools", "verify", "golden"])
+    assert args.func is app.cmd_tools
+    assert args.action == "verify" and args.name == "golden"
+
+
+def test_list_shows_precomputed(capsys, tmp_path, monkeypatch):
+    from model_seam_fixtures import GOLDEN
+
+    assert GOLDEN.is_dir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MANYRUNS_TOOL_DIR", str(GOLDEN))
+    assert app.main(["tools", "list"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert any("golden_precomputed" in line and "precomputed" in line.split()[-1]
+               for line in lines), lines
+
+
+def test_check_runs_no_selftest_for_precomputed(capsys, tmp_path, monkeypatch):
+    from model_seam_fixtures import GOLDEN
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MANYRUNS_TOOL_DIR", str(GOLDEN))
+    monkeypatch.setattr(toolchain, "selftest", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("a selftest ran")))
+    app.main(["tools", "check"])
+    line = next(x for x in capsys.readouterr().out.splitlines() if "golden_precomputed" in x)
+    assert "selftest" not in line
+
+
+def test_install_refuses_precomputed(capsys, tmp_path, monkeypatch):
+    from model_seam_fixtures import GOLDEN
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MANYRUNS_TOOL_DIR", str(GOLDEN))
+    assert app.main(["tools", "install", "golden_precomputed"]) == 2
+    out = capsys.readouterr().out
+    assert "precomputed" in out and "nothing to build" in out

@@ -405,8 +405,12 @@ GVECTOR_SIZE = ("n_samples", "n_features", "n_embedded", "final_dim")
 #:            a narrowing by construction. Carried and narrowed, never transformed — see
 #:            `frame.new_frame`. Absent from `artifacts.PERSISTED` for the reason `counts` is:
 #:            it is more of the scientist's data, not less.
+#:   clusters, graph, trajectories — SUPPLIED by a model through the model seam
+#:            (`pipeline/external.py`), never computed here: a per-cell partition, the graph
+#:            interchange arrays, and the (B, T, d) trajectories. Derived, like `emb`.
 _STATE_KEYS = ("X", "emb", "pseudotime", "labels", "label_key", "seed", "counts", "genes",
-               "frame", "rows", "cols", "model", "layers", "velocity")
+               "frame", "rows", "cols", "model", "layers", "velocity", "clusters", "graph",
+               "trajectories")
 
 
 #: Re-exported from `steps`, which is where it has to be DEFINED (this module imports that
@@ -454,6 +458,8 @@ def _new_state(X: Any = None, labels: Any = None, seed: Any = None, emb: Any = N
             # a field is fitted over a neighbourhood, so a narrowing invalidates the rows that
             # remain — the same rule as `emb`, and the opposite of the `layers` it came from.
             "velocity": None,
+            # SUPPLIED by a model through the model seam. Derived, for the same reason.
+            "clusters": None, "graph": None, "trajectories": None,
             "frame": _frame.new_frame(counts=counts, genes=genes, labels=labels, layers=layers),
             "rows": _frame.full_selection(n_rows),
             "cols": _frame.full_selection(n_cols)}
@@ -747,7 +753,9 @@ def open_gvector(state: dict) -> dict:
 #: unlike a stale embedding it can be ASKED questions — so a probe would return a confident,
 #: well-formed, wrong answer. `vocab.STEP_PRODUCES["mioflow"]` makes the same statement at plan
 #: time; both have to hold or the two disagree about one recipe.
-DERIVED_SLOTS = ("emb", "pseudotime", "model", "velocity")
+#: `clusters`, `graph` and `trajectories` arrive through the model seam and were fitted over
+#: the cells the run held then, so a narrowing clears them as `vocab.invalidated` does.
+DERIVED_SLOTS = ("emb", "pseudotime", "model", "velocity", "clusters", "graph", "trajectories")
 
 
 def _apply_transition(out: dict, state: dict, rec: dict, ctx: dict) -> None:
@@ -1339,6 +1347,11 @@ def _finalize(state: dict, g: dict, *, engine: str, recipe: dict, steps: list,
         # recipe. A result reached off the beaten path is exactly the one whose provenance a
         # reader needs, so it rides in the record rather than being printed once and lost.
         "caveats": list(caveats or []),
+        # The steps whose tool manifest says `commercial_use: false`, so a reader can select
+        # research-only runs with one key instead of scanning every `*.tool_commercial_use`.
+        "non_commercial_steps": sorted(
+            {s["name"] for s in steps if s.get("outcome") not in DID_NOT_RUN
+             and g.get(f"{s['name']}.tool_commercial_use") is False}),
         "recipe": recipe.get("name"),
         "num_steps": len(trace),
         "trace": trace,

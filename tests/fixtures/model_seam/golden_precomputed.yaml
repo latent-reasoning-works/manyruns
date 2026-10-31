@@ -1,0 +1,10 @@
+# A precomputed model output: manyruns starts no interpreter, it only reads and checks the
+# files under `output.root` whose `cells_sha256` matches the run's cell list.
+name: golden_precomputed
+version: "1"
+summary: a precomputed partition and graph, for the model seam tests
+licence: CC-BY-NC-4.0
+commercial_use: false
+mode: precomputed
+produces: [clusters, graph]
+output: {schema: result-v1, root: results}

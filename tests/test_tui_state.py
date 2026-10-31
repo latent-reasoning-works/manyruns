@@ -418,9 +418,11 @@ def test_vocab_facts_is_derived_from_the_tables_and_not_a_fifth_literal():
     """`vocab.facts()` must be computed from the four tables. If it were a literal it would be
     the same closed list stated a fifth time — so adding a need must move it."""
     assert vocab.facts() == {"time", "conditions", "embedding", "clusters", "genes",
-                             "model", "splicing", "velocity", "graph"}
+                             "model", "splicing", "velocity", "graph", "pseudotime",
+                             "trajectories", "class_probabilities"}
     tables = (vocab.SHAPE_PROVIDES, vocab.GROUP_PROVIDES, vocab.STEP_PRODUCES, vocab.STEP_NEEDS)
-    assert vocab.facts() == {f for t in tables for v in t.values() for f in v}
+    assert vocab.facts() == ({f for t in tables for v in t.values() for f in v}
+                             | set(vocab.TOOL_OUTPUT_FACTS))
 
 
 def test_a_fact_no_step_needs_can_never_reach_a_ledger_row():

@@ -451,6 +451,14 @@ MISSING_FACT: dict[str, str] = {
                   "(`manyruns tools list`), or supply one with the data",
     # STEP-produced, by `reeb_graph` only. The fix is to add that step before the readout.
     "graph":      "needs a Reeb graph first — nothing here builds one over the coordinates",
+    # The three facts only a model step returns, through the model seam. The fix is a tool step
+    # whose manifest produces the fact, so the sentence points at `manyruns tools list`.
+    "pseudotime": "needs an ordering first — add a step that computes a pseudotime "
+                  "(dpt, or a model step from `manyruns tools list`)",
+    "trajectories": "needs trajectories first — add a model step that returns them "
+                    "(`manyruns tools list`)",
+    "class_probabilities": "needs class probabilities first — add a model step that returns "
+                           "them (`manyruns tools list`)",
 }
 
 #: The SAME fact, when a narrowing took it away rather than nothing having produced it.
@@ -483,6 +491,13 @@ CLEARED_FACT: dict[str, str] = {
                  "fitted over",
     "graph":     "needs the Reeb graph again — a filter after it dropped the cells its nodes "
                  "were built from",
+    "pseudotime": "needs ordering again — a filter after it dropped cells the ordering was "
+                  "computed over; move the filter before it",
+    "trajectories": "needs trajectories again — a filter after them dropped the cells the "
+                    "flow was fitted over; move the filter before the model step",
+    "class_probabilities": "needs class probabilities again — a filter after them dropped "
+                           "cells they were computed from; move the filter before the model "
+                           "step",
 }
 
 

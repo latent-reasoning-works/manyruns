@@ -1,0 +1,17 @@
+# Call mode with a function: numpy's SVD, with an index selector. No adapter is written.
+name: golden_call_svd
+version: "1"
+summary: the left singular vectors of the state matrix, through call mode
+mode: call
+licence: MIT
+commercial_use: true
+distribution: numpy
+requires: ["numpy==2.2.6"]
+input: {kind: state_matrix}
+produces: [embedding]
+output: {schema: result-v1}
+call:
+  target: "numpy.linalg:svd"
+  options: {full_matrices: false}
+  args: [matrix]
+  outputs: {embedding: "return[0]"}

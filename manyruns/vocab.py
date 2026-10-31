@@ -524,6 +524,14 @@ STEP_PRODUCES: dict[str, tuple[str, ...]] = {
     "reeb_graph": ("graph",),
 }
 
+#: The facts a TOOL step can return across the process boundary — the model seam's six
+#: (`pipeline/external.py`, `SEAM_FACTS`) and `velocity`, which keeps its `.h5ad` path. A tool
+#: step's needs and produces come from its manifest, not from the name tables above, so these
+#: are named here: `facts()` and `step_facts()` include them, and `narrate` phrases each one.
+#: `pseudotime`, `trajectories` and `class_probabilities` have no other producer in the tables.
+TOOL_OUTPUT_FACTS = ("embedding", "clusters", "pseudotime", "trajectories", "graph",
+                     "class_probabilities", "velocity")
+
 #: What a step needs BEFORE it can run — satisfiable from EITHER source above. One needs
 #: table; which source supplies a fact is `unmet`'s business, not a second table's.
 #: Deliberately not "everything a step wants":
@@ -682,7 +690,10 @@ def facts() -> frozenset:
     the phrase table is checked against nothing. Same relationship `watch.OUTCOMES` has to
     `narrate._OUTCOME_MARKS`.
 
-    Measured today: `{"clusters", "conditions", "embedding", "genes", "model", "time"}`. Note
+    `TOOL_OUTPUT_FACTS` is the fifth source: a tool step's facts come from its manifest, so the
+    facts a model can return are named there rather than in a name table.
+
+    Measured before the seam: `{"clusters", "conditions", "embedding", "genes", "model", "time"}`. Note
     that these are not all reachable through :func:`unmet` — that returns only facts some step
     NEEDS, which is `{"clusters", "conditions", "embedding", "genes", "model"}`; `time` is
     provided by `time-course` data and required by nothing, because `mioflow` treats a real
@@ -690,7 +701,7 @@ def facts() -> frozenset:
     halves are here because this answers "what words does the calculus use", not "what can
     currently be missing".
     """
-    out: set = set()
+    out: set = set(TOOL_OUTPUT_FACTS)
     for table in (SHAPE_PROVIDES, GROUP_PROVIDES, STEP_PRODUCES, STEP_NEEDS):
         for values in table.values():
             out.update(values)
@@ -749,8 +760,42 @@ def dataset_provides(shape: str, handle: "dict | None" = None) -> frozenset:
     return frozenset(facts)
 
 
+def _tool_facts(step: dict) -> "tuple[frozenset, frozenset] | None":
+    """`(needs, produces)` from the manifest of a step that names a tool, else None.
+
+    `toolchain` is imported HERE, never at module scope: importing `vocab` must not pull
+    anything beyond the standard library. A tool whose manifest cannot be loaded falls back to
+    the name tables, as before the seam; the runner refuses that step at run time with the fix.
+    """
+    tool = step.get("tool")
+    if not tool:
+        return None
+    from manyruns import toolchain
+
+    try:
+        return toolchain.manifest_facts(str(tool))
+    except (ValueError, FileNotFoundError):
+        return None
+
+
+def step_needs(step: dict) -> frozenset:
+    """The facts this step needs before it can run.
+
+    For a step with `tool:`, the MANIFEST's `needs`: the declaration the runner enforces is the
+    declaration legality reads. Otherwise `STEP_NEEDS`, keyed by name. `_walk`, `recipe_needs`
+    and `noncanonical` all call this, so the three readers cannot disagree."""
+    facts = _tool_facts(step)
+    if facts is not None:
+        return facts[0]
+    return frozenset(STEP_NEEDS.get(step.get("name"), ()))
+
+
 def step_provides(step: dict) -> frozenset:
     """The facts running this step makes available to the steps after it.
+
+    For a step with `tool:`, exactly the MANIFEST's `produces`; `GROUP_PROVIDES` and
+    `STEP_PRODUCES` add nothing. A MIOFlow tool step returns `trajectories` and keeps its
+    model in the tool's interpreter, so the name table's `model` would be a false claim.
 
     The union of what its GROUP provides (true of every executor in that group) and what its
     NAME provides (true of that algorithm only) — see `STEP_PRODUCES` for why one fact is
@@ -759,6 +804,9 @@ def step_provides(step: dict) -> frozenset:
 
     A graph-valued step (its `STEP_PRODUCES` entry contains `graph`) provides only that entry:
     it does not replace `state["emb"]`, so the `latent` group's `embedding` is not true of it."""
+    facts = _tool_facts(step)
+    if facts is not None:
+        return facts[1]
     produced = frozenset(STEP_PRODUCES.get(step.get("name"), ()))
     if "graph" in produced:
         return produced
@@ -778,7 +826,7 @@ def recipe_needs(recipe: dict) -> frozenset:
     """
     needs: set = set()
     for step in recipe.get("steps") or []:
-        needs.update(STEP_NEEDS.get(step.get("name"), ()))
+        needs.update(step_needs(step))
     return frozenset(needs)
 
 
@@ -918,9 +966,10 @@ def step_facts() -> frozenset:
     `time` or `conditions` would be a sentence no code path can reach, because a frame fact
     survives every narrowing by construction.
 
-    Measured today: `{"clusters", "embedding", "model"}`.
+    Measured today: the producer tables plus `TOOL_OUTPUT_FACTS` — every fact a model can
+    return through the seam is fitted over the cells the run held, so a narrowing clears it.
     """
-    out: set = set()
+    out: set = set(TOOL_OUTPUT_FACTS)
     for table in (GROUP_PROVIDES, STEP_PRODUCES):
         for values in table.values():
             out.update(values)
@@ -1053,7 +1102,7 @@ def noncanonical(recipe: dict, shape: str = "unknown",
     notes: list = []
     for step in recipe.get("steps") or []:
         name = step.get("name")
-        for fact in STEP_NEEDS.get(name, ()):
+        for fact in step_needs(step):
             source = have.get(fact)
             canonical = CANONICAL_PROVIDER.get(fact)
             if source is None or canonical is None or source == canonical:
@@ -1180,7 +1229,7 @@ def _walk(recipe: dict, shape: str,
     cleared: set = set()
     lost: set = set()      # facts a narrowing has already taken away, for the reason half
     for step in recipe.get("steps") or []:
-        for fact in STEP_NEEDS.get(step.get("name"), ()):
+        for fact in step_needs(step):
             if fact in have:
                 continue
             missing.add(fact)

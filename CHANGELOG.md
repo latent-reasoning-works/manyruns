@@ -16,6 +16,15 @@ During the open beta, the CLI and record schema can still change.
 
 ### Added
 
+- The model seam: a tool manifest with `output.schema: result-v1` returns an embedding,
+  clusters, a pseudotime, trajectories, a graph or class probabilities in a `result.json` that
+  `external.check_result` checks before any merge. Call mode (`mode: call`) calls an unmodified
+  library from its manifest alone; `mode: precomputed` reads a result made elsewhere, found by
+  the sha256 of the run's cells and marked in the record. `manyruns tools verify <name>` runs a
+  tool on a 12-cell fixture and checks its result. Every manifest declares `licence` and
+  `commercial_use`, run and call manifests pin their distribution with `==`, and run rows gain
+  `non_commercial_steps`. `examples/tools/mioflow/` runs upstream `mioflow==0.1.14` through a
+  pinned adapter, outside the wheel.
 - `manyruns claim RUN --topology NAME=P[,NAME=P...] --chooser C [--bound B]` appends a
   structure-class verdict about a stored run to `outputs/index.jsonl`: one independent
   probability per topology, nested under `extra.verdict` with the chooser, the bound, the

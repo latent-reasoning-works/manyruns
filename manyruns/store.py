@@ -16,7 +16,9 @@ the caller supplies an absolute path. Opening a project does not change cwd.
 Version 1 row shape (core top-level keys): ``schema_version`` (written first),
 ``run_id``, ``spec_id``, ``parent``, ``dataset``, ``dataset_name``, ``data_kwargs``, ``at``,
 ``recipe``, ``engine``, ``seed``, ``tool_version``, ``ok``, ``complete``, ``caveats``,
-``steps`` and ``g_vector``. Product callers also supply the core top-level ``source``,
+``non_commercial_steps``, ``steps`` and ``g_vector``. ``non_commercial_steps`` is the sorted
+list of the run's steps whose tool manifest says ``commercial_use: false``; ``[]`` means none.
+A row written before that field existed has no such key, and a missing key means unknown. Product callers also supply the core top-level ``source``,
 ``modality`` and ``decision_id`` fields through the existing ``append(extra=...)`` merge.
 These stay at the top level; absent optional core fields retain their existing meaning.
 Missing ``schema_version`` means 1. Readers preserve unknown keys and explicit versions.
@@ -158,6 +160,7 @@ def append(results: dict, *, out_dir: Path | str = "outputs",
         # written. It matters more now than it did: the interactive doors call `append`, so
         # mock runs reach the store rather than only the screen.
         "caveats": _jsonable(results.get("caveats") or []),
+        "non_commercial_steps": _jsonable(results.get("non_commercial_steps") or []),
         "steps": _jsonable(results.get("steps") or []),
         "g_vector": _jsonable(results.get("g_vector") or {}),
         **(_jsonable(extra or {})),
