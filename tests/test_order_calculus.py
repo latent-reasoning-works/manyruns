@@ -44,6 +44,11 @@ from public_safety import forbidden_count
 PHATE = {"name": "phate", "group": "latent", "params": {"n_components": 3}}
 MIOFLOW = {"name": "mioflow", "group": "lightning", "params": {}}
 
+
+def _time(shape: str) -> set:
+    """`mioflow` needs `time`: missing on every shape but `time-course`."""
+    return set() if shape == "time-course" else {"time"}
+
 #: The recipe from commit df478cc's finding. On the in-process loop it reported `outcome=ok` for
 #: every step, `ok=True` for the run, and `pseudotime_range = [0.0, 1.0]` over data no
 #: embedding had touched. `unmet` called it legal.
@@ -108,12 +113,14 @@ BUNDLED_LEGALITY = {
     ('qc', 'single'): {'genes'},
     ('qc', 'unknown'): {'genes'},
 
-    ("cflows", "manifold"): set(),
-    ("cflows", "clusters"): set(),
+    # `cflows`, `traced`, `sandbox` — `mioflow` needs `time` (declared, never invented), so
+    # these three are legal only on `time-course`, and `{'time'}` elsewhere.
+    ("cflows", "manifold"): {"time"},
+    ("cflows", "clusters"): {"time"},
     ("cflows", "time-course"): set(),
-    ("cflows", "case-control"): set(),
-    ("cflows", "single"): set(),
-    ("cflows", "unknown"): set(),
+    ("cflows", "case-control"): {"time"},
+    ("cflows", "single"): {"time"},
+    ("cflows", "unknown"): {"time"},
     ("contrast", "manifold"): {"conditions"},
     ("contrast", "clusters"): {"conditions"},
     ("contrast", "time-course"): {"conditions"},
@@ -127,28 +134,26 @@ BUNDLED_LEGALITY = {
     ("embed", "single"): set(),
     ("embed", "unknown"): set(),
 
-    # `traced` — `cflows` plus a `probe` step. MEASURED on this checkout, legal on all six, and
-    # the reason is the one the probe was designed around: `sample_trajectories` declares
-    # `STEP_NEEDS = ("model",)`, `mioflow` declares `STEP_PRODUCES = ("model",)`, and the fold
+    # `traced` — `cflows` plus a `probe` step: `sample_trajectories` declares
+    # `STEP_NEEDS = ("trajectories",)`, `mioflow` declares it in `STEP_PRODUCES`, and the fold
     # sees the second before the first. Identical to `cflows`'s row, which is the point — adding
     # a readout OF a trajectory must not change whether the trajectory is legal.
-    ("traced", "manifold"): set(),
-    ("traced", "clusters"): set(),
+    ("traced", "manifold"): {"time"},
+    ("traced", "clusters"): {"time"},
     ("traced", "time-course"): set(),
-    ("traced", "case-control"): set(),
-    ("traced", "single"): set(),
-    ("traced", "unknown"): set(),
+    ("traced", "case-control"): {"time"},
+    ("traced", "single"): {"time"},
+    ("traced", "unknown"): {"time"},
 
-    # `sandbox` — the declared-but-unimplemented fixture (`pipeline/stubs.py`). Legal on all six,
-    # and that is the property it is built for: a recipe REFUSED at plan time never reaches the
-    # step pane, which is the surface it exists to drive. Its two real steps produce the `model`
-    # its stubs need, which is why the stubs are not first.
-    ("sandbox", "manifold"): set(),
-    ("sandbox", "clusters"): set(),
+    # `sandbox` — the declared-but-unimplemented fixture (`pipeline/stubs.py`). Its two real
+    # steps produce the `model` its stubs need, which is why the stubs are not first. Legal on
+    # `time-course` only, like `cflows`, because its `mioflow` step needs `time`.
+    ("sandbox", "manifold"): {"time"},
+    ("sandbox", "clusters"): {"time"},
     ("sandbox", "time-course"): set(),
-    ("sandbox", "case-control"): set(),
-    ("sandbox", "single"): set(),
-    ("sandbox", "unknown"): set(),
+    ("sandbox", "case-control"): {"time"},
+    ("sandbox", "single"): {"time"},
+    ("sandbox", "unknown"): {"time"},
 
     # `preprocess` — the scRNA preamble as a recipe. `{'genes'}` on all six, MEASURED
     # 2026-08-16, and unlike `markers`/`qc` above these rows did not MOVE: the recipe was born
@@ -171,7 +176,7 @@ BUNDLED_LEGALITY = {
 def test_the_backwards_recipe_is_illegal_on_every_shape():
     """THE regression. `[mioflow, phate]` returned `frozenset()` for all six shapes."""
     for shape in SHAPES:
-        assert unmet(BACKWARDS, shape) == {"embedding"}, (
+        assert unmet(BACKWARDS, shape) == {"embedding"} | _time(shape), (
             f"[mioflow, phate] is legal on {shape!r} — a trajectory step with no preceding "
             "embedding, which is how a pseudotime over raw input gets published"
         )
@@ -185,9 +190,10 @@ def test_the_unmet_fact_is_NAMED_not_merely_counted():
 
 def test_the_forward_recipe_is_legal_on_every_shape():
     """The other direction, and the one that makes the test above mean something: the rule
-    must key on ORDER, not on the mere presence of `mioflow` in the recipe."""
+    must key on ORDER, not on the mere presence of `mioflow` in the recipe. Only `time`, which
+    `mioflow` also needs, is missing off `time-course`; the embedding never is."""
     for shape in SHAPES:
-        assert unmet(FORWARD, shape) == frozenset(), f"cflows order wrongly pruned on {shape}"
+        assert unmet(FORWARD, shape) == _time(shape), f"cflows order wrongly pruned on {shape}"
 
 
 def test_a_step_cannot_satisfy_its_OWN_need():
@@ -198,7 +204,7 @@ def test_a_step_cannot_satisfy_its_OWN_need():
     with a mislabelled `mioflow` (group `latent`, so it does produce) because that is the
     only single-step recipe that can tell the two orderings apart."""
     self_feeding = {"name": "x", "steps": [{"name": "mioflow", "group": "latent"}]}
-    assert unmet(self_feeding, "manifold") == {"embedding"}
+    assert unmet(self_feeding, "time-course") == {"embedding"}
 
 
 # ── 2. nothing else moved ────────────────────────────────────────────────────
@@ -235,14 +241,14 @@ def test_any_latent_step_satisfies_the_embedding_need_not_just_phate():
     step — so a manylatents recipe may legitimately name another embedder. Keying producers
     by name would have made this recipe illegal: a currently-runnable recipe newly pruned."""
     other_embedder = {"name": "x", "steps": [{"name": "umap", "group": "latent"}, MIOFLOW]}
-    assert unmet(other_embedder, "manifold") == frozenset()
+    assert unmet(other_embedder, "time-course") == frozenset()
 
 
 def test_a_step_with_no_group_produces_nothing():
     """`check_recipe` rejects a groupless step and the runner skips it ("never guessed at"),
     so it must not silently satisfy a downstream need either. Three vocabularies agreeing."""
     groupless = {"name": "x", "steps": [{"name": "phate"}, MIOFLOW]}
-    assert unmet(groupless, "manifold") == {"embedding"}
+    assert unmet(groupless, "time-course") == {"embedding"}
 
 
 # ── 4. the two tables cannot drift apart ─────────────────────────────────────
@@ -314,7 +320,7 @@ def test_plan_prunes_the_backwards_recipe_and_says_so():
     pruned sweep that does not say what it pruned looks like a smaller experiment."""
     from manyruns.experiment import plan, skipped_cells
 
-    datasets = [{"name": "d", "shape": "manifold", "handle": {"kind": "path", "ref": "x"}}]
+    datasets = [{"name": "d", "shape": "time-course", "handle": {"kind": "path", "ref": "x"}}]
     assert plan([BACKWARDS], datasets) == []
     assert plan([FORWARD], datasets) != []
     assert skipped_cells([BACKWARDS], datasets) == [("backwards", "d", ["embedding"])]
