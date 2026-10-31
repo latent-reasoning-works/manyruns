@@ -31,6 +31,34 @@ def test_publishing_is_opt_in_and_oidc_only():
     assert all("env" not in step and "run" not in step for step in publish["steps"])
 
 
+def test_build_gates_stable_releases_on_main_before_building():
+    steps = workflow()["jobs"]["build"]["steps"]
+    checkout, gate = steps[:2]
+    assert checkout["uses"].startswith("actions/checkout@")
+    assert gate["name"] == "Enforce stable release source"
+    assert gate["if"] == (
+        "(github.event_name == 'push' && github.ref_type == 'tag') || "
+        "(github.event_name == 'workflow_dispatch' && inputs.publish)"
+    )
+    assert gate["shell"] == "bash"
+    script = gate["run"]
+    assert 'if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then' in script
+    assert 'if [ "$GITHUB_REF" != refs/heads/main ]; then' in script
+    assert "git rev-parse --is-shallow-repository" in script
+    assert "fetch_args+=(--unshallow)" in script
+    assert ('git fetch --no-tags "${fetch_args[@]}" origin '
+            '+refs/heads/main:refs/remotes/origin/main ||') in script
+    assert 'git rev-parse --verify "$GITHUB_SHA^{commit}"' in script
+    assert ('git merge-base --is-ancestor "$tagged_commit" '
+            'refs/remotes/origin/main ||') in script
+    assert "$GITHUB_REF_NAME" in script
+    assert "Cut it from main" in script
+    assert "::error::" in script
+    assert "Release stopped" in script
+    assert '>> "$GITHUB_STEP_SUMMARY"' in script
+    assert "exit 1" in script
+
+
 def test_github_attachments_use_separate_authority_after_publication():
     jobs = workflow()["jobs"]
     attachment = jobs["github-release"]

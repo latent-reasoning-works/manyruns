@@ -25,6 +25,7 @@ import argparse
 import contextlib
 import os
 from manyruns import env as _env
+from manyruns import vocab as _vocab
 import re
 import sys
 from pathlib import Path
@@ -54,8 +55,8 @@ _BULK_SUFFIXES = {".csv", ".tsv", ".txt"}
 #  defensible. `_choose_recipe` now derives from `narrate.offer`, so modality no longer
 #  selects a recipe and the table had no remaining reader.)
 
-_SUBCOMMANDS = ("init", "explore", "run", "open", "projects", "check", "audit",
-                "tools", "shell")
+_SUBCOMMANDS = ("init", "explore", "run", "open", "projects", "check", "actions", "label",
+                "import-labels", "rate", "correct", "claim", "audit", "tools", "shell")
 
 
 def _load_dotenv() -> None:
@@ -102,20 +103,33 @@ def _installed_build() -> str:
     return f"{dist.version} · revision {revision if revision else 'unavailable'}"
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    from manyruns import commands
+class _Parser(argparse.ArgumentParser):
+    """The top-level parser, whose epilog (the REPL command registry) is rendered on demand.
 
-    parser = argparse.ArgumentParser(
+    ON DEMAND, not at build time: `commands.render_help` imports `manyruns.session` and reads
+    every recipe YAML, and every invocation builds this parser. A read-only verb such as
+    `actions` must import no session and must not fail on a malformed recipe it never reads, so
+    only `--help` pays for the registry.
+    """
+
+    def format_help(self) -> str:
+        from manyruns import commands
+
+        self.epilog = commands.render_help()
+        return super().format_help()
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = _Parser(
         # NOT pinned. argparse defaults `prog` to `basename(sys.argv[0])`, so each installed
-        # console-script reports the name it was actually invoked as — `manyruns` and the
-        # `co-science` alias are one program, and a pinned `prog` would make `co-science
-        # --help` print usage for a command the reader did not type.
+        # console-script reports the name it was actually invoked as — a downstream wrapper
+        # that hands its command line to this `main` under its own name would otherwise
+        # print usage for a command the reader did not type.
         description="manyruns — geometric exploration of your data.",
-        epilog=commands.render_help(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {_installed_build()}")
-    sub = parser.add_subparsers(dest="cmd", required=True)
+    sub = parser.add_subparsers(dest="cmd", required=True, parser_class=argparse.ArgumentParser)
 
     p_init = sub.add_parser("init", help="set up a project, then step through it interactively")
     _add_setup_args(p_init)
@@ -131,6 +145,18 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_run = sub.add_parser("run", help="init + explore in one go (the default)")
     _add_setup_args(p_run)
+    p_run.add_argument(
+        "--ask", metavar="TEXT",
+        help="say what you want in plain words; it is routed to one legal recipe by rules "
+        "(never a model), and a request the data cannot support is declined with nothing run. "
+        "Not with --recipe.",
+    )
+    p_run.add_argument(
+        "--choice", metavar="FILE",
+        help="run the choice in a choice document (JSON): it is checked against the action "
+        "document it names, recorded as a decision, then run. Not with DATA, --dataset, --data, "
+        "--recipe, --modality, --transform, --data-set, --time-key, --color-by or --ask.",
+    )
     p_run.set_defaults(func=cmd_run)
 
     p_open = sub.add_parser(
@@ -150,6 +176,90 @@ def _build_parser() -> argparse.ArgumentParser:
     p_check.add_argument("--dataset-dir", help="validate datasets from this directory instead")
     p_check.set_defaults(func=cmd_check)
 
+    p_actions = sub.add_parser(
+        "actions", help="the legal action space for a dataset, as one JSON document on stdout"
+    )
+    p_actions.add_argument("dataset", nargs="?", metavar="DATASET",
+                           help="a dataset name from the catalog (not on the ladder surface)")
+    p_actions.add_argument("--dataset-dir", help="read datasets from this directory instead")
+    p_actions.add_argument("--surface", choices=("ledger", "tune", "ladder"), default="ledger",
+                           help="ledger: which recipes can run · tune: the knobs of one "
+                                "recipe's steps · ladder: the scorer's rung tables")
+    p_actions.add_argument("--recipe", help="the recipe to tune (tune surface)")
+    p_actions.add_argument("--step", help="only this tunable step (tune surface)")
+    p_actions.add_argument("--gate", choices=("on", "off"), default=None,
+                           help="the geometry mask (default on; not on the ladder surface)")
+    p_actions.add_argument("--seed", type=int, default=None,
+                           help="the seed whose probe run the gate reads (default 42)")
+    p_actions.set_defaults(func=cmd_actions)
+
+    # The four verbs that write `outputs/annotations.jsonl` (`manyruns.annotations`): a judgment
+    # about a run, never a committed choice. Each needs `--annotator`, because every row names
+    # its chooser. They are CLI verbs, not `manyruns>` prompt commands, so `commands.py` does
+    # not list them.
+    p_label = sub.add_parser("label", help="record the topologies a stored run shows")
+    p_label.add_argument("run", metavar="RUN", help="a run_id from outputs/index.jsonl")
+    p_label.add_argument("--topology", required=True, metavar="T[,T...]",
+                         help="comma list from: " + ", ".join(_vocab.TOPOLOGIES))
+    _add_annotator_arg(p_label)
+    p_label.add_argument("--raw-label", action="append", default=[], metavar="L",
+                         help="a free-text label to keep beside the topology (repeatable)")
+    p_label.set_defaults(func=cmd_label)
+
+    p_import = sub.add_parser(
+        "import-labels", help="import a benchmark's topology labels, one row per dataset per "
+        "annotator")
+    p_import.add_argument("benchmark", metavar="BENCHMARK", help="the benchmark: scshapebench")
+    p_import.add_argument("--source", required=True, metavar="FILE",
+                          help="a local JSON-lines file of {dataset, annotator, labels}")
+    p_import.add_argument("--revision", required=True, metavar="SHA",
+                          help="the benchmark revision the file was cut from (7-40 hex)")
+    p_import.set_defaults(func=cmd_import_labels)
+
+    p_rate = sub.add_parser("rate", help="rate stored runs: a rank, a rubric, or a blind score")
+    p_rate.add_argument("runs", nargs="+", metavar="RUN", help="run_ids from outputs/index.jsonl")
+    _add_annotator_arg(p_rate)
+    p_rate.add_argument("--rank", metavar="R,R,...",
+                        help="rank mode: a permutation of 1..n, one rank per run (2+ runs)")
+    p_rate.add_argument("--novelty", metavar="N,...", help="with --rank: 1-5, one per run")
+    p_rate.add_argument("--impact", metavar="N,...", help="with --rank: 1-5, one per run")
+    p_rate.add_argument("--rubric", metavar="FILE",
+                        help="rubric mode: a YAML mapping of axis to a 1-5 score (one run)")
+    p_rate.add_argument("--blind", action="store_true", help="blind mode (one run)")
+    p_rate.add_argument("--accuracy", metavar="N", help="with --blind: 1-5")
+    p_rate.add_argument("--completeness", metavar="N", help="with --blind: 1-5")
+    p_rate.set_defaults(func=cmd_rate)
+
+    p_correct = sub.add_parser("correct", help="record the step a run should have taken")
+    p_correct.add_argument("run", metavar="RUN", help="a run_id from outputs/index.jsonl")
+    p_correct.add_argument("--step", required=True, metavar="N",
+                           help="the position in the run's steps (0 is the first)")
+    p_correct.add_argument("--should", required=True, metavar="STEP",
+                           help="the step that should have run there")
+    _add_annotator_arg(p_correct)
+    p_correct.set_defaults(func=cmd_correct)
+
+    # `claim` appends a VERDICT row to `outputs/index.jsonl` (`manyruns.verdict`): a structure-
+    # class prediction about a stored run. Not an annotation (that file holds the truth it is
+    # scored against) and not a `manyruns>` prompt command, so `commands.py` does not list it.
+    from manyruns import decisions as _decisions
+
+    p_claim = sub.add_parser(
+        "claim", help="record a structure-class verdict about a stored run: one probability per "
+        "topology")
+    p_claim.add_argument("run_id", metavar="RUN", help="a run_id from outputs/index.jsonl")
+    p_claim.add_argument("--topology", required=True, metavar="NAME=P[,NAME=P...]",
+                         help="independent probabilities in [0, 1]; an unnamed topology is 0. "
+                              "Names: " + ", ".join(_vocab.TOPOLOGIES))
+    p_claim.add_argument("--chooser", required=True, metavar="C",
+                         help="who predicted: human:<pseudonym>, llm:<model>, learner:<id> or "
+                              "prior:<id>; never a real name")
+    p_claim.add_argument("--bound", default=None, metavar="B",
+                         help="how the chooser's output was constrained: "
+                              + ", ".join(_decisions.BOUNDS)
+                              + " (required unless the chooser is human:<pseudonym>)")
+    p_claim.set_defaults(func=cmd_claim)
+
     p_audit = sub.add_parser(
         "audit", help="run the admission gate over the declared metric suite (non-zero on reject)"
     )
@@ -163,10 +273,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "tools", help="external tools: what is declared, what is built, and how to build it"
     )
     p_tools.add_argument("action", nargs="?", default="list",
-                         choices=("list", "install", "check"),
+                         choices=("list", "install", "check", "verify"),
                          help="list: what is declared and its state · install: build a locked "
-                              "environment · check: run each built tool's selftest")
-    p_tools.add_argument("name", nargs="?", help="the tool (required for install)")
+                              "environment · check: run each built tool's selftest · verify: "
+                              "run one tool on a built-in fixture of 12 cells and check its "
+                              "result against the model seam (run it after every pin change)")
+    p_tools.add_argument("name", nargs="?", help="the tool (required for install and verify)")
     p_tools.set_defaults(func=cmd_tools)
 
     p_shell = sub.add_parser(
@@ -176,6 +288,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_shell.set_defaults(func=cmd_shell)
 
     return parser
+
+
+def _add_annotator_arg(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--annotator", required=True, metavar="P",
+                   help="your pseudonym, never a real name: lowercase letters, digits, _ and -, "
+                        "at most 32 characters (recorded as human:P)")
 
 
 def _add_setup_args(p: argparse.ArgumentParser) -> None:
@@ -862,16 +980,115 @@ def cmd_run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     verb, which nobody guesses. Anything that says what to do (a path, `--dataset`,
     `--engine`, `--recipe`, …) keeps the one-shot, and so does a pipe or a script, so
     automation is unaffected."""
+    if getattr(args, "ask", None) and getattr(args, "recipe", None):
+        parser.error("--ask and --recipe both choose the recipe; give one of them")
     if _wants_the_console(args):
         from manyruns import shell
 
         return shell.run_shell(args)
-    proj = _setup_project(args, parser)
+    if getattr(args, "choice", None) is not None:
+        return _cmd_run_choice(args, parser)
+    try:
+        proj = _setup_project(args, parser)
+    except _AskDeclined as declined:
+        # Declined BEFORE `write_project`, so nothing is on disk: no project.yaml, no run row.
+        print(declined.reframe)
+        return 0
     return _explore_project(
         proj, seed=args.seed,
         fast_dev_run=_smoke(args), data_kwargs=_parse_kwargs(args.data_kwargs),
         time_key=args.time_key, device=args.device, color_by=getattr(args, "color_by", None),
     )
+
+
+#: The flags a choice document replaces: each names or changes what runs. Pairs of the
+#: namespace attribute and the name the refusal prints.
+_CHOICE_REPLACES = (
+    ("data_folder", "DATA"), ("dataset", "--dataset"), ("data_arg", "--data"),
+    ("recipe", "--recipe"), ("modality", "--modality"), ("transform", "--transform"),
+    ("data_kwargs", "--data-set"), ("time_key", "--time-key"), ("color_by", "--color-by"),
+    ("ask", "--ask"),
+)
+
+
+def _cmd_run_choice(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    """`run --choice FILE`: every refusal goes through `parser.error` before the first write."""
+    import json
+
+    from manyruns import action_space
+
+    given = [flag for name, flag in _CHOICE_REPLACES if getattr(args, name, None)]
+    if given:
+        parser.error(f"--choice names what runs; it takes no {', '.join(given)}")
+    path = Path(args.choice)
+    try:
+        choice = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        parser.error(f"cannot read the choice file {args.choice}: {exc.strerror or exc}")
+    except ValueError as exc:
+        parser.error(f"the choice file {args.choice} is not JSON: {exc}")
+    if not isinstance(choice, dict):
+        parser.error(f"the choice file {args.choice} does not hold a JSON object")
+    try:
+        result = _run_choice(choice, engine=args.engine, seed=args.seed, device=args.device,
+                             project=args.project, parser=parser,
+                             fast_dev_run=_smoke(args))
+    except action_space.Refused as refused:
+        if refused.exit_code == 2:
+            parser.error(refused.message)
+        print(f"error: {refused.message}", file=sys.stderr)
+        return refused.exit_code
+    return result["exit_code"]
+
+
+def _run_choice(choice: dict, *, engine: Optional[str], seed: int, device: Optional[str],
+                project: Optional[str], parser: argparse.ArgumentParser,
+                fast_dev_run: bool = False) -> dict:
+    """Run one checked choice and return the result document.
+
+    The order is the contract: check (nothing written on a refusal), set up the project, write
+    the decision row, print its line, run, and write the run row joined by `decision_id`.
+    Raises `action_space.Refused` when the choice is refused. Writes no record itself: the
+    rows come from `decisions.append` and `store.append`, as on every other path.
+    """
+    from manyruns import action_space, decisions
+
+    doc = action_space.check_choice(choice, store=".", seed=seed)
+    chosen = choice["chosen"]
+    dataset = choice["dataset"]
+    surface = choice["surface"]
+    setup = argparse.Namespace(
+        engine=engine, dataset=dataset, data_folder=None, data_arg=None,
+        project=project or _project_name_for(dataset), recipe=chosen["recipe"], ask=None,
+        transform=None, data_kwargs=None, time_key=None, color_by=None, modality=None)
+    step_params = (chosen["step"], chosen["params"]) if surface == "tune" else None
+    proj = _setup_project(setup, parser, step_params=step_params)
+
+    proposed = None
+    if "proposed" in choice:
+        filler = choice["proposed"]
+        proposed = {"chooser": filler["chooser"], "bound": filler["bound"],
+                    "chosen": action_space.label(choice, filler["chosen"], doc),
+                    "offer_sha256": filler["offer_sha256"]}
+        proposed.update({k: filler[k] for k in ("scores", "meta") if k in filler})
+    decision_id = decisions.append(
+        offered=doc["offered"], chosen=action_space.label(choice, chosen, doc),
+        dataset=doc["dataset"]["name"], shape=doc["dataset"]["shape"],
+        topology=doc["dataset"]["topology"], surface=surface,
+        chooser=choice["chooser"], bound=choice["bound"], gate=doc["gate"], proposed=proposed)
+    result = {"schema_version": 1, "decision_id": decision_id, "run_id": None, "exit_code": 1}
+    if decision_id is None:
+        # A harness exists to produce the record. With no person waiting, a choice whose
+        # decision could not be written does not run.
+        print("error: decision not recorded; nothing was run", file=sys.stderr)
+        return result
+    print(f"decision {decision_id} recorded in {decisions.index_path('outputs')}")
+    record: dict = {}
+    result["exit_code"] = _explore_project(
+        proj, seed=seed, fast_dev_run=fast_dev_run, device=device,
+        decision_id=decision_id, record=record, run_extra=choice.get("extra"))
+    result["run_id"] = record.get("run_id")
+    return result
 
 
 def cmd_open(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
@@ -951,16 +1168,386 @@ def cmd_audit(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     return 1 if counts["rejected"] else 0
 
 
+def cmd_actions(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    """Print the legal action space as exactly one JSON document (`manyruns.actions`).
+
+    Exit 2 through `parser.error` for a request the verb does not accept; exit 1, with nothing
+    on stdout, when a discovered name does not load. The document is built whole before the
+    first byte is printed, so a failure never leaves half of one on stdout.
+    """
+    import json
+
+    from manyruns import actions
+
+    if args.surface == "ladder":
+        given = [flag for flag, value in (("--gate", args.gate), ("--seed", args.seed))
+                 if value is not None]
+        if given:
+            parser.error(f"the ladder surface takes no {', '.join(given)}")
+    try:
+        doc = actions.enumerate_actions(
+            args.surface, dataset=args.dataset, recipe=args.recipe, step=args.step,
+            dataset_dir=args.dataset_dir, gate=args.gate != "off",
+            seed=42 if args.seed is None else args.seed)
+    except actions.UsageError as exc:
+        parser.error(str(exc))
+    except actions.LoadError as exc:
+        print(f"error: cannot load {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(doc, indent=2))
+    return 0
+
+
+# ── annotation verbs ─────────────────────────────────────────────────────────
+# Exit codes follow `check` and `actions`: a malformed flag is 2 through `parser.error`; the
+# record saying no (an unknown run, a step out of range, a repeated import), a bad input file,
+# or a failed write is 1 with a message on stderr; success prints each `annotation_id`.
+_REVISION = re.compile(r"[0-9a-f]{7,40}")
+
+
+def _annotator(args: argparse.Namespace, parser: argparse.ArgumentParser) -> str:
+    from manyruns import annotations
+
+    if not re.fullmatch(annotations.PSEUDONYM_PATTERN, args.annotator):
+        parser.error(f"--annotator {args.annotator!r} is not a pseudonym: lowercase letters, "
+                     "digits, _ and -, at most 32 characters, starting with a letter or digit")
+    return "human:" + args.annotator
+
+
+def _last_runs(run_ids) -> dict[str, dict]:
+    """The LAST row of `outputs/index.jsonl` for each wanted run, so a re-run row wins."""
+    from manyruns import store
+
+    wanted, found = set(run_ids), {}
+    for row in store.read("outputs"):
+        if row.get("run_id") in wanted:
+            found[row["run_id"]] = row
+    return found
+
+
+def _missing_runs(run_ids, found: dict) -> int:
+    missing = [r for r in run_ids if r not in found]
+    print(f"error: no run {', '.join(missing)} in outputs/index.jsonl", file=sys.stderr)
+    return 1
+
+
+def _not_written() -> int:
+    print("error: the annotation was not recorded (outputs/annotations.jsonl could not be "
+          "written)", file=sys.stderr)
+    return 1
+
+
+def cmd_label(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    """Write one `label` row: the topologies a stored run shows."""
+    from manyruns import annotations
+
+    given = [t.strip() for t in args.topology.split(",") if t.strip()]
+    unknown = [t for t in given if t not in _vocab.TOPOLOGIES]
+    if unknown:
+        parser.error(f"unknown topology {', '.join(unknown)}: must be from "
+                     f"{', '.join(_vocab.TOPOLOGIES)}")
+    if not given:
+        parser.error("--topology needs at least one value")
+    chooser = _annotator(args, parser)
+    found = _last_runs([args.run])
+    if args.run not in found:
+        return _missing_runs([args.run], found)
+    run = found[args.run]
+    dataset = run.get("dataset_name")
+    if dataset is None:
+        dataset = run.get("dataset")
+    payload = {"dataset": dataset,
+               "topology": [t for t in _vocab.TOPOLOGIES if t in given],
+               "raw": list(args.raw_label)}
+    aid = annotations.append("label", run_id=args.run, chooser=chooser, payload=payload,
+                             out_dir="outputs")
+    if aid is None:
+        return _not_written()
+    print(aid)
+    return 0
+
+
+def _read_benchmark_lines(data: bytes) -> tuple[list[dict], Optional[str]]:
+    """Every source line, validated whole; `(lines, None)` or `([], the first problem)`."""
+    from manyruns import annotations
+    import json
+
+    out: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return [], "the source is not UTF-8 text"
+    for n, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            return [], f"line {n}: not valid JSON"
+        if not isinstance(obj, dict):
+            return [], f"line {n}: not a JSON object"
+        for key, kind in (("dataset", str), ("annotator", str), ("labels", list)):
+            if key not in obj:
+                return [], f"line {n}: no {key!r} key"
+            if not isinstance(obj[key], kind):
+                return [], f"line {n}: {key!r} must be a {kind.__name__}"
+        if not all(isinstance(label, str) for label in obj["labels"]):
+            return [], f"line {n}: every label must be a str"
+        if not re.fullmatch(annotations.PSEUDONYM_PATTERN, obj["annotator"]):
+            return [], (f"line {n}: annotator {obj['annotator']!r} is not a pseudonym "
+                        "(lowercase letters, digits, _ and -, at most 32 characters)")
+        pair = (obj["dataset"], obj["annotator"])
+        if pair in seen:
+            return [], f"line {n}: dataset {pair[0]!r} and annotator {pair[1]!r} repeat a line"
+        seen.add(pair)
+        out.append(obj)
+    return out, None
+
+
+def cmd_import_labels(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    """Import a benchmark's labels: one `label` row per dataset per annotator, `run_id=None`.
+
+    The row records the file's SHA-256, never its path: a path names a home directory, and the
+    digest is what makes a second import of the same file detectable. The whole file is
+    validated before the first row is written.
+    """
+    import hashlib
+
+    from manyruns import annotations
+
+    if args.benchmark != "scshapebench":
+        parser.error(f"unknown benchmark {args.benchmark!r}: the only one is scshapebench")
+    if not _REVISION.fullmatch(args.revision):
+        parser.error(f"--revision {args.revision!r} must be 7 to 40 lowercase hex characters")
+    source = Path(args.source)
+    try:
+        data = source.read_bytes()
+    except OSError as exc:
+        print(f"error: cannot read the source file: {exc.strerror or exc}", file=sys.stderr)
+        return 1
+    lines, problem = _read_benchmark_lines(data)
+    if problem:
+        print(f"error: {problem}; nothing was imported", file=sys.stderr)
+        return 1
+    digest = hashlib.sha256(data).hexdigest()
+    for row in annotations.read("outputs"):
+        src = (row.get("payload") or {}).get("source") if row.get("kind") == "label" else None
+        if isinstance(src, dict) and src.get("sha256") == digest:
+            print(f"error: this file was already imported (sha256 {digest[:12]}…); nothing was "
+                  "imported", file=sys.stderr)
+            return 1
+    meta = {"name": "scshapebench", "revision": args.revision, "sha256": digest}
+    written = skipped = 0
+    for obj in lines:
+        topology = annotations.benchmark_topology(obj["labels"])
+        if not topology:
+            skipped += 1
+            continue
+        payload = {"dataset": obj["dataset"], "topology": topology,
+                   "raw": list(obj["labels"]), "source": dict(meta)}
+        if annotations.append("label", run_id=None, chooser="human:" + obj["annotator"],
+                              payload=payload, out_dir="outputs") is None:
+            print(f"error: the write failed after {written} rows", file=sys.stderr)
+            return 1
+        written += 1
+    print(written)
+    if skipped:
+        print(f"skipped {skipped} rows with no mappable class", file=sys.stderr)
+    return 0
+
+
+def _int_list(flag: str, value: str, parser: argparse.ArgumentParser) -> list[int]:
+    try:
+        return [int(v) for v in value.split(",")]
+    except ValueError:
+        parser.error(f"{flag} {value!r} must be a comma list of integers")
+
+
+def _score(flag: str, value: int, parser: argparse.ArgumentParser) -> int:
+    if not 1 <= value <= 5:
+        parser.error(f"{flag} score {value} must be an integer from 1 to 5")
+    return value
+
+
+def _load_rubric(path: str) -> tuple[Optional[dict], Optional[str], str]:
+    """`(scores, sha256, "")`, or `(None, None, the problem)`."""
+    import hashlib
+
+    from omegaconf import DictConfig, OmegaConf
+
+    try:
+        data = Path(path).read_bytes()
+    except OSError as exc:
+        return None, None, f"cannot read the rubric file: {exc.strerror or exc}"
+    try:
+        cfg = OmegaConf.load(path)
+    except Exception as exc:  # noqa: BLE001 - a malformed file is one problem, not a crash
+        return None, None, f"the rubric is not readable YAML: {type(exc).__name__}"
+    if not isinstance(cfg, DictConfig):
+        return None, None, "the rubric must be a mapping of axis to score"
+    scores = OmegaConf.to_container(cfg, resolve=True)
+    if not scores:
+        return None, None, "the rubric holds no scores"
+    for axis, value in scores.items():
+        if not isinstance(axis, str):
+            return None, None, f"rubric axis {axis!r} must be a name"
+        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 5:
+            return None, None, f"rubric score {axis}: {value!r} must be an integer from 1 to 5"
+    return scores, hashlib.sha256(data).hexdigest(), ""
+
+
+def cmd_rate(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    """Write one `rating` row per run, in rank, rubric or blind mode.
+
+    Rows from one call share `payload.compared` in rank mode, so a reader can rebuild the
+    preference pairs from the rows alone.
+    """
+    from manyruns import annotations
+
+    runs = list(args.runs)
+    n = len(runs)
+    modes = [m for m, on in (("--rank", args.rank is not None),
+                             ("--rubric", args.rubric is not None),
+                             ("--blind", args.blind)) if on]
+    if len(modes) != 1:
+        parser.error("give exactly one of --rank, --rubric or --blind"
+                     + (f" (got {', '.join(modes)})" if modes else ""))
+    mode = modes[0]
+    if args.rank is None:
+        given = [f for f, v in (("--novelty", args.novelty), ("--impact", args.impact)) if v]
+        if given:
+            parser.error(f"{', '.join(given)} needs --rank")
+    if not args.blind:
+        given = [f for f, v in (("--accuracy", args.accuracy),
+                                ("--completeness", args.completeness)) if v is not None]
+        if given:
+            parser.error(f"{', '.join(given)} needs --blind")
+    if mode == "--rank" and n < 2:
+        parser.error("--rank compares 2 or more runs")
+    if mode != "--rank" and n != 1:
+        parser.error(f"{mode} rates exactly one run")
+    if len(set(runs)) != n:
+        parser.error("a run is given twice")
+    chooser = _annotator(args, parser)
+
+    payloads: list[dict]
+    if mode == "--rank":
+        ranks = _int_list("--rank", args.rank, parser)
+        if sorted(ranks) != list(range(1, n + 1)):
+            parser.error(f"--rank must be a permutation of 1..{n}, one per run")
+        extra = {}
+        for flag, value in (("--novelty", args.novelty), ("--impact", args.impact)):
+            if value is None:
+                extra[flag] = [None] * n
+                continue
+            scores = _int_list(flag, value, parser)
+            if len(scores) != n:
+                parser.error(f"{flag} needs {n} values, one per run, got {len(scores)}")
+            extra[flag] = [_score(flag, s, parser) for s in scores]
+        payloads = [{"mode": "rank", "rank": ranks[i], "compared": list(runs),
+                     "novelty": extra["--novelty"][i], "impact": extra["--impact"][i]}
+                    for i in range(n)]
+    elif mode == "--blind":
+        if args.accuracy is None or args.completeness is None:
+            parser.error("--blind needs --accuracy and --completeness")
+        if "," in args.accuracy or "," in args.completeness:
+            parser.error("--accuracy and --completeness take one score each")
+        acc = _score("--accuracy", _int_list("--accuracy", args.accuracy, parser)[0], parser)
+        com = _score("--completeness",
+                     _int_list("--completeness", args.completeness, parser)[0], parser)
+        payloads = [{"mode": "blind", "blind": True, "accuracy": acc, "completeness": com}]
+    else:
+        payloads = []   # filled after the run check: a bad file must not hide an unknown run
+
+    found = _last_runs(runs)
+    if any(r not in found for r in runs):
+        return _missing_runs(runs, found)
+    if mode == "--rubric":
+        scores, digest, problem = _load_rubric(args.rubric)
+        if problem:
+            print(f"error: {problem}; nothing was written", file=sys.stderr)
+            return 1
+        payloads = [{"mode": "rubric", "scores": scores, "rubric_sha256": digest}]
+    for run_id, payload in zip(runs, payloads):
+        aid = annotations.append("rating", run_id=run_id, chooser=chooser, payload=payload,
+                                 out_dir="outputs")
+        if aid is None:
+            return _not_written()
+        print(aid)
+    return 0
+
+
+def cmd_claim(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    """Append one verdict row: a structure-class prediction about a stored run.
+
+    A usage error (bad topology, chooser or bound) exits 2; an unknown run exits 1, as the
+    annotation verbs do."""
+    import json
+
+    from manyruns import verdict
+
+    try:
+        probs = verdict.parse_topology(args.topology)
+    except ValueError as exc:
+        parser.error(str(exc))
+    try:
+        payload = verdict.write_verdict(args.run_id, probs, chooser=args.chooser,
+                                        bound=args.bound, out_dir="outputs")
+    except ValueError as exc:
+        parser.error(str(exc))
+    except LookupError as exc:
+        print(f"error: {exc.args[0] if exc.args else exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(payload))
+    return 0
+
+
+def cmd_correct(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    """Write one `correction` row: at step N, the run should have taken STEP instead."""
+    from manyruns import annotations, session
+
+    try:
+        step = int(args.step)
+    except ValueError:
+        parser.error(f"--step {args.step!r} must be a non-negative integer")
+    if step < 0:
+        parser.error(f"--step {step} must be a non-negative integer")
+    resolved = session.resolve_step(args.should)
+    if resolved is None:
+        parser.error(f"unknown step {args.should!r} for --should")
+    chooser = _annotator(args, parser)
+    found = _last_runs([args.run])
+    if args.run not in found:
+        return _missing_runs([args.run], found)
+    run = found[args.run]
+    steps = run.get("steps") or []
+    if step >= len(steps):
+        print(f"error: --step {step} is past the end: run {args.run} has {len(steps)} "
+              f"step{'s' if len(steps) != 1 else ''}", file=sys.stderr)
+        return 1
+    did = steps[step].get("name") if isinstance(steps[step], dict) else None
+    aid = annotations.append("correction", run_id=args.run, chooser=chooser,
+                             payload={"did": did}, decision_id=run.get("decision_id"),
+                             step=step, should=resolved["name"], out_dir="outputs")
+    if aid is None:
+        return _not_written()
+    print(aid)
+    return 0
+
+
 def cmd_check(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     """Validate every recipe and dataset. The self-check for authors.
 
     Catches what a typo actually costs: a step group outside the vocabulary, a dataset shape
     that would invent a spurious class in the results table, a name that disagrees with its
     filename. Exits non-zero if anything is invalid, so CI can run it too."""
-    from manyruns import catalog, vocab
+    from manyruns import catalog, env, narrate, score, vocab
     from manyruns.vocab import unmet
 
     bad = 0
+    gaps: list = []
+    ladder_failed = False
     ddir = getattr(args, "dataset_dir", None)
     recipes: list[dict] = []   # the valid ones, for the coverage pass
     datasets: list[dict] = []
@@ -1056,11 +1643,32 @@ def cmd_check(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
                     print(f"  WARN  {r['name']:<14} no dataset can exercise it — needs a shape "
                           f"providing {need or '?'} (have: {', '.join(shapes)})")
 
+        # ladder: the rungs no OFFERED recipe can claim. The check offer is structural — a
+        # valid recipe that is not `blocked:` and is legal on at least one declared dataset;
+        # `check` has no measurements, so the rung-support gate does not apply here. A gap in
+        # the bundled catalogue is a FAIL. A `$MANYRUNS_RECIPE_DIR` holds a sweep's arms and
+        # need not cover the ladder, so a gap there is a WARN and keeps the exit code.
+        check_offer = [r["name"] for r in recipes
+                       if not narrate.unavailable(r)
+                       and any(not unmet(r, d.get("shape", "unknown"), handle=d.get("handle"))
+                               for d in datasets)]
+        gaps = list(score.unroutable_rungs(check_offer))
+        print("\nladder (rungs the offered recipes can claim)")
+        if not gaps:
+            print("  ok    unroutable rungs: none")
+        elif not env.get("RECIPE_DIR"):
+            ladder_failed = True
+            print(f"  FAIL  unroutable rungs: {gaps}")
+        else:
+            print(f"  WARN  unroutable rungs: {gaps}")
+
     tail = "all valid" if not bad else f"{bad} INVALID"
     if warn:
         tail += f", {warn} unexercisable"
+    if gaps:
+        tail += f", unroutable rungs {gaps}"
     print(f"\n{len(names)} recipes, {len(dnames)} datasets — {tail}")
-    return 1 if bad else 0
+    return 1 if bad or ladder_failed else 0
 
 
 # ── building blocks ──────────────────────────────────────────────────────────
@@ -1082,7 +1690,8 @@ def _ask(prompt: str, default: str) -> str:
 
 
 #: Args that mean "I already know what I want" — any of them keeps `run` a one-shot.
-_RUN_INTENT_ARGS = ("data_folder", "data_arg", "dataset", "recipe", "engine", "project")
+_RUN_INTENT_ARGS = ("data_folder", "data_arg", "dataset", "recipe", "engine", "project", "ask",
+                    "choice")
 
 
 def _wants_the_console(args: argparse.Namespace) -> bool:
@@ -1212,7 +1821,33 @@ def _require_source_shape(engine, recipe, dataset, array, shape, embedding=None)
             "verified fit dimensions. Use a matching catalog declaration or an explicit generated data file.")
 
 
-def _setup_project(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict:
+class _AskDeclined(Exception):
+    """`run --ask` asked for something the data cannot honestly support; carries the reframe."""
+
+    def __init__(self, reframe: str) -> None:
+        super().__init__(reframe)
+        self.reframe = reframe
+
+
+def _route_ask(text: str, obs: Any) -> Optional[str]:
+    """`run --ask TEXT` → one legal recipe name, or None to fall back to auto-selection.
+
+    The rule tier only (`allow_llm=False`): a one-shot command must give the same answer on
+    every machine. The legal set is the ledger's runnable rows, so `--ask` can only reach a
+    recipe the ledger would let a person pick. Raises `_AskDeclined` on a refusal.
+    """
+    from manyruns import intent
+    from manyruns.tui import state
+
+    legal = [r.recipe for r in state.ledger(obs, obs.provides()) if r.can_run]
+    recipe, refusal = intent.route_recipe(text, obs, legal, allow_llm=False)
+    if refusal:
+        raise _AskDeclined(refusal)
+    return recipe
+
+
+def _setup_project(args: argparse.Namespace, parser: argparse.ArgumentParser, *,
+                   step_params: Optional[tuple[str, dict]] = None) -> dict:
     """Prompt for the minimum (#11), detect modality (#10), pick the recipe, persist it.
 
     One data source (the DATA arg or --dataset) that is EITHER a filesystem path OR a
@@ -1233,6 +1868,8 @@ def _setup_project(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         raw = _data_from_drop_folder()
     project = args.project or _ask("project name", _project_name_for(raw))
 
+    ask = getattr(args, "ask", None)
+    routed = None
     dataset_name = None
     src = Path(raw)
     if src.exists():                                  # a file or folder → manyruns loads it
@@ -1241,6 +1878,10 @@ def _setup_project(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
             modality = detect_modality(src)
         except ValueError as e:
             parser.error(str(e))
+        if ask:
+            from manyruns import narrate
+
+            routed = _route_ask(ask, narrate.read_data(src, modality, source=src.name))
     elif _looks_like_path(raw):                       # meant as a path, but missing → clear error
         parser.error(f"data path not found: {raw}")
     else:
@@ -1248,6 +1889,13 @@ def _setup_project(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         # engine name; sending a file alias to Hydra loses the data before step one.
         from manyruns.shell import _resolve_dataset
 
+        if ask:
+            # Routed BEFORE the fetch, on what is already here: a declined request must not
+            # download anything. `_resolve_dataset` opens no network and keeps the declared shape.
+            try:
+                routed = _route_ask(ask, _resolve_dataset(raw)[3])
+            except (FileNotFoundError, ValueError, KeyError):
+                pass                                  # the resolution below reports it
         try:
             _fetch_cli_source(raw, parser)
             data_folder, dataset, modality, _ = _resolve_dataset(raw)
@@ -1262,7 +1910,10 @@ def _setup_project(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
             parser.error(f"catalog handle {raw!r} resolved to missing data {data_folder}; "
                          f"put the file there or in the data drop folder, or supply its existing path")
 
-    recipe, rationale = select_analysis(modality, data_folder, override=getattr(args, "recipe", None))
+    if routed:
+        print(f"ask: {ask!r} → {routed}")
+    recipe, rationale = select_analysis(modality, data_folder,
+                                        override=getattr(args, "recipe", None) or routed)
     print(f"analysis: {recipe['name']} — {rationale}")
     # `--transform` reaches `init`/`run` HERE, at the one line where this command decides what
     # its recipe is — not at each of the four consumers downstream (`_explore_project` for
@@ -1277,6 +1928,16 @@ def _setup_project(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
     # name preprocess one way today and another way tomorrow, with the file that exists to say
     # which asserting the one that did not happen.
     recipe = apply_transform_shim(recipe, getattr(args, "transform", None))
+    # A tune choice's step parameters, at the same place and for the same reason.
+    if step_params is not None:
+        recipe = apply_step_params(recipe, *step_params)
+    # COMMERCIAL MODE refuses here: after the recipe is chosen, before `write_project` and
+    # before any step, so a refused run leaves nothing under `outputs/`.
+    from manyruns import commercial
+
+    for reason in commercial.refusal(recipe):
+        print(f"error: {recipe['name']}: {reason}", file=sys.stderr)
+        raise SystemExit(2)
     data_kwargs, shape = _dataset_contract(dataset_name, dataset,
                                            _parse_kwargs(getattr(args, "data_kwargs", None)))
     _require_source_shape(engine, recipe, dataset, None, shape)
@@ -1307,6 +1968,10 @@ def _explore_project(
     time_key: Optional[str] = None,
     device: Optional[str] = None,
     color_by: Optional[list[str]] = None,
+    *,
+    decision_id: Optional[str] = None,
+    record: Optional[dict] = None,
+    run_extra: Optional[dict] = None,
 ) -> int:
     data_folder = Path(proj["data_folder"]) if proj.get("data_folder") else None
     engine = proj.get("engine", "mock")
@@ -1388,7 +2053,15 @@ def _explore_project(
     # which is most of what "strict state of the data and the interventions" means.
     from manyruns import store as _store
 
-    index = _store.append(results, extra={"source": str(source), "modality": proj["modality"]})
+    row_extra: dict = {"source": str(source), "modality": proj["modality"]}
+    if decision_id is not None:
+        row_extra["decision_id"] = decision_id
+    if run_extra is not None:
+        # The caller's object, written as the row's `extra` key; manyruns reads none of its keys.
+        row_extra["extra"] = run_extra
+    index = _store.append(results, extra=row_extra)
+    if record is not None:
+        record["run_id"] = results.get("run_id")
 
     from manyruns import shell as _shell
 
@@ -1533,18 +2206,46 @@ def _choose_recipe(
     if override:
         return override, f"recipe forced to {override!r} (auto-selection skipped)"
 
+    from manyruns import catalog
+
     shape = narrate.shape_of(has_time_axis, conditions, modality)
-    recipe = narrate.offer(narrate.Observation(
-        shape=shape, modality=modality, conditions=conditions))[0]["recipe"]
+    menu = narrate.offer(narrate.Observation(shape=shape, modality=modality,
+                                             conditions=conditions))
+    # THE FIRST ENTRY THAT CAN RUN, never just the head: `offer` returns blocked and unavailable
+    # recipes too (unrecommended, so a screen can show the refusal), and a head that cannot run
+    # would be chosen and then refused. With the commercial flag on, `cflows` is unavailable on
+    # time-course data, and `pseudotime` is the first entry that runs.
+    #
+    # THE BEST MATCH, named in the rationale when it is skipped. `offer` sorts an unavailable
+    # recipe below the runnable ones, so it is the head the menu would have if availability did
+    # not demote a row: of the recipes that suit this shape and that this data does not block,
+    # the first by name (`offer`'s order).
+    recipe, suited = None, []
+    for entry in menu:
+        loaded = catalog.load_recipe(entry["recipe"])
+        data_reasons = narrate.blocked(loaded, shape)
+        reasons = data_reasons + narrate.unavailable(loaded)
+        if recipe is None and not reasons:
+            recipe = entry["recipe"]
+        if shape in (loaded.get("suits") or []) and not data_reasons:
+            suited.append((entry["recipe"], reasons))
+    if recipe is None:
+        recipe = menu[0]["recipe"]
+    best = min(suited) if suited else None
+    skipped = (best[0], best[1][0]) if best and best[0] != recipe and best[1] else None
 
     if shape == "time-course":
-        why = "detected a time / ordering axis → trajectory (CFlows: phate→mioflow)"
+        why = ("detected a time / ordering axis → trajectory (CFlows: phate→mioflow)"
+               if recipe == "cflows" else
+               f"detected a time / ordering axis → trajectory ({recipe})")
     elif shape == "case-control":
         why = (f"detected conditions {sorted(conditions or [])} with no time axis → case/control "
                "contrast (PHATE + condition separation), not a trajectory")
     else:
         why = ("no time axis or conditions detected → structure-only embedding; asserting a "
                "trajectory here would invent an ordering the data does not carry")
+    if skipped is not None:
+        why += f"; {skipped[0]} suits this data but is not chosen: {skipped[1]}"
     return recipe, why
 
 
@@ -1609,9 +2310,9 @@ def _inspect_obs(path: Path) -> tuple[bool, Optional[list], Optional[tuple]]:
       `cluster` (it declares `suits: [clusters]`), so `_choose_recipe`'s head — it takes
       `offer(...)[0]["recipe"]` — flips `embed` → `cluster`, a recipe that runs leiden and
       *discovers* groups while ignoring the eight curated ones, still carrying the `embed`
-      rationale string. And `narrate.refusal` does not list `clusters` among the shapes it
-      declines a trajectory on, so the app's headline honesty behaviour would go silent on
-      exactly the two demo fixtures. `narrate.describe` has no `clusters` branch either and
+      rationale string. (`narrate.refusal` now declines a trajectory on `clusters` as well,
+      so that half of the honesty behaviour would survive the move.) `narrate.describe` has
+      no `clusters` branch and
       falls through to the *harder* denial ("No labels I recognize").
 
     So the shape stays `single` and only the sentence learns the labels. Moving the shape is a
@@ -1718,6 +2419,20 @@ def apply_transform_shim(recipe: dict, transform: Optional[str]) -> dict:
     out["steps"] = [
         {**s, "params": {**(s.get("params") or {}), "method": transform}}
         if s.get("name") == "transform" else s
+        for s in (recipe.get("steps") or [])
+    ]
+    return out
+
+
+def apply_step_params(recipe: dict, step: str, params: dict) -> dict:
+    """A copy of `recipe` in which the step named `step` has `params = {**declared, **params}`.
+
+    For a tune choice, before `write_project`, so `project.yaml` records the values that ran.
+    The tune document refuses two tunable steps with one name, so the step is unique.
+    """
+    out = dict(recipe)
+    out["steps"] = [
+        {**s, "params": {**(s.get("params") or {}), **params}} if s.get("name") == step else s
         for s in (recipe.get("steps") or [])
     ]
     return out
@@ -1861,8 +2576,8 @@ _FACT_FOR_LABEL_KIND = {"time": "time", "condition": "conditions"}
 _UNDELIVERED_FACT_COST = {
     "time": (
         "`vocab.unmet` reads the DECLARATION, not the run, so a trajectory recipe is still "
-        "called legal; the trajectory step then falls back to a pseudotime computed from the "
-        "embedding — a clock made of the geometry it is supposed to be independent of."
+        "called legal; the trajectory step then has no time labels and refuses to run, because "
+        "it never invents a clock from the geometry it is supposed to be independent of."
     ),
     "conditions": (
         "separation/composition would record `no condition labels` and return None, which the "
@@ -1887,9 +2602,10 @@ def _require_declared_facts(
     `shape: time-course` would have its time axis erased between the declaration the legality
     check reads and the run that consumes it — `unmet(cflows, "time-course")` is `frozenset()`,
     i.e. LEGAL, and `runner._ml_lightning` then computes `time_labels = state["labels"]` =
-    None and `mioflow._run_mioflow_experiment` falls back to a diffusion pseudotime.
+    None. `mioflow._run_mioflow_experiment` used to fall back to a diffusion pseudotime there;
+    it now refuses a run with no time labels, so the step is `skipped` rather than wrong.
 
-    What that produces, measured end to end (`--dataset swissroll --recipe cflows` on the
+    What that produced before the refusal, measured end to end (`--dataset swissroll --recipe cflows` on the
     in-process loop, seed 42, 5000×3): trace `latent:phate → lightning:mioflow`, status `phate: ok,
     mioflow: ok`, run `ok=True`, and `g_vector["pseudotime_range"] == [0.0, 1.0]` — a
     full-range trajectory whose clock came from the embedding, indistinguishable in the record
@@ -1989,6 +2705,11 @@ def cmd_tools(args: Any, parser: Any = None) -> int:
 
     action = getattr(args, "action", "list") or "list"
     names = _tc.discover_tools()
+    if action == "verify":
+        if not args.name:
+            print("which tool? " + (", ".join(names) or "(none declared)"))
+            return 2
+        return _verify_tool(args.name)
     if not names:
         print("no tools declared. A tool is a YAML in $MANYRUNS_TOOL_DIR or the bundled set.")
         return 0
@@ -1996,6 +2717,9 @@ def cmd_tools(args: Any, parser: Any = None) -> int:
     if action == "install":
         if not args.name:
             print("which tool? " + ", ".join(names))
+            return 2
+        if _tc.resolve(args.name)["status"] == "precomputed":
+            print(f"{args.name}: precomputed, nothing to build")
             return 2
         try:
             out = _tc.build(args.name)
@@ -2018,6 +2742,68 @@ def cmd_tools(args: Any, parser: Any = None) -> int:
         if r.get("fix"):
             print(f"      -> {r['fix']}")
     return rc
+
+
+def _verify_tool(name: str) -> int:
+    """`manyruns tools verify <name>`: run ONE tool step on a built-in fixture and check it.
+
+    The fixture is 12 cells x 3 columns with three time points and seed 0, in a temporary
+    folder that is removed afterwards. The tool is resolved as a run would resolve it, no lock
+    is built, and no row is written to `outputs/index.jsonl`. The step's version 1 result goes
+    through `check_result` with the manifest's `produces`, exactly as in a run.
+
+    Exit codes: 0 the result passes; 1 the tool declined, failed, or its result has a problem;
+    2 no such manifest, or it is precomputed; 3 its `input.kind` is not `state_matrix`, so the
+    fixture cannot serve it; 4 the tool is not ready, and the fix is printed.
+    """
+    import tempfile
+
+    import numpy as np
+
+    from manyruns import toolchain as _tc
+    from manyruns.pipeline import external as _external
+    from manyruns.pipeline import runner as _runner
+    from manyruns.pipeline.steps import _StepSkipped
+
+    resolved = _tc.resolve(name)
+    status = resolved["status"]
+    if status == "no-manifest":
+        print(f"  manifest      FAILED: {resolved['reason']}")
+        return 2
+    if status == "precomputed":
+        print(f"  manifest      {name} is precomputed: nothing runs, so there is nothing to verify")
+        return 2
+    cfg = resolved["cfg"]
+    print(f"  manifest      ok: {name} {cfg.get('version')} (mode {_tc.tool_mode(cfg)})")
+    kind = (cfg.get("input") or {}).get("kind")
+    if kind != "state_matrix":
+        print(f"  input         FAILED: input.kind is {kind!r}; the built-in fixture is a "
+              f"state_matrix of 12 cells")
+        return 3
+    print("  input         ok: state_matrix")
+    if status not in ("ready", "overridden"):
+        print(f"  environment   FAILED: {status}: {resolved.get('reason')}")
+        if resolved.get("fix"):
+            print(f"      -> {resolved['fix']}")
+        return 4
+    print(f"  environment   ok: {status}: {resolved.get('reason')}")
+
+    X = np.arange(36, dtype=float).reshape(12, 3)
+    ids = np.array([f"c{i:02d}" for i in range(12)])
+    time = np.repeat([0.0, 1.0, 2.0], 4)
+    state, g = _runner._new_state(X=X, labels=time, seed=0), {}
+    state["label_kind"] = "time"
+    with tempfile.TemporaryDirectory(prefix="manyruns-verify-") as tmp:
+        ctx = {"out_dir": Path(tmp), "seed": 0, "sample_ids": ids, "caveats": []}
+        try:
+            _external.run_external_step(name, {}, state, g, ctx)
+        except _StepSkipped as e:
+            print(f"  result        FAILED: {e}")
+            return 1
+    model = (cfg.get("output") or {}).get("schema") == _tc.RESULT_SCHEMA
+    print("  result        ok: " + ("check_result accepts it" if model
+                                    else "the .h5ad output matches the manifest"))
+    return 0
 
 
 def _load_inputs(engine: str, data_folder: Optional[Path], dataset: Optional[str],

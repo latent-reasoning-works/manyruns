@@ -353,6 +353,8 @@ def _record_decision(session: Any, attempts: list[dict], chosen: Optional[str]) 
         offered=[{"step": a["name"], "params": a["params"], "label": a["label"]}
                  for a in attempts],
         chosen=chosen, surface="tune", run_id=getattr(session, "run_id", None),
+        # Who drives the session chose: a person, or the model `agents.propose` set.
+        chooser=getattr(session, "agent_id", "human"),
         dataset=getattr(session, "dataset", None), shape=getattr(session, "shape", None),
         out_dir=_corpus_dir(session))
 

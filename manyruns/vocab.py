@@ -16,7 +16,7 @@ package (io, loading, mioflow, runner, steps) along to obtain a 3-tuple of strin
 from __future__ import annotations
 
 import re
-from typing import Any, Iterable, Optional
+from typing import Any, Collection, Iterable, Mapping, Optional
 
 # ── recipe steps ─────────────────────────────────────────────────────────────
 #: What a recipe step declares. The single step vocabulary — there is no parallel `kind`.
@@ -106,6 +106,17 @@ TOPOLOGIES = (
     "surface",            # a 2-manifold (likewise)
 )
 
+#: The four scShapeBench classes, spelled as `TOPOLOGIES` names and in `TOPOLOGIES` order. Not a
+#: map: it fixes the key order of the benchmark scorers (`score.soft_truth`, `score.class_auprc`).
+#: A test pins its set to the range of `SCSHAPEBENCH_TOPOLOGY`, so the two cannot drift.
+BENCHMARK_CLASSES = ("clusters", "single-trajectory", "multi-branching", "archetypal")
+
+#: The vocabulary version. `decisions.append` hashes it into every row's `legal_id`, so bump it
+#: by hand whenever `TOPOLOGIES` or any table that defines legality changes: two task spaces
+#: must not share an id. A test pins it to `TOPOLOGIES`. Not derived from a hash of the tables,
+#: because then a reorder would move every `legal_id` with no reason in any diff.
+VERSION = "1"
+
 
 def check_topology(values: Any) -> list[str]:
     """Problems with a dataset's `topology` field; empty means valid (or absent).
@@ -122,6 +133,61 @@ def check_topology(values: Any) -> list[str]:
         return ["topology is an empty list — omit the field instead of declaring nothing"]
     unknown = [v for v in values if v not in TOPOLOGIES]
     return [f"unknown topology {unknown} — must be from {TOPOLOGIES}"] if unknown else []
+
+
+#: scShapeBench's label columns to the canonical topology. The benchmark has four classes;
+#: `cycle` and `surface` are not among them.
+SCSHAPEBENCH_TOPOLOGY: dict[str, str] = {
+    "multi_branch": "multi-branching",
+    "simple_traj": "single-trajectory",
+    "archetypal": "archetypal",
+    "clusters": "clusters",
+}
+
+#: The harness labeler's words (`harness/labeler.py`) to the canonical topology. `other` claims
+#: no topology, so it maps to `None`. The labeler's `VALID_LABELS` is derived from these keys.
+LABELER_TOPOLOGY: dict[str, Optional[str]] = {
+    "cluster": "clusters",
+    "trajectory": "single-trajectory",
+    "cycle": "cycle",
+    "surface": "surface",
+    "other": None,
+}
+
+
+def scshapebench_to_topology(label: str) -> str:
+    """The canonical topology of one scShapeBench label column. `ValueError` for any other."""
+    try:
+        return SCSHAPEBENCH_TOPOLOGY[label]
+    except (KeyError, TypeError):
+        raise ValueError(f"unknown scShapeBench label {label!r} — must be one of "
+                         f"{sorted(SCSHAPEBENCH_TOPOLOGY)}") from None
+
+
+def labeler_to_topology(label: str) -> Optional[str]:
+    """The canonical topology of one harness labeler label; `None` for `other`.
+
+    A canonical name is refused: `clusters` is not a labeler word, and accepting both forms
+    would make two spellings of one label."""
+    try:
+        return LABELER_TOPOLOGY[label]
+    except (KeyError, TypeError):
+        raise ValueError(f"unknown labeler label {label!r} — must be one of "
+                         f"{sorted(LABELER_TOPOLOGY)}") from None
+
+
+def collapse_for_benchmark(name: str) -> str:
+    """A canonical topology folded onto scShapeBench's four classes. FOR THE BENCHMARK SCORER ONLY.
+
+    `cycle` becomes `single-trajectory` and `surface` becomes `archetypal`: the benchmark's own
+    scoring rules. The ladder disagrees on purpose. `score.RUNG` puts `surface` at rung 0,
+    because a smooth 2-manifold with no further structure is honestly "just embed". If
+    `score.truth_rung` collapsed first, `surface` would move to rung 4 and the over-claim
+    penalty would reward an archetype analysis on a surface. So `truth_rung` must not call this.
+    """
+    if name not in TOPOLOGIES:
+        raise ValueError(f"unknown topology {name!r} — must be from {TOPOLOGIES}")
+    return {"cycle": "single-trajectory", "surface": "archetypal"}.get(name, name)
 
 
 def check_provides(values: Any) -> list[str]:
@@ -335,9 +401,9 @@ def discretize_pseudotime(pt: Any, n_timepoints: int) -> Any:
     """Bin a normalized, finite `[0, 1]` pseudotime into `n_timepoints` equal-width integer
     groups — MIOFlow trains on discrete timepoints, never a continuous ordering.
 
-    ONE home so MIOFlow's own no-real-time fallback (`mioflow._run_mioflow_experiment`) and an
-    explicit `discretize_time` recipe step (binning an upstream ordering, e.g. `dpt`) cannot
-    compute two different binnings of the same kind of value. `pt` must already be finite and
+    ONE home for the binning rule, used by the `discretize_time` recipe step (binning an
+    upstream ordering, e.g. `dpt`), so a second binning of the same kind of value cannot appear
+    beside it. MIOFlow no longer bins a pseudotime of its own: a recipe declares its time axis. `pt` must already be finite and
     scaled to `[0, 1]`; NaN/unreachable-cell handling is the caller's policy, not this
     function's — a bin boundary has nothing to say about a cell with no position at all."""
     import numpy as np
@@ -350,9 +416,9 @@ def discretize_pseudotime(pt: Any, n_timepoints: int) -> Any:
 # ── the precondition calculus ────────────────────────────────────────────────
 #
 # Which steps can legally run on which data, IN WHICH ORDER. Small on purpose: these are
-# DERIVED from what the steps actually do, not copied from the learner's `PRECONDITIONS`, which
-# would over-prune us — their `mioflow` requires a `time` coord, ours computes a diffusion
-# pseudotime when there is no time axis, so the cell is legal here and illegal there.
+# DERIVED from what the steps actually do, not copied from any caller's own precondition table.
+# `mioflow` needs a `time` axis: real time labels from the data, or a `discretize_time` step that
+# bins an ordering the recipe computed. It never invents one.
 #
 # This is the legal-move function. `plan()` uses it to prune cells that cannot produce a
 # result, and it is the same mask a search over recipe space would need: legality has to be
@@ -394,6 +460,12 @@ SHAPE_PROVIDES: dict[str, tuple[str, ...]] = {
 #: one group, so declaring it would be true of one and a lie about the other — and no step
 #: needs the fact anyway. A group lands here only when both engines agree, because `unmet`
 #: takes no engine argument and its answer has to hold for every engine.
+#:
+#: ONE EXCEPTION, by name: a GRAPH-VALUED step (one whose `STEP_PRODUCES` entry contains
+#: `graph`, today `reeb_graph`) is a `latent` step that does NOT replace `state["emb"]` —
+#: `runner._ml_latent` keeps the coordinates and puts the graph beside them. So
+#: `step_provides` gives such a step only its `STEP_PRODUCES` facts and not this group's
+#: `embedding`; otherwise `[reeb_graph, dpt]` would be legal here and skip at run time.
 GROUP_PROVIDES: dict[str, tuple[str, ...]] = {
     "latent": ("embedding",),
 }
@@ -431,13 +503,16 @@ STEP_PRODUCES: dict[str, tuple[str, ...]] = {
     # `mock`. That is exactly the test which keeps `lightning` out of `GROUP_PROVIDES` for
     # `embedding` (see the note there), applied to a second fact.
     #
+    # `trajectories` too: the in-process route writes `state["trajectories"]` from the trained
+    # model, the slot `sample_trajectories` reads (`probes.PROBE_READS`).
+    #
     # Keying by name does not make the remaining lie disappear, only smaller: `mioflow` on
     # `_inproc` is the stand-in, so a recipe reading `[mioflow, sample_trajectories]` is legal
     # here and declines at run time. `unmet` takes no engine argument BY DESIGN — its answer has
     # to hold for every engine — so "this engine trains nothing" is a run-time fact, reported by
     # `runner._run_probe_step` as a declined step with a reason, and pruned from the menu ahead
     # of time by `runner.dispatchable`, which is the mechanism that DOES know the engine.
-    "mioflow": ("model",),
+    "mioflow": ("model", "trajectories"),
     # BY NAME, exactly as `mioflow` and `leiden` are: a velocity field is true of THIS
     # algorithm, not of its group. `pyrovelocity` is a `lightning` step — it fits a
     # probabilistic model by SVI — but the model stays in the TOOL's interpreter and only the
@@ -445,14 +520,35 @@ STEP_PRODUCES: dict[str, tuple[str, ...]] = {
     # must describe what manyruns actually holds, and a `probe` placed after it would find
     # nothing to ask.
     "pyrovelocity": ("velocity",),
+    # BY NAME, for the reason `leiden` is: of the engine's latent algorithms exactly one builds a
+    # Reeb graph, so keying `graph` by group would say every PCA produces one. A graph-valued
+    # step keeps the embedding (see the exception noted above `GROUP_PROVIDES`), and its
+    # membership matrix goes to the artifact channel, not to `state["emb"]`.
+    "reeb_graph": ("graph",),
+    # BY NAME: `discretize_time` writes the run's time channel (`state["labels"]` with
+    # `label_kind = "time"`) from an upstream ordering, so it is the declared way to give
+    # `mioflow` a time axis on data that has none. `time` is also a frame fact (a `time-course`
+    # dataset carries it); `step_facts` leaves frame facts out, so a narrowing keeps it.
+    "discretize_time": ("time",),
 }
+
+#: The facts a TOOL step can return across the process boundary — the model seam's six
+#: (`pipeline/external.py`, `SEAM_FACTS`) and `velocity`, which keeps its `.h5ad` path. A tool
+#: step's needs and produces come from its manifest, not from the name tables above, so these
+#: are named here: `facts()` and `step_facts()` include them, and `narrate` phrases each one.
+#: `pseudotime`, `trajectories` and `class_probabilities` have no other producer in the tables.
+TOOL_OUTPUT_FACTS = ("embedding", "clusters", "pseudotime", "trajectories", "graph",
+                     "class_probabilities", "velocity")
 
 #: What a step needs BEFORE it can run — satisfiable from EITHER source above. One needs
 #: table; which source supplies a fact is `unmet`'s business, not a second table's.
 #: Deliberately not "everything a step wants":
-#:   - `mioflow` declares `embedding` but NOT `time`: it prefers a real time axis and falls
-#:     back to a diffusion pseudotime when there is none, so `time` is a preference. The
-#:     embedding is not. Measured before this entry existed, on `{steps: [mioflow, phate]}`:
+#:   - `mioflow` declares `embedding` AND `time`. It once treated `time` as a preference and,
+#:     with no time axis, trained on a diffusion pseudotime binned into five time points that
+#:     no recipe step declared — a trajectory on an axis nobody claimed. Now the time axis is
+#:     real data (`time-course`) or a declared `discretize_time` step (`STEP_PRODUCES`), and
+#:     `pipeline/mioflow.py` refuses a run with no time labels. The embedding need is older.
+#:     Measured before it existed, on `{steps: [mioflow, phate]}`:
 #:     `unmet` returned `frozenset()` — LEGAL — on ALL SIX shapes, because it unioned
 #:     `STEP_NEEDS` over the steps and so could not see position. Commit
 #:     df478cc's engine-side `_require_embedding` was then the only thing standing between
@@ -468,7 +564,7 @@ STEP_PRODUCES: dict[str, tuple[str, ...]] = {
 #:     which for three of them is a partition and for two is coordinates. What they do NOT
 #:     declare is the gene axis, and that omission is deliberate — see the note below.
 STEP_NEEDS: dict[str, tuple[str, ...]] = {
-    "mioflow": ("embedding",),
+    "mioflow": ("embedding", "time"),
     "separation": ("conditions",),
     "composition": ("conditions",),
     # The gene axis, declarable at last — see the note below this table for why it could not
@@ -486,10 +582,12 @@ STEP_NEEDS: dict[str, tuple[str, ...]] = {
     # it, never before.
     "filter_mito": ("genes",),
     "filter_genes": ("genes",),
-    # A question put to a trained flow. Declaring the need is what refuses a probe placed before
-    # any fit, and — because `model` is step-produced and so absent from `frame_facts` — what
-    # refuses one placed after a filter that dropped the cells the flow was fitted over.
-    "sample_trajectories": ("model",),
+    # A question put to the paths a trained flow returned (`state["trajectories"]`, which the
+    # in-process route and a tool step both fill). Declaring the need is what refuses a probe
+    # placed before any fit, and — because `trajectories` is step-produced and so absent from
+    # `frame_facts` — what refuses one placed after a filter that dropped the cells the flow was
+    # fitted over.
+    "sample_trajectories": ("trajectories",),
     # DECLARED-BUT-UNIMPLEMENTED (`pipeline/stubs.py`). Their needs are declared for the same
     # reason a real step's are: the ORDER is testable before the maths exists, so a recipe that
     # puts `granger` before the thing that produces its trajectory is refused at plan time today
@@ -535,6 +633,8 @@ STEP_NEEDS: dict[str, tuple[str, ...]] = {
     # the calculus does not model order, so it cannot say "needs dpt specifically" — the
     # runtime guard (no `state['pseudotime']` -> skip) is what actually enforces the sequence.
     "discretize_time": ("embedding",),
+    # Reads the Reeb summary; refused at plan time before any step builds a graph.
+    "branch_points": ("graph",),
 }
 
 # ── how `genes` came to be declarable, and what the declaration costs ────────────────────
@@ -603,15 +703,15 @@ def facts() -> frozenset:
     the phrase table is checked against nothing. Same relationship `watch.OUTCOMES` has to
     `narrate._OUTCOME_MARKS`.
 
-    Measured today: `{"clusters", "conditions", "embedding", "genes", "model", "time"}`. Note
-    that these are not all reachable through :func:`unmet` — that returns only facts some step
-    NEEDS, which is `{"clusters", "conditions", "embedding", "genes", "model"}`; `time` is
-    provided by `time-course` data and required by nothing, because `mioflow` treats a real
-    clock as a preference and falls back to a diffusion pseudotime (see `STEP_NEEDS`). Both
-    halves are here because this answers "what words does the calculus use", not "what can
+    `TOOL_OUTPUT_FACTS` is the fifth source: a tool step's facts come from its manifest, so the
+    facts a model can return are named there rather than in a name table.
+
+    Measured before the seam: `{"clusters", "conditions", "embedding", "genes", "model", "time"}`.
+    `time` is provided by `time-course` data and by a `discretize_time` step, and `mioflow`
+    needs it (see `STEP_NEEDS`). This answers "what words does the calculus use", not "what can
     currently be missing".
     """
-    out: set = set()
+    out: set = set(TOOL_OUTPUT_FACTS)
     for table in (SHAPE_PROVIDES, GROUP_PROVIDES, STEP_PRODUCES, STEP_NEEDS):
         for values in table.values():
             out.update(values)
@@ -670,15 +770,57 @@ def dataset_provides(shape: str, handle: "dict | None" = None) -> frozenset:
     return frozenset(facts)
 
 
+def _tool_facts(step: dict) -> "tuple[frozenset, frozenset] | None":
+    """`(needs, produces)` from the manifest of a step that names a tool, else None.
+
+    `toolchain` is imported HERE, never at module scope: importing `vocab` must not pull
+    anything beyond the standard library. A tool whose manifest cannot be loaded falls back to
+    the name tables, as before the seam; the runner refuses that step at run time with the fix.
+    """
+    tool = step.get("tool")
+    if not tool:
+        return None
+    from manyruns import toolchain
+
+    try:
+        return toolchain.manifest_facts(str(tool))
+    except (ValueError, FileNotFoundError):
+        return None
+
+
+def step_needs(step: dict) -> frozenset:
+    """The facts this step needs before it can run.
+
+    For a step with `tool:`, the MANIFEST's `needs`: the declaration the runner enforces is the
+    declaration legality reads. Otherwise `STEP_NEEDS`, keyed by name. `_walk`, `recipe_needs`
+    and `noncanonical` all call this, so the three readers cannot disagree."""
+    facts = _tool_facts(step)
+    if facts is not None:
+        return facts[0]
+    return frozenset(STEP_NEEDS.get(step.get("name"), ()))
+
+
 def step_provides(step: dict) -> frozenset:
     """The facts running this step makes available to the steps after it.
+
+    For a step with `tool:`, exactly the MANIFEST's `produces`; `GROUP_PROVIDES` and
+    `STEP_PRODUCES` add nothing. A MIOFlow tool step returns `trajectories` and keeps its
+    model in the tool's interpreter, so the name table's `model` would be a false claim.
 
     The union of what its GROUP provides (true of every executor in that group) and what its
     NAME provides (true of that algorithm only) — see `STEP_PRODUCES` for why one fact is
     keyed each way. A name absent from `STEP_PRODUCES` contributes nothing, so every recipe
-    that was legal before that table existed is legal now."""
-    return (frozenset(GROUP_PROVIDES.get(step.get("group"), ()))
-            | frozenset(STEP_PRODUCES.get(step.get("name"), ())))
+    that was legal before that table existed is legal now.
+
+    A graph-valued step (its `STEP_PRODUCES` entry contains `graph`) provides only that entry:
+    it does not replace `state["emb"]`, so the `latent` group's `embedding` is not true of it."""
+    facts = _tool_facts(step)
+    if facts is not None:
+        return facts[1]
+    produced = frozenset(STEP_PRODUCES.get(step.get("name"), ()))
+    if "graph" in produced:
+        return produced
+    return frozenset(GROUP_PROVIDES.get(step.get("group"), ())) | produced
 
 
 def recipe_needs(recipe: dict) -> frozenset:
@@ -694,7 +836,7 @@ def recipe_needs(recipe: dict) -> frozenset:
     """
     needs: set = set()
     for step in recipe.get("steps") or []:
-        needs.update(STEP_NEEDS.get(step.get("name"), ()))
+        needs.update(step_needs(step))
     return frozenset(needs)
 
 
@@ -834,13 +976,18 @@ def step_facts() -> frozenset:
     `time` or `conditions` would be a sentence no code path can reach, because a frame fact
     survives every narrowing by construction.
 
-    Measured today: `{"clusters", "embedding", "model"}`.
+    Measured today: the producer tables plus `TOOL_OUTPUT_FACTS` — every fact a model can
+    return through the seam is fitted over the cells the run held, so a narrowing clears it.
+
+    MINUS the frame facts. `discretize_time` produces `time`, which a `time-course` dataset also
+    carries. A time label is per cell, so the survivors of a narrowing keep theirs: the frame
+    rule (survive) is the one that holds, and `time` stays out of this set.
     """
-    out: set = set()
+    out: set = set(TOOL_OUTPUT_FACTS)
     for table in (GROUP_PROVIDES, STEP_PRODUCES):
         for values in table.values():
             out.update(values)
-    return frozenset(out)
+    return frozenset(out) - frame_facts()
 
 
 #: The in-process step loop's name in the engine-keyed tables (`runner._DISPATCH`,
@@ -969,7 +1116,7 @@ def noncanonical(recipe: dict, shape: str = "unknown",
     notes: list = []
     for step in recipe.get("steps") or []:
         name = step.get("name")
-        for fact in STEP_NEEDS.get(name, ()):
+        for fact in step_needs(step):
             source = have.get(fact)
             canonical = CANONICAL_PROVIDER.get(fact)
             if source is None or canonical is None or source == canonical:
@@ -1096,7 +1243,7 @@ def _walk(recipe: dict, shape: str,
     cleared: set = set()
     lost: set = set()      # facts a narrowing has already taken away, for the reason half
     for step in recipe.get("steps") or []:
-        for fact in STEP_NEEDS.get(step.get("name"), ()):
+        for fact in step_needs(step):
             if fact in have:
                 continue
             missing.add(fact)
@@ -1120,3 +1267,95 @@ def _walk(recipe: dict, shape: str,
             have &= keep
         have |= step_provides(step)
     return frozenset(missing), frozenset(cleared)
+
+
+# ── the rung-support gate ────────────────────────────────────────────────────
+# `unmet` is the STRUCTURAL half of the shield: it refuses a recipe whose steps need a fact the
+# data does not carry, and it never reads a measurement. This block is the EVIDENCE half: it
+# refuses a recipe whose `claims` the measured g-vector does not support. Pure, like `unmet`,
+# and it imports nothing — an unavailable measurement is recognised by its class NAME, so this
+# module stays free of the compute stack.
+
+#: The 1-D band of the local intrinsic dimension that supports a `single-trajectory` claim.
+#: PLACEHOLDER: a declared starting value, not a measurement. The user sets the final value
+#: after the calibration runs (probe recipe on the bundled 1-D and 2-D datasets). Until then the
+#: recipe README marks it as not calibrated.
+LID_1D_BAND: tuple[float, float] = (0.5, 1.5)
+
+#: Readouts that no registry audit covers and that a maintainer admits by hand. Empty: the Reeb
+#: summary's `n_branch_points` is not admitted, so the multi-branching rule refuses until the
+#: user decides to admit it. Whether to admit it is a scientific choice.
+ADMITTED_READOUTS: frozenset[str] = frozenset()
+
+#: A recipe's `claims` -> (evidence key in the g-vector, admission name). A claim absent from
+#: this table has no rule and is never refused by the gate.
+RUNG_EVIDENCE: dict[str, tuple[str, str]] = {
+    "clusters": ("betti_0", "betti_0"),
+    "multi-branching": ("reeb_graph.structural_summary.n_branch_points", "n_branch_points"),
+    "single-trajectory": ("lid", "lid"),
+}
+
+#: The three refusal codes, in the order the rule check tests them.
+SUPPORT_CODES: tuple[str, str, str] = ("not_admitted", "not_measured", "fails_rule")
+
+#: The closed set of refusal reasons: three evidence keys times three codes. A reason never
+#: holds a measured value, a threshold or a note, because reasons reach the ledger's `blocked`
+#: list, decision rows and the action document, which a caller that must not see the geometry
+#: reads.
+SUPPORT_REASONS: frozenset[str] = frozenset(
+    f"{key}:{code}" for key, _ in RUNG_EVIDENCE.values() for code in SUPPORT_CODES)
+
+
+def _support_rule(claim: str, v: float) -> bool:
+    if claim == "clusters":
+        return v > 1
+    if claim == "multi-branching":
+        return v >= 1
+    if claim == "single-trajectory":
+        return LID_1D_BAND[0] <= v <= LID_1D_BAND[1]
+    return True
+
+
+def _measured_number(v: Any) -> Optional[float]:
+    """`v` as a finite float, or None when it is unavailable. Never reads absence as 0."""
+    if v is None or isinstance(v, bool):
+        return None
+    if any(c.__name__ == "MeasurementUnavailable" for c in type(v).__mro__):
+        return None
+    if isinstance(v, Mapping):
+        return None  # includes `MeasurementUnavailable(...).to_dict()`
+    if isinstance(v, (int, float)):
+        out = float(v)
+    elif getattr(v, "shape", None) == () and getattr(getattr(v, "dtype", None), "kind", "") in (
+            "i", "u", "f"):
+        out = float(v)
+    else:
+        return None
+    return out if out == out and out not in (float("inf"), float("-inf")) else None
+
+
+def rung_support(recipe: dict, evidence: Mapping[str, Any],
+                 admitted: Collection[str]) -> frozenset[str]:
+    """Why the evidence does not support this recipe's claim. Empty = supported.
+
+    A recipe whose `claims` has no rule in `RUNG_EVIDENCE` is never refused. Otherwise at most
+    one reason `f"{key}:{code}"`, the first that holds of: the admission name is not in
+    `admitted` (`not_admitted`); the value is missing, None, a `MeasurementUnavailable`, its
+    `to_dict()` form, a bool, not a number, or not finite (`not_measured`); the value fails the
+    rule (`fails_rule`). An unavailable value always refuses; it is never read as 0 or a pass.
+
+    A caller that builds `admitted` from the admission audit uses the audit's own gate,
+    `admit.Verdict.ok`. This function reads no verdict strings and does no I/O.
+    """
+    claim = recipe.get("claims")
+    if not isinstance(claim, str) or claim not in RUNG_EVIDENCE:
+        return frozenset()
+    key, admission = RUNG_EVIDENCE[claim]
+    if admission not in admitted:
+        return frozenset({f"{key}:not_admitted"})
+    v = _measured_number(evidence.get(key))
+    if v is None:
+        return frozenset({f"{key}:not_measured"})
+    if not _support_rule(claim, v):
+        return frozenset({f"{key}:fails_rule"})
+    return frozenset()

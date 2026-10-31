@@ -12,7 +12,7 @@ import re
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, NamedTuple, Optional
+from typing import Any, Collection, Iterable, Mapping, NamedTuple, Optional
 
 # words that mean "a process over time" — a trajectory only makes sense with a time axis.
 _TRAJECTORY_WORDS = (
@@ -135,6 +135,19 @@ def declared_facts(ds: "dict | None") -> frozenset:
     ds = ds or {}
     shape = str(ds.get("shape") or "unknown")
     return dataset_provides(shape, ds.get("handle")) - dataset_provides(shape)
+
+
+def declared_observation(ds: dict, name: str) -> Observation:
+    """A dataset DECLARATION → the Observation it states, with no file opened.
+
+    THE ONE CONSTRUCTION of a declared Observation: `tui.state.catalog_entry`,
+    `shell._resolve_dataset` and `manyruns actions` all call it, so no two surfaces disagree
+    about `declared`. Shape and modality come from the YAML, `declared` from `declared_facts`,
+    sorted so that two builds of one declaration are equal. Everything about the bytes stays
+    None: this is what is known before anything is read.
+    """
+    return Observation(shape=ds.get("shape", "unknown"), modality=ds.get("modality", "unknown"),
+                       source=name, declared=tuple(sorted(declared_facts(ds))))
 
 
 def read_data(data_path: Optional[Path], modality: str, *, source: Optional[str] = None) -> Observation:
@@ -303,7 +316,9 @@ def _short_cite(cite: str) -> str:
     return f"{lead} {years[-1]}" if years else lead
 
 
-def offer(obs: Observation, available: "list | None" = None) -> list[dict]:
+def offer(obs: Observation, available: "list | None" = None, *,
+          evidence: "Mapping[str, Any] | None" = None,
+          admitted: "Collection[str]" = ()) -> list[dict]:
     """The question menu — derived from the CATALOG, not from a table in this file.
 
     Each recipe declares what it answers (`question:`) and the shapes it suits (`suits:`), so
@@ -339,8 +354,14 @@ def offer(obs: Observation, available: "list | None" = None) -> list[dict]:
     mioflow] suits: [manifold]` sorted FIRST and starred here while `tui.state.ledger` drew it
     as a hollow row. Through `blocked` rather than `unmet` directly, so both surfaces ask the
     one question in the one way.
+
+    **With `evidence`, a claim the measured geometry does not support is not RECOMMENDED.**
+    `vocab.rung_support` decides it. `evidence=None` (the default) does not consult the gate,
+    and the menu is exactly what it was. `tui.state.ledger` passes the same two arguments, so
+    a row the ledger refuses is never starred here.
     """
     from manyruns.catalog import discover_recipes, load_recipe
+    from manyruns.vocab import rung_support
 
     names = list(available) if available is not None else discover_recipes()
     out: list[dict] = []
@@ -374,7 +395,9 @@ def offer(obs: Observation, available: "list | None" = None) -> list[dict]:
                     "glyph": ASSUMPTION_GLYPH.get(claims) if claims else None,
                     "cite": _short_cite((recipe.get("source") or {}).get("cite") or ""),
                     "recommended": (obs.shape in suits and not unavailable(recipe)
-                                    and not blocked(recipe, obs.shape))})
+                                    and not blocked(recipe, obs.shape)
+                                    and not (evidence is not None
+                                             and rung_support(recipe, evidence, admitted)))})
     # recommended first, then alphabetical — a stable order, so the menu does not reshuffle
     # between runs on the same data.
     out.sort(key=lambda o: (not o["recommended"], o["recipe"]))
@@ -397,12 +420,9 @@ def offer(obs: Observation, available: "list | None" = None) -> list[dict]:
 #: have worked too, and the deciding argument is the rule the TUI is built under: no screen may
 #: compute a fact `narrate` does not expose. The screens need this sentence, so it is here.
 #:
-#: `time` is in the table and is currently UNREACHABLE through `unmet` — measured across all 8
-#: bundled recipes × all 6 shapes, `unmet` returns only `conditions` (and only for `contrast`),
-#: because no step declares a `time` need. It is phrased anyway because it is one of `vocab`'s
-#: four fact words and the exhaustiveness check covers the vocabulary, not today's reachable
-#: subset. Stated rather than discovered later: a ledger row reading "needs timepoints" cannot
-#: appear until some step declares `time` in `vocab.STEP_NEEDS`.
+#: `time` is reachable through `unmet`: `mioflow` declares a `time` need, so `cflows`, `traced`
+#: and `sandbox` read "needs timepoints" on data with no time axis. A recipe can supply it with
+#: a `discretize_time` step (`examples/recipes/cflows_inferred.yaml`).
 MISSING_FACT: dict[str, str] = {
     "conditions": "needs a healthy/disease column",
     "time":       "needs timepoints",
@@ -426,6 +446,16 @@ MISSING_FACT: dict[str, str] = {
     # interpreter, which is why the sentence names where to look rather than an algorithm.
     "velocity":   "needs a velocity step first — nothing here computes a field "
                   "(`manyruns tools list`), or supply one with the data",
+    # STEP-produced, by `reeb_graph` only. The fix is to add that step before the readout.
+    "graph":      "needs a Reeb graph first — nothing here builds one over the coordinates",
+    # The three facts only a model step returns, through the model seam. The fix is a tool step
+    # whose manifest produces the fact, so the sentence points at `manyruns tools list`.
+    "pseudotime": "needs an ordering first — add a step that computes a pseudotime "
+                  "(dpt, or a model step from `manyruns tools list`)",
+    "trajectories": "needs trajectories first — add a step that returns them (mioflow, or "
+                    "a model step from `manyruns tools list`)",
+    "class_probabilities": "needs class probabilities first — add a model step that returns "
+                           "them (`manyruns tools list`)",
 }
 
 #: The SAME fact, when a narrowing took it away rather than nothing having produced it.
@@ -456,6 +486,15 @@ CLEARED_FACT: dict[str, str] = {
     # rather than a frame fact like the LAYERS it was computed from.
     "velocity":  "needs computing again — a filter after it dropped the cells the field was "
                  "fitted over",
+    "graph":     "needs the Reeb graph again — a filter after it dropped the cells its nodes "
+                 "were built from",
+    "pseudotime": "needs ordering again — a filter after it dropped cells the ordering was "
+                  "computed over; move the filter before it",
+    "trajectories": "needs trajectories again — a filter after them dropped the cells the "
+                    "flow was fitted over; move the filter before the model step",
+    "class_probabilities": "needs class probabilities again — a filter after them dropped "
+                           "cells they were computed from; move the filter before the model "
+                           "step",
 }
 
 
@@ -507,16 +546,25 @@ def unavailable(recipe: dict) -> list[str]:
     written, and the ledger offered the recipe anyway: on `swissroll` it was the FIRST analysis
     the front door suggested, and taking it ran `pca`, failed `aa`, and returned a g-vector with
     no archetypes in it. The recipe still ships, because its steps are right and the fix is one
-    line in someone else's repo — it just stops being offered as though it worked.
+    line in someone else's repo — it just stops being offered as though it worked. (manylatents
+    0.1.9 fixed `aa`, and `archetypes.yaml` no longer declares `blocked:`; the field stays for
+    the next recipe whose steps break upstream.)
 
     The reason is the recipe's own `blocked:` field, so the file that documents the breakage is
     the file that declares it. A `blocked:` with no reason is not a block: an unexplained
     hollow row is the interface defect §0 of the TUI spec names.
+
+    COMMERCIAL MODE ADDS ONE REASON. With the commercial flag on, a recipe with a non-commercial
+    step cannot run in this process whatever the data, which is this function's question
+    exactly; `commercial.refusal` supplies the one sentence, after the recipe's own reasons.
     """
+    from manyruns import commercial
+
     reason = recipe.get("blocked")
     if isinstance(reason, str):
         reason = [reason]
-    return [str(r) for r in (reason or []) if str(r).strip()]
+    return ([str(r) for r in (reason or []) if str(r).strip()]
+            + commercial.refusal(recipe))
 
 
 def split_question(question: str) -> tuple[str, str]:
@@ -982,7 +1030,14 @@ def record_for_prompt(*, entry: "dict | None" = None, recipe: "dict | None" = No
         lines.append("caution:")
         lines += [f"  {c}" for c in warned]
 
-    return "\n".join(lines) + "\n"
+    text = "\n".join(lines) + "\n"
+    # `MANYRUNS_BLIND_DATASET`: the model reads a blinded name everywhere the entry's name
+    # occurs, the `dataset:` line included. Applied to the rendered text, so off is unchanged.
+    from manyruns import blind
+
+    if blind.enabled() and isinstance(e.get("name"), str) and e.get("name"):
+        text = blind.blind_text(text, [e["name"]])
+    return text
 
 
 def context_sha256(context: str) -> str:
@@ -1008,17 +1063,26 @@ def refusal(user_text: str, obs: Observation) -> Optional[str]:
     """If the user asks for a trajectory on data with no time axis, decline + reframe. Else None."""
     t = (user_text or "").lower()
     wants_trajectory = any(w in t for w in _TRAJECTORY_WORDS)
-    if wants_trajectory and obs.shape in ("case-control", "single", "unknown"):
+    # `clusters` is here for the same reason as the rest: cell TYPES captured at one moment
+    # (pbmc3k declares it) have no time axis, so a trajectory over them is invented.
+    if wants_trajectory and obs.shape in ("case-control", "clusters", "single", "unknown"):
         return (
             "There's no progression to show here — these cells were captured at one moment"
             + (", from different people" if obs.shape == "case-control" else "")
             + ". There's no clock in this data. I could force a trajectory, but it would draw a "
             "confident story of change that the data can't support — a line invented from noise. "
             "I'd rather not hand you that.\n  What I think you want: "
-            + ("how the groups differ from each other." if obs.shape == "case-control"
-               else "the structure of the data, mapped honestly.")
+            + _REFRAME.get(obs.shape, "the structure of the data, mapped honestly.")
         )
     return None
+
+
+#: What a refused trajectory request most likely meant, per shape. A shape absent here gets the
+#: structure-only reframe.
+_REFRAME = {
+    "case-control": "how the groups differ from each other.",
+    "clusters": "what cell types are here and how they separate.",
+}
 
 
 def interpret(user_text: str, obs: Observation) -> Optional[str]:

@@ -5,8 +5,7 @@ It owns the user-facing workflow, harness, config catalog, and run artifacts. Ke
 thin on compute: training loops, geometric metrics, and dimensionality-reduction
 algorithms belong in `manylatents`.
 
-`manyruns` and `co-science` are aliases for the same program, both invoking
-`manyruns.app:main`. Keep their behavior identical. The interaction loop is
+The command is `manyruns`, which invokes `manyruns.app:main`. The interaction loop is
 **observe → legal moves → step → record**; `Session.step` accepts a step name or a
 step dictionary, and `vocab.unmet` checks preconditions.
 
@@ -14,9 +13,11 @@ step dictionary, and `vocab.unmet` checks preconditions.
 
 manyruns names no learner: no dependency, import, engine value, config, or CLI path.
 A learner, or any agent, observes the artifacts (`index.jsonl`, g-vectors, decision
-rows) and drives the CLI from outside, like any user. There is no privileged caller.
-The environment defines what is legal and records what happened; the caller decides
-what to do. See [the environment contract](docs/environment-contract.md), §3.5.
+rows) and drives manyruns from outside, through the CLI or as a library, like any user.
+There is no privileged caller. The environment defines what is legal and records what
+happened; the caller decides what to do. See
+[the environment contract](docs/environment-contract.md), §3.5, and
+[the harness page](docs/harness.md).
 
 Use roles in prose. `tests/learners.py` holds only SHA-256 digests of forbidden
 strings; keep that guard. The public-safety gate checks every tracked file,
@@ -44,8 +45,10 @@ lineage, rewind, and branch tests use `pipeline.run_inproc` (`vocab.INPROC`). Th
 in-process loop is a test substrate, absent from product engine choices and serving
 backends. Mock output is not scientific evidence.
 
-Tools currently run as declared recipe steps. Add planning or action-enumeration
-interfaces only against a concrete caller's needs.
+Tools currently run as declared recipe steps. `manyruns actions` is the one
+action-enumeration interface: it is read-only, prints the legal action space as one JSON
+document, and any harness reads it like any other user. Add planning interfaces only
+against a concrete caller's needs.
 
 ## Config and record handling
 
@@ -70,12 +73,11 @@ passing the suffix after the prefix. User cache state lives in `~/.cache/manyrun
 
 ## Distribution
 
-The distribution name is `manyruns`; `co-science` is a console-script alias.
-Once published to PyPI:
+The distribution and command name is `manyruns`. Once published to PyPI:
 
 ```sh
 uv tool install --python 3.12 manyruns
-co-science
+manyruns
 ```
 
 The public Git install is also the runtime repair command:

@@ -281,10 +281,12 @@ async def test_the_mark_and_the_selectability_are_both_narrates_verdict():
     # `qc` and `markers` join the hollow rows. 4 -> 5 with `preprocess`, whose `filter_genes` and
     # `filter_mito` want the same axis. The count is spelled out rather than derived because the
     # point of the line is that the fixture CONTAINS refusals — a screen with none would satisfy
-    # the two assertions above vacuously.
-    assert rows.count(HOLLOW) == 5, ("measured on `single`: `contrast` wants a condition column, "
+    # the two assertions above vacuously. 5 -> 4 when manylatents 0.1.9 fixed `aa` and
+    # `archetypes` lost its `blocked:` field. 4 -> 6 when `mioflow` declared `time`: `cflows`
+    # and `traced` want a time axis, which `single` does not carry.
+    assert rows.count(HOLLOW) == 6, ("measured on `single`: `contrast` wants a condition column, "
                                      "`qc`, `markers` and `preprocess` want a gene axis, and "
-                                     "`archetypes` is blocked upstream")
+                                     "`cflows` and `traced` want a time axis")
 
 
 @astest
@@ -292,14 +294,13 @@ async def test_the_same_analysis_fills_in_once_the_data_carries_the_fact():
     """A `blocked` row is a statement about the DATA. Point the same screen at labelled data and
     the refusal becomes an offer, with the recipe's own gloss back in the second column.
 
-    AND THE OTHER KINDS DO NOT MOVE, which is why they are asserted here too. `archetypes` is
-    hollow for a reason no dataset can satisfy — `manylatents`' `aa` rejects the `method` kwarg —
-    and since the cutover (#54) `qc`, `markers` and `preprocess` are hollow for a DIFFERENT data
-    fact (`genes`, which `qc`, `rank_genes`, `filter_genes` and `filter_mito` declare in
-    `vocab.STEP_NEEDS`). A condition column is not a gene axis, so better data fills in exactly
-    the row that wanted what it added and leaves the other four where they were. A test that only
-    checked "nothing is disabled" would pass by erasing that distinction; with four unmoved rows
-    it now cannot.
+    AND THE OTHER ROWS DO NOT MOVE, which is why they are asserted here too. Since the cutover
+    (#54) `qc`, `markers` and `preprocess` are hollow for a DIFFERENT data fact (`genes`, which
+    `qc`, `rank_genes`, `filter_genes` and `filter_mito` declare in `vocab.STEP_NEEDS`). A
+    condition column is not a gene axis, so better data fills in exactly the row that wanted
+    what it added and leaves the other three where they were. A test that only checked "nothing
+    is disabled" would pass by erasing that distinction; with three unmoved rows it now cannot.
+    (`archetypes` was a fourth, blocked upstream, until manylatents 0.1.9 fixed `aa`.)
     """
     entry = _entry("case-control", name="labelled.h5ad", conditions=["healthy", "disease"])
     app = _Harness(LedgerScreen(entry))
@@ -308,11 +309,11 @@ async def test_the_same_analysis_fills_in_once_the_data_carries_the_fact():
         disabled = {o.id for o in _analysis_options(app) if o.disabled}
 
     assert "contrast" not in disabled, "the data now carries the fact it wanted"
-    # {"archetypes"} -> {"archetypes", "qc", "markers", "preprocess"}: the three new rows are
-    # refused for `genes`, which `case-control` does not supply and this hand-built row has no
-    # `n_vars` for.
-    assert disabled == {"archetypes", "qc", "markers", "preprocess"}, (
-        "the upstream block and the rows missing a different fact are all that is left")
+    # The three rows are refused for `genes`, which `case-control` does not supply and this
+    # hand-built row has no `n_vars` for; `cflows` and `traced` for `time`, which it does not
+    # supply either.
+    assert disabled == {"qc", "markers", "preprocess", "cflows", "traced"}, (
+        "the rows missing a different fact are all that is left")
     assert narrate.MISSING_FACT["conditions"] not in text
     # The pane names the METHOD now — the prose gloss it used to print is the thing this
     # redesign removed. `separation` is `contrast`'s, off its `id: sc.contrast.separation`.

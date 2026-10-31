@@ -1,9 +1,27 @@
 """The trace sink — one JSON line per event, and by default nowhere at all.
 
-An EVENT is a moment INSIDE a run that a later reader would want. Today there is exactly one
-kind, `ask`: the question a person typed at the controller and the answer a local model gave.
-The `index.jsonl` row is by contrast the run's RESULT, written once, after it is over — an
-event is written while the run is still going, and there can be many.
+An EVENT is a moment INSIDE a run that a later reader would want. The `index.jsonl` row is by
+contrast the run's RESULT, written once, after it is over — an event is written while the run is
+still going, and there can be many.
+
+**Every kind manyruns stamps, and the file that stamps it.** `tests/test_trace.py` scans the
+package for `stamp({"kind": ...})` literals and fails when one is missing from this table.
+
+  kind                    stamped in               where the line goes
+  ──────────────────────  ───────────────────────  ─────────────────────────────────────────
+  `ask`                   `manyruns/tui/run.py`    the trace sink
+  `step`                  `manyruns/session.py`    the trace sink
+  `run_complete`          `manyruns/session.py`    the trace sink
+  `decision`              `manyruns/decisions.py`  the trace sink
+  `proposer_assistant`,   `manyruns/agents.py`     the trace sink
+  `proposer_tool_call`,
+  `proposer_tool_result`,
+  `proposer_call`
+  `message`               `manyruns/agents.py`     `<run folder>/agent/messages.jsonl`, not
+                                                   the trace sink
+
+The three `proposer_` loop kinds are built at run time, as `"proposer_" + kind` from the agent
+loop's own event names, so the scan names them as constants.
 
 **Not `results["trace"]`.** That one is the step chain (`latent:phate → lightning:mioflow`), a
 field on a run row, and the collision of names is why this docstring opens with the distinction
@@ -26,10 +44,8 @@ one, used or not — a corpus that discovers later that some of its rows were a 
 were a driver cannot go back and label the ones already written.
 
 **What is deliberately absent, so that it is not added by accident**: a SQLite tracer,
-an index command, any reader over the sink, `span()`, and — the one worth stating loudest —
-any emit site at all.
-Nothing imports this module yet. The trace layer grows by adding EMITTERS; this file is finished
-when the wire format is.
+an index command, any reader over the sink, and `span()`. The trace layer grows by adding
+EMITTERS, each listed in the table above; this file is finished when the wire format is.
 """
 from __future__ import annotations
 

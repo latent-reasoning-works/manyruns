@@ -49,7 +49,8 @@ def _steps_with_an_executor() -> set[str]:
 #:   hvg    — a RESERVED slot in `NARROWING_STEPS`, deliberately unimplemented (spec §12,
 #:            manylatents#292). `preprocess.yaml` records that naming it in a recipe would make
 #:            the recipe illegal rather than incomplete.
-ENGINE_RESOLVED = frozenset({"leiden", "hvg"})
+#:   reeb_graph — a manylatents `latent` algorithm; `STEP_PRODUCES` keys `graph` by NAME.
+ENGINE_RESOLVED = frozenset({"leiden", "hvg", "reeb_graph"})
 
 
 def test_no_vocabulary_row_names_a_step_that_does_not_exist():

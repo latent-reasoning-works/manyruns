@@ -4,8 +4,9 @@ title:       The environment contract, and where the learner ends
 subtitle:    manyruns decides what is LEGAL and records what HAPPENED; the learner decides what is GOOD and learns from it. Most of that line is already drawn in the code and nowhere written down — so a decision row cannot say who chose it or under what constraint, and the first model tier to ship will make human and machine choices indistinguishable in the one file the moat is built on.
 author:      César M. Valdez
 date:        2026-08-19
-status:      Spec — NOTHING IMPLEMENTED. §2 is a three-field change to `decisions.append`;
-             §3 is a rule a reviewer can apply, not code. §3.5 was added 2026-08-19 and REVERSES
+status:      Spec — §2 IMPLEMENTED: `decisions.append` writes `chooser`, `bound` and `legal_id`.
+             NOT implemented: §6 item 2, a test that a dropped schema cannot be recorded as
+             `schema`. §3 is a rule a reviewer can apply, not code. §3.5 was added 2026-08-19 and REVERSES
              this document's own §5, which is struck in place rather than edited away.
 status_kind: open
 ---
@@ -168,9 +169,9 @@ that this boundary is right: it is the one the codebase keeps choosing on its ow
 protocol it implements, not an entry point, not a `Learner` interface, not an optional extra.
 manyruns does not know the learner exists.
 
-The learner **observes manyruns's full state and drives it through the CLI.** It runs the binary,
-reads the artifacts, and issues the next command. In RL terms manyruns is the environment and
-the learner is the agent — and an environment that imports its agent is not an environment.
+The learner **observes manyruns's full state and drives it through the CLI or as a library
+(`docs/harness.md`).** It runs the binary, reads the artifacts, and issues the next command. In
+RL terms manyruns is the environment and the learner is the agent — and an environment that imports its agent is not an environment.
 
 **This supersedes the "injectable harness" shape and this document's own §5.** An injection seam is
 still a track: it puts a learner-shaped hole in the open repository, versions an interface across
@@ -184,6 +185,10 @@ The interface is the one manyruns already has and already tests: **its CLI is th
 and its artifacts are the observation.** `outputs/<project>/` — `project.yaml`, `state/<run_id>/`,
 `plots/`, `index.jsonl`, `decisions.jsonl` — is the full state, on disk, in formats this repository
 documents. Nothing new has to be built for the learner to see everything.
+
+A caller reads the action space through `manyruns actions`: one JSON document of the legal moves
+for a dataset, the knobs of a recipe, or the rung tables. It is part of the CLI, it is read-only,
+and it does not know who calls it. It takes no argument that names a caller.
 
 **What this buys, and it is why the rule is absolute rather than a preference:**
 
@@ -304,3 +309,40 @@ with their data, and consent for that is not implied by installing the product.
    caller outside the learner's own workflow?
 4. **What is the minimum override rate for the corpus to be worth training on?** §4 says defaults
    dominate. Measure it on the rows that exist before building anything that consumes them.
+
+## 8 · The run folder and the join key
+
+`run_id` is the join key. It is minted once per lineage (`runner.identity`, twelve hex
+characters) and every record of that run carries it: the run row in `outputs/index.jsonl`, a
+decision row in `outputs/decisions.jsonl` that was written during the run, every trace event,
+and the run folder, whose name it is. A reader that holds one `run_id` finds every record of
+that run without knowing which surface wrote it.
+
+The run folder is `artifacts.root(out_dir, run_id)`, which is `<out_dir>/state/<run_id>/`. On
+product surfaces `out_dir` is `outputs/<slug>/`. Every file for one run goes under the run
+folder, in a named subfolder when a writer other than the runner owns it.
+
+| Path | Writer | Contents |
+|---|---|---|
+| `outputs/index.jsonl` | `store.append` | one run row per line; `run_id` is a core field |
+| `outputs/decisions.jsonl` | `decisions.append` | one decision row per line; `run_id` is `null` for a row written before its run opened |
+| `outputs/<slug>/state/<run_id>/NN-<step>_<slot>.npy` | `artifacts.save_array` | the arrays a step produced, `NN` its position in the lineage |
+| `outputs/<slug>/state/<run_id>/COMPLETE` | `runner.finish_carry` | the manifest; written once, when the lineage closes |
+| `outputs/<slug>/state/<run_id>/agent/messages.jsonl` | `agents.propose` | the proposer transcript, one stamped `message` line per loop message |
+| `outputs/<slug>/state/<run_id>/engine/<NN>-<step>/outputs.json` | manylatents `SaveOutputs` through `RunStepLogger` | the engine's own record of latent step `NN` |
+| `outputs/<slug>/state/<run_id>/engine/<NN>-<step>/outputs.done` | `RunStepLogger.write_completion_marker` | the ISO-8601 UTC time the engine record was written |
+| `<MANYRUNS_TRACE dir>/<run_id>.jsonl` | `trace.JsonlTracer` | the run's trace events, when `MANYRUNS_TRACE=jsonl://<dir>` is set |
+
+Three rules keep the join unambiguous.
+
+1. **`COMPLETE` means the lineage is finished, and nothing else writes it.** The engine marks
+   each of its step folders with `outputs.done`, never `COMPLETE`, because `SaveOutputs` marks
+   every latent step of a session that is still open. `artifacts.completed_runs` reads
+   `state/*/COMPLETE` one level down, so an `engine/` or `agent/` subfolder never makes a run
+   look complete.
+2. **`NN` is one index.** The engine folder `engine/03-phate/` belongs to the step that wrote
+   `03-phate_emb.npy`. The index reaches the engine through `ctx["step_index"]`, which
+   `apply_step` sets, so a branch or a re-run step cannot make the two disagree.
+3. **Every event says who acted.** Trace events and transcript lines carry `agent_id`: `human`
+   for a person, `llm:<model>` for a model chooser (§2.1). A `decision` event's `agent_id` is
+   its row's `chooser`; the decision row has no `agent_id` key.

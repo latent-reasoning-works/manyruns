@@ -163,10 +163,12 @@ def _diffusion_pseudotime(Z, n_neighbors: int, info: "dict | None" = None):
 
 
 def _step_mioflow(state, g, params, out_dir, plots, target_dim) -> None:
-    """Trajectory step — diffusion pseudotime (a real MIOFlow stand-in for the in-process loop).
+    """Trajectory step — diffusion pseudotime (a MIOFlow stand-in for the in-process loop).
 
     The manylatents engine runs the *actual* MIOFlow (see _run_mioflow_experiment); this
-    stand-in keeps the in-process loop dependency-light (no torch)."""
+    stand-in keeps the in-process loop dependency-light (no torch). It reads no time labels and
+    writes no trajectories, so a `sample_trajectories` probe after it is skipped. Legality is
+    the same on every engine: `vocab.STEP_NEEDS["mioflow"]` needs `time` here too."""
     _require_embedding(state, "mioflow")
     Z = state["emb"]
     n_neighbors = int(params.get("n_neighbors") or min(15, max(2, Z.shape[0] - 1)))
@@ -365,10 +367,11 @@ def _partition(state) -> tuple:
     TWO sources, in this order, and the order is the design:
 
     1. ``state["clusters"]`` — the slot canonical-recipes.md §5.1 argues for (*"leiden writes
-       state['clusters'] rather than overwriting state['emb'] — the cleaner fix"*). **Nothing
-       writes it today**: it is absent from `runner._STATE_KEYS`, and `runner._ml_latent`
-       assigns `state["emb"] = emb` for every latent step whatever that step computed. It is
-       read FIRST so that the day a producer lands, every readout here follows with no edit.
+       state['clusters'] rather than overwriting state['emb'] — the cleaner fix"*). The model
+       seam (`pipeline/external.py`) is its one producer: a model returns `clusters`, and the
+       seam writes this slot. `runner._ml_latent` still assigns `state["emb"] = emb` for every
+       latent step whatever that step computed. It is read FIRST so that every readout here
+       follows a model's partition with no edit.
     2. ``state["emb"]`` when it is a single column of integral values — what manylatents'
        leiden actually leaves behind. Measured in this checkout on two gaussian blobs at
        120×8, `api.run(algorithms={'latent': 'leiden'}, seed=0)`: `embeddings` is
@@ -678,10 +681,10 @@ def _step_discretize_time(state, g, params, out_dir, plots, target_dim) -> None:
     """Bin an upstream ordering (`state["pseudotime"]`, e.g. `dpt`'s output) into MIOFlow
     timepoints — MIOFlow trains on discrete timepoint GROUPS, not a continuous ordering.
 
-    Without this step, `mioflow` on `engine=manylatents` (`runner._ml_lightning`) never sees
-    `state["pseudotime"]` at all: it only reads `state["labels"]`, and when that is empty it
-    computes its OWN pseudotime from scratch and discards whatever ordering step the recipe
-    actually ran (`mioflow.py`'s no-real-time fallback). This step is what lets a recipe's own
+    `mioflow` on `engine=manylatents` (`runner._ml_lightning`) never reads
+    `state["pseudotime"]`: it reads `state["labels"]`, and refuses to run when that holds no
+    time axis (it never invents one). This step provides `time` (`vocab.STEP_PRODUCES`), and it
+    is what lets a recipe's own
     `dpt` — or any future ordering step — reach MIOFlow, by writing the binned result into the
     SAME `state["labels"]` / `state["label_kind"]` channel a real per-cell time axis uses
     (`runner.py`'s `label_kind == "time"` guard). The presence of `mioflow.n_timepoints`
@@ -751,15 +754,13 @@ def _step_simplex(state, g, params, out_dir, plots, target_dim) -> None:
     is what stops this from emitting an "archetype purity" for any 3-column PHATE embedding
     that happens to be sitting in `state["emb"]`.
 
-    **The producer does not run in this checkout, and that is measured, not assumed.**
-    `manylatents/algorithms/latent/aa.py` calls `archetypes.AA(method=…, method_kwargs=…)`;
-    the installed `archetypes` 0.6.2 takes neither — `AA.__init__` is
-    `(n_archetypes, n_init, max_iter, tol, algorithm_init, verbose, random_state)`. Calling it
-    directly with only its real arguments then raises
+    **The producer runs since manylatents 0.1.9 (the aa-fix release).** Before it, `aa` failed
+    twice upstream: `manylatents/algorithms/latent/aa.py` passed `method=…, method_kwargs=…`
+    that `archetypes.AA.__init__` no longer takes, and the estimator then raised
     `AttributeError: 'AA' object has no attribute '_validate_data'` against scikit-learn 1.9.
-    So `aa` is broken twice over, upstream of manyruns both times, and this readout has been
-    exercised on constructed weight matrices only — never end-to-end. §6 stage 0 ("fix
-    manylatents `aa` — upstream, not here") is still the blocker for rung 4.
+    0.1.9 fixes both, and `pyproject.toml` requires it, so this readout now runs end to end:
+    `tests/test_recipe_catalog.py::test_the_recipe_runs[archetypes]` asserts that
+    `simplex_purity` is a float on the real engine.
 
     **What is NOT computed: the t-ratio.** §5.4 names it, and it is the ratio of the fitted
     simplex's volume to the convex hull's. Both need the archetype POSITIONS in the ambient
@@ -981,6 +982,49 @@ def _step_velocity_field(state, g, params, out_dir, plots, target_dim) -> None:
     g["velocity_field.has_uncertainty"] = bool(unc)
 
 
+def _step_branch_points(state, g, params, out_dir, plots, target_dim) -> None:
+    """The branch points of a Reeb graph — `branches`' readout.
+
+    A Reeb step (`reeb_graph`, graph-valued) hands back a `structural_summary`, and
+    `runner._collect_extras` flattens its counts into the g-vector as
+    `<source>.structural_summary.<count>`. This copies the two counts the branching claim
+    reads to fixed keys, so a recipe's readout does not depend on the name of the step that
+    built the graph (`params.source`, default `reeb_graph`).
+
+    `n_branch_points` counts nodes of degree >= 3. A noisy graph can show a spurious one, so a
+    count is necessary evidence for branching, not a significance test.
+
+    An absent count is recorded as `None` with a note, never as `0`: "no summary" and "a graph
+    with no branch point" are different findings.
+
+    A MODEL's graph counts too. When the source holds no count and a model returned a `graph`
+    through the model seam (`state["graph"]`), the counts come from its `edges` over its
+    `node_ids`, with the degree rule of manylatents `reeb_graph.py`'s `structural_summary`.
+    Without this, `branch_points` would be legal after a model step and decline at run time."""
+    source = str(_param(params, "source", "reeb_graph"))
+    graph = state.get("graph")
+    if g.get(f"{source}.structural_summary.n_branch_points") is None and graph is not None:
+        import numpy as np
+
+        nodes = np.asarray(graph["node_ids"]).ravel()
+        edges = np.asarray(graph["edges"]).reshape(-1, 2)
+        degree = {int(n): 0 for n in nodes}
+        for a, b in edges.tolist():
+            degree[int(a)] = degree.get(int(a), 0) + 1
+            degree[int(b)] = degree.get(int(b), 0) + 1
+        g["branch_points.n_branch_points"] = sum(1 for d in degree.values() if d >= 3)
+        g["branch_points.n_endpoints"] = sum(1 for d in degree.values() if d == 1)
+        return
+    for count in ("n_branch_points", "n_endpoints"):
+        key = f"{source}.structural_summary.{count}"
+        value = g.get(key)
+        g[f"branch_points.{count}"] = value
+        if value is None and count == "n_branch_points":
+            g["branch_points.n_branch_points_note"] = (
+                f"MeasurementUnavailable: no `{key}` in this run — a Reeb graph step must run "
+                "before this readout")
+
+
 def _dense_like(m):
     """A 2-D array from a possibly-sparse matrix, without importing scipy to ask."""
     return m.toarray() if hasattr(m, "toarray") else m
@@ -999,6 +1043,8 @@ _ANALYSIS_STEPS = {
     # DATA — a supplied array — not a fitted object: there is nothing here to ask a question of,
     # only a field to describe.
     "velocity_field": _step_velocity_field,
+    # READS the graph a `reeb_graph` step summarised; needs the `graph` fact.
+    "branch_points": _step_branch_points,
 }
 
 # The in-process loop's local stand-in for the engine's algorithm catalogue: latent/lightning steps

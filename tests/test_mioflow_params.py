@@ -43,10 +43,16 @@ from manyruns.pipeline import runner as _runner
 np = pytest.importorskip("numpy")
 
 
+def _time(n):
+    """Three real time points over n cells. `mioflow` needs a time axis; it never invents one."""
+    return np.repeat([0.0, 1.0, 2.0], -(-n // 3))[:n]
+
+
 def _state(n=30, d=3):
-    """A state as a lightning step finds one: an embedding, no real time axis."""
+    """A state as a lightning step finds one: an embedding and a real time axis."""
     X = np.asarray(np.random.default_rng(0).normal(size=(n, d)), dtype=np.float32)
-    state = _runner._new_state(X=X, seed=0)
+    state = _runner._new_state(X=X, seed=0, labels=_time(n))
+    state["label_kind"] = "time"
     state["emb"] = X.copy()
     return state
 
@@ -75,8 +81,8 @@ def test_a_declared_mioflow_param_reaches_the_engine(tmp_path):
     # call on a 30-row array trained happily before, because the param never arrived.
     _, _, _, model = mioflow._run_mioflow_experiment(
         _state(n=80)["emb"], seed=0, fast_dev_run=True,
-        params={"n_bins": 7, "n_trajectories": 25, "lambda_density": 0.5, "hidden_dim": 8,
-                "n_timepoints": 3})
+        params={"n_bins": 7, "n_trajectories": 25, "lambda_density": 0.5, "hidden_dim": 8},
+        labels=_time(80))
 
     assert model.n_bins == 7
     assert model.n_trajectories == 25
@@ -195,13 +201,11 @@ def test_the_param_namespaces_are_disjoint_and_the_signature_is_closed():
 
     algo = set(inspect.signature(MIOFlow.__init__).parameters) - {"self"}
     net = set(inspect.signature(MIOFlowODEFunc.__init__).parameters) - {"self"}
-    local = set(mioflow._TIME_PARAMS)
 
     assert algo & net == {"init_seed"}, (
         "only the run-owned weight-initialization seed may name both constructors; "
         "a param the recipe means for one constructor would reach two")
     assert "init_seed" in mioflow._RESERVED, "the shared seed must come from the recorded run"
-    assert algo & local == set() and net & local == set()
     for owner in (MIOFlow.__init__, MIOFlowODEFunc.__init__):
         kinds = [p.kind for p in inspect.signature(owner).parameters.values()]
         assert inspect.Parameter.VAR_KEYWORD not in kinds, (
@@ -306,20 +310,6 @@ def test_manyruns_defaults_survive_a_silent_recipe():
 
     _, real = mioflow._resolve_kwargs({}, fast_dev_run=False)
     assert real["n_global_epochs"] == 50 and real["n_local_epochs"] == 10
-
-
-def test_the_time_axis_params_are_manyruns_own_and_are_not_forwarded():
-    """`n_neighbors`/`n_timepoints` build the pseudotime axis MIOFlow is trained against when
-    the data carries no real one (`steps._diffusion_pseudotime`). Manyruns genuinely implements
-    that bit, so those two names are written down here — our vocabulary, not a copy of anyone's
-    catalogue — and they must not be handed to a constructor that would reject them."""
-    pytest.importorskip("manylatents")
-    from manyruns.pipeline import mioflow
-
-    net, algo = mioflow._resolve_kwargs({"n_neighbors": 4, "n_timepoints": 3}, fast_dev_run=True)
-
-    assert "n_neighbors" not in algo and "n_neighbors" not in net
-    assert "n_timepoints" not in algo and "n_timepoints" not in net
 
 
 def test_an_explicit_null_reaches_the_engine_as_none(tmp_path):

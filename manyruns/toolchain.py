@@ -48,6 +48,39 @@ from typing import Any, Optional
 TOOL_FIELDS = frozenset({
     "name", "version", "summary", "source", "licence", "produces", "needs",
     "python", "requires", "entrypoint", "selftest", "input", "output", "params",
+    "mode", "call", "commercial_use", "distribution",
+})
+
+#: How manyruns reaches a tool. `run` (the default) starts the manifest's own adapter in the
+#: tool's interpreter. `call` starts manyruns's generic call adapter there, which makes the one
+#: call the manifest's `call` block describes: a library is usable with a manifest and no code.
+#: `precomputed` starts nothing: the result file already exists, and manyruns reads and checks it.
+MODES = ("run", "call", "precomputed")
+
+#: The `output.schema` of a model manifest: the tool writes a version 1 `result.json`, which
+#: `pipeline.external.check_result` checks before anything is merged.
+RESULT_SCHEMA = "result-v1"
+
+#: The keys of a call block. Closed: a block that needs more is a program, and a program is a
+#: pinned adapter, which is testable as code.
+CALL_KEYS = frozenset({"target", "method", "options", "args", "kwargs", "params", "outputs"})
+
+#: The named inputs the call adapter can pass to the target.
+SLOTS = ("matrix", "time", "seed")
+
+#: The facts one selector can express. A graph is four arrays with cross-references and class
+#: probabilities need a fixed key set, so both need a pinned adapter.
+CALL_FACTS = ("embedding", "clusters", "pseudotime", "trajectories")
+
+#: A selector picks one output value after the call.
+SELECTOR_PATTERN = r'^(return(\[-?\d+\]|\.[A-Za-z_]\w*|\["[^"]+"\])?|instance\.[A-Za-z_]\w*)$'
+
+#: Licences that forbid commercial use. A consistency check in ONE direction only: such a
+#: licence cannot claim `commercial_use: true`. `commercial_use` is declared, never derived
+#: from `licence`, because a derived rule would call an unknown or misspelled licence commercial.
+NON_COMMERCIAL_LICENCES = frozenset({
+    "LicenseRef-Yale-Non-Commercial", "CC-BY-NC-4.0", "CC-BY-NC-SA-4.0", "CC-BY-NC-ND-4.0",
+    "PolyForm-Noncommercial-1.0.0",
 })
 
 #: How the tool's inputs are assembled. A CLOSED vocabulary, because the two differ in what they
@@ -166,12 +199,20 @@ def resolve(name: str, config_dir: Optional[Path | str] = None) -> dict:
       no-lock      declared, but not locked for THIS platform — the tool has never been pinned
                    here, so there is nothing to reproduce.
       not-built    locked and not realized. The ordinary first-run state; `fix` is the command.
+      precomputed  `mode: precomputed`: the results already exist under `output.root`. Nothing
+                   runs, so there is no interpreter, and `MANYRUNS_TOOL_<NAME>_PYTHON` has no
+                   effect on it.
     """
     try:
         cfg = load_tool(name, config_dir)
     except (ValueError, FileNotFoundError) as e:
         return {"status": "no-manifest", "python": None, "digest": None,
                 "reason": str(e), "fix": None}
+
+    if tool_mode(cfg) == "precomputed":
+        return {"status": "precomputed", "python": None, "digest": None, "cfg": cfg,
+                "reason": f"precomputed results under {precomputed_root(cfg, config_dir)}",
+                "fix": None}
 
     override = _override_python(name)
     if override is not None:
@@ -212,20 +253,172 @@ def provenance(name: str, resolved: dict) -> dict:
 
     `reproducible` is FALSE for an overridden interpreter and that is the point of recording it:
     an env somebody assembled by hand may be perfect, and the record still cannot vouch for it.
+
+    Every tool step also records where its output came from and under which licence:
+    `tool_origin` is `ran` or `precomputed`, and `tool_licence` and `tool_commercial_use` copy
+    the manifest. A precomputed step has no platform and no lock, because manyruns does not
+    know where the model ran — the key is absent rather than a guess.
     """
     cfg = resolved.get("cfg") or {}
-    out = {
-        f"{name}.tool_version": cfg.get("version"),
-        f"{name}.tool_platform": platform_tag(),
-        f"{name}.tool_reproducible": resolved.get("status") == "ready",
-    }
-    if resolved.get("digest"):
+    precomputed = resolved.get("status") == "precomputed"
+    out = {f"{name}.tool_version": cfg.get("version")}
+    if not precomputed:
+        out[f"{name}.tool_platform"] = platform_tag()
+    out[f"{name}.tool_reproducible"] = resolved.get("status") == "ready"
+    if resolved.get("digest") and not precomputed:
         out[f"{name}.tool_lock"] = resolved["digest"]
+    out[f"{name}.tool_origin"] = "precomputed" if precomputed else "ran"
+    out[f"{name}.tool_licence"] = cfg.get("licence")
+    out[f"{name}.tool_commercial_use"] = cfg.get("commercial_use")
     return out
 
 
+def manifest_facts(name: str, config_dir: Optional[Path | str] = None) -> tuple:
+    """`(needs, produces)` of the manifest `name`, as frozensets. Legality reads a tool step's
+    facts here, because the declaration the runner enforces is the declaration legality reads.
+    Raises `ValueError` when no valid manifest has that name."""
+    cfg = load_tool(name, config_dir)
+    return frozenset(cfg.get("needs") or ()), frozenset(cfg.get("produces") or ())
+
+
+def precomputed_root(cfg: dict, config_dir: Optional[Path | str] = None) -> Path:
+    """The folder of a precomputed manifest's results; relative to the manifest's folder."""
+    root = Path(str((cfg.get("output") or {}).get("root") or ""))
+    return root if root.is_absolute() else tool_dir(config_dir) / root
+
+
+def _requirement_name(item: str) -> str:
+    import re
+
+    m = re.match(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)", item)
+    return _normalize_dist(m.group(1)) if m else ""
+
+
+def _normalize_dist(name: str) -> str:
+    import re
+
+    return re.sub(r"[-_.]+", "-", str(name)).lower()
+
+
+def _pin_problems(cfg: dict) -> list[str]:
+    """THE PIN RULE. Exactly one item of `requires` names the distribution, with `==` and an
+    exact version. The pin is the contract between manyruns and the tool: a new upstream
+    release changes nothing until a person moves the pin and runs `manyruns tools verify`."""
+    import re
+
+    req = cfg.get("requires")
+    if not req or not isinstance(req, (list, tuple)):
+        return ["`requires` must be a non-empty list of PEP 508 constraints"]
+    dist = str(cfg.get("distribution") or cfg.get("name"))
+    named = [str(r).strip() for r in req if _requirement_name(str(r)) == _normalize_dist(dist)]
+    if not named:
+        return [f"`requires` has no pin for {dist!r}: one item must be `{dist}==<exact version>` "
+                f"(set `distribution` when the PyPI name differs from the tool's name)"]
+    if len(named) > 1:
+        return [f"`requires` names {dist!r} {len(named)} times ({named}); the pin is one item"]
+    pattern = rf"^{re.escape(dist)}(\[[a-z0-9_,-]+\])?==[0-9][0-9A-Za-z.+!-]*$"
+    if not re.match(pattern, named[0], flags=re.IGNORECASE):
+        return [f"`requires` item {named[0]!r} is not a pin: name {dist!r} with `==` and an "
+                f"exact version, so an upstream release cannot change a result unannounced"]
+    return []
+
+
+def _json_value(value: Any) -> bool:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return True
+    if isinstance(value, (list, tuple)):
+        return all(_json_value(v) for v in value)
+    if isinstance(value, dict):
+        return all(isinstance(k, str) and _json_value(v) for k, v in value.items())
+    return False
+
+
+def check_call(call: Any, produces: Any) -> list[str]:
+    """Problems with a call block; empty means valid. Checked before any call is made.
+
+    The grammar is closed (`CALL_KEYS`): one target, constant options, slot bindings, the
+    options a recipe step may override, and one selector per output."""
+    import re
+
+    if not isinstance(call, dict):
+        return [f"call must be a mapping of {sorted(CALL_KEYS)}, got {type(call).__name__}"]
+    bad = [f"call: unknown key {k!r} (known: {sorted(CALL_KEYS)})" for k in call
+           if k not in CALL_KEYS]
+    target = call.get("target")
+    if not isinstance(target, str) or not re.match(
+            r"^[A-Za-z_][\w.]*:[A-Za-z_][\w.]*$", target):
+        bad.append(f"call.target must be '<module>:<qualname>', got {target!r}")
+    method = call.get("method")
+    if method is not None and not (isinstance(method, str) and method.isidentifier()):
+        bad.append(f"call.method must be an identifier, got {method!r}")
+    options = call.get("options") or {}
+    if not isinstance(options, dict) or not _json_value(options):
+        bad.append("call.options must be a map of JSON scalars, lists and maps")
+        options = {}
+    args = call.get("args") or []
+    kwargs = call.get("kwargs") or {}
+    if not isinstance(args, (list, tuple)):
+        bad.append(f"call.args must be a list of slots {list(SLOTS)}")
+        args = []
+    if not isinstance(kwargs, dict):
+        bad.append(f"call.kwargs must be a map from argument name to a slot {list(SLOTS)}")
+        kwargs = {}
+    for slot in [*args, *kwargs.values()]:
+        if slot not in SLOTS:
+            bad.append(f"call: unknown slot {slot!r} (slots: {list(SLOTS)})")
+    params = call.get("params") or []
+    if not isinstance(params, (list, tuple)):
+        bad.append("call.params must be a list of `options` keys")
+        params = []
+    for item in params:
+        if item not in options:
+            bad.append(f"call.params: {item!r} is not a key of call.options "
+                       f"{sorted(options)}")
+    outputs = call.get("outputs")
+    if not isinstance(outputs, dict) or not outputs:
+        bad.append(f"call.outputs must be a non-empty map from a fact in {list(CALL_FACTS)} "
+                   f"to a selector")
+        outputs = {}
+    for fact, selector in outputs.items():
+        if fact not in CALL_FACTS:
+            bad.append(f"call.outputs: {fact!r} cannot be selected (selectable: "
+                       f"{list(CALL_FACTS)}); a {fact} needs a pinned adapter")
+        elif not isinstance(selector, str) or not re.match(SELECTOR_PATTERN, selector):
+            bad.append(f"call.outputs.{fact}: {selector!r} is not a selector (return, "
+                       f"return[<int>], return.<attr>, return[\"<key>\"], instance.<attr>)")
+        elif selector.startswith("instance.") and not method:
+            bad.append(f"call.outputs.{fact}: the instance selector {selector!r} needs "
+                       f"call.method, because without it no instance is built")
+    if outputs and set(outputs) != set(produces or ()):
+        bad.append(f"call.outputs {sorted(outputs)} must equal the manifest's produces "
+                   f"{sorted(produces or ())}")
+    return bad
+
+
+def tool_mode(cfg: dict) -> str:
+    return str(cfg.get("mode") or "run")
+
+
+def selftest_command(cfg: dict) -> Optional[str]:
+    """The selftest a tool's interpreter runs. A call-mode manifest without one imports the
+    module of its target, because that import is the first thing the call adapter does."""
+    if cfg.get("selftest"):
+        return str(cfg["selftest"])
+    target = (cfg.get("call") or {}).get("target")
+    if tool_mode(cfg) == "call" and isinstance(target, str) and ":" in target:
+        return f"import {target.split(':', 1)[0]}"
+    return None
+
+
 def check_tool(cfg: Any, name: Optional[str] = None) -> list[str]:
-    """Problems with a tool manifest; empty means valid. Same contract as `catalog.check_*`."""
+    """Problems with a tool manifest; empty means valid. Same contract as `catalog.check_*`.
+
+    The rules depend on the mode (`MODES`). A model manifest (`output.schema: result-v1`)
+    returns version 1 results and may produce only seam facts. Every manifest declares its
+    `licence` and its `commercial_use`. In commercial mode a `commercial_use: false` manifest
+    is a problem (`commercial.TOOL_PROBLEM`), so `load_tool` refuses it."""
+    from manyruns import vocab
+
     bad: list[str] = []
     if not isinstance(cfg, dict):
         return [f"tool {name!r} is not a mapping"]
@@ -237,25 +430,93 @@ def check_tool(cfg: Any, name: Optional[str] = None) -> list[str]:
     if not cfg.get("version"):
         bad.append("no `version` — a tool with no version cannot be pinned, and an unpinned "
                    "tool cannot be reproduced or compared across runs")
-    req = cfg.get("requires")
-    if not req or not isinstance(req, (list, tuple)):
-        bad.append("`requires` must be a non-empty list of PEP 508 constraints")
-    elif not any(str(r).startswith(str(cfg.get("name"))) for r in req):
-        bad.append(f"`requires` never names {cfg.get('name')!r} itself")
-    entry = cfg.get("entrypoint")
-    if not entry or not isinstance(entry, str):
-        bad.append("`entrypoint` must be the adapter module/script run INSIDE the tool's env")
-    if not cfg.get("selftest"):
-        # Not decoration: `pyrovelocity==0.4.5` installs and does not import. A pin nobody
-        # exercised is a pin nobody has checked.
-        bad.append("no `selftest` — a lock that has never been executed is not a working pin "
-                   "(measured: pyrovelocity 0.4.5 installs with exit 0 and fails to import)")
-    io = cfg.get("input") or {}
-    if io.get("kind") not in INPUT_KINDS:
-        bad.append(f"input.kind must be one of {INPUT_KINDS}, got {io.get('kind')!r}")
-    for fact in cfg.get("produces") or []:
+    licence = cfg.get("licence")
+    if not licence or not isinstance(licence, str):
+        bad.append("no `licence` — every tool declares its SPDX licence expression, because a "
+                   "licence is often the reason a tool runs as a separate program")
+    if not isinstance(cfg.get("commercial_use"), bool):
+        bad.append(f"commercial_use must be true or false, got {cfg.get('commercial_use')!r} — "
+                   f"it is declared, never derived from the licence")
+    elif licence in NON_COMMERCIAL_LICENCES and cfg["commercial_use"] is True:
+        bad.append(f"licence {licence} forbids commercial use, so commercial_use cannot be true")
+    elif cfg["commercial_use"] is False:
+        from manyruns import commercial
+
+        if commercial.enabled():
+            bad.append(commercial.TOOL_PROBLEM)
+
+    mode = tool_mode(cfg)
+    if mode not in MODES:
+        bad.append(f"mode must be one of {MODES}, got {mode!r}")
+    output = cfg.get("output") or {}
+    if not isinstance(output, dict):
+        bad.append("output must be a mapping")
+        output = {}
+    schema = output.get("schema")
+    if schema is not None and schema != RESULT_SCHEMA:
+        bad.append(f"output.schema must be {RESULT_SCHEMA!r}, got {schema!r}")
+    model = schema == RESULT_SCHEMA
+    produces = cfg.get("produces") or []
+    for fact in produces:
         if not isinstance(fact, str):
             bad.append(f"produces must be a list of fact names, got {fact!r}")
+    if model:
+        for key in ("obsm", "obs"):
+            if key in output:
+                bad.append(f"output.{key} belongs to the .h5ad path; a {RESULT_SCHEMA} manifest "
+                           f"returns its facts in result.json")
+        allowed = [f for f in vocab.TOOL_OUTPUT_FACTS if f != "velocity"]
+        for fact in produces:
+            if isinstance(fact, str) and fact not in allowed:
+                bad.append(f"a {RESULT_SCHEMA} manifest cannot produce {fact!r} — seam facts are "
+                           f"{allowed}; velocity keeps the .h5ad path")
+    known = vocab.facts()
+    for fact in cfg.get("needs") or []:
+        if fact not in known:
+            bad.append(f"needs: {fact!r} is not a fact the calculus names ({sorted(known)})")
+
+    if mode == "precomputed":
+        for field in ("requires", "entrypoint", "selftest", "python", "input", "distribution",
+                      "call"):
+            if field in cfg:
+                bad.append(f"`{field}` is not allowed in mode: precomputed — manyruns starts "
+                           f"no interpreter for it and only reads its files")
+        root = output.get("root")
+        if not isinstance(root, str) or not root:
+            bad.append("output.root must name the folder of the precomputed results")
+        if not model:
+            bad.append(f"mode: precomputed needs output.schema: {RESULT_SCHEMA}")
+        return bad
+
+    if "root" in output:
+        bad.append(f"output.root is only for mode: precomputed, and this manifest is mode: {mode}")
+    if mode == "call":
+        if not model:
+            bad.append(f"mode: call needs output.schema: {RESULT_SCHEMA}")
+        if "entrypoint" in cfg:
+            bad.append("`entrypoint` is not allowed in mode: call — manyruns's call adapter "
+                       "makes the call the `call` block describes")
+        if "call" not in cfg:
+            bad.append("mode: call needs a `call` block")
+        else:
+            bad.extend(check_call(cfg["call"], produces))
+    elif mode == "run":
+        if "call" in cfg:
+            bad.append("a `call` block needs mode: call")
+        entry = cfg.get("entrypoint")
+        if not entry or not isinstance(entry, str):
+            bad.append("`entrypoint` must be the adapter module/script run INSIDE the tool's env")
+        if not cfg.get("selftest"):
+            # Not decoration: `pyrovelocity==0.4.5` installs and does not import. A pin nobody
+            # exercised is a pin nobody has checked.
+            bad.append("no `selftest` — a lock that has never been executed is not a working "
+                       "pin (measured: pyrovelocity 0.4.5 installs with exit 0 and fails to "
+                       "import)")
+    bad.extend(_pin_problems(cfg))
+    io = cfg.get("input") or {}
+    if not isinstance(io, dict) or io.get("kind") not in INPUT_KINDS:
+        kind = io.get("kind") if isinstance(io, dict) else io
+        bad.append(f"input.kind must be one of {INPUT_KINDS}, got {kind!r}")
     return bad
 
 
@@ -311,7 +572,7 @@ def selftest(cfg: dict, python: Path, timeout: int = 600) -> dict:
     Returns rather than raises: `tools check` wants to report every tool, and one broken
     environment must not hide the state of the others.
     """
-    cmd = cfg.get("selftest")
+    cmd = selftest_command(cfg)
     if not cmd:
         return {"selftest": "declared none", "ok": False}
     try:

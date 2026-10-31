@@ -212,6 +212,22 @@ class DataEntry:
         return out
 
     def to_dict(self) -> dict:
+        out = self._to_dict()
+        # `MANYRUNS_BLIND_DATASET`: this mapping is what the prompt and the search view
+        # serialize, so the true name leaves `name`, `dataset`, `path` and `obs.source` HERE.
+        # The fields themselves stay true in memory: the shell loads the data from `obs.source`.
+        from manyruns import blind
+
+        if blind.enabled():
+            names = [self.name] + ([self.dataset] if isinstance(self.dataset, str) else [])
+            for key in ("name", "dataset", "path"):
+                if isinstance(out[key], str):
+                    out[key] = blind.blind_text(out[key], names)
+            if isinstance(out["obs"].get("source"), str):
+                out["obs"]["source"] = blind.blind_text(out["obs"]["source"], names)
+        return out
+
+    def _to_dict(self) -> dict:
         return {
             "name": self.name, "kind": self.kind, "size": self.size,
             "contents": self.contents, "shape": self.shape, "modality": self.modality,
@@ -545,9 +561,7 @@ def catalog_entry(name: str, *, skip=(), snapshot=None, on_changed=None,
                                  observation=observation, require_observation=require_observation,
                                  on_changed=on_changed) if found is not None else None)
     pending = found is not None and source is None
-    declared = Observation(shape=ds.get("shape", "unknown"),
-                           modality=ds.get("modality", "unknown"), source=name,
-                           declared=tuple(sorted(narrate.declared_facts(ds))))
+    declared = narrate.declared_observation(ds, name)
     folder = found if found is not None else Path(ref) if handle.get("kind") == "path" else None
     dataset = None if handle.get("kind") == "path" else handle.get("ref", name)
     obs = declared
@@ -856,7 +870,9 @@ def measurement(entry: "DataEntry") -> Optional[dict]:
 
 def ledger(obs: Observation,
            provided: "frozenset | set | tuple | None" = None,
-           measured: "dict | None" = None) -> list[LedgerRow]:
+           measured: "dict | None" = None, *,
+           evidence: "dict | None" = None,
+           admitted: "frozenset | set | tuple" = ()) -> list[LedgerRow]:
     """Every recipe against this data: can it run, and if not WHICH FACT is missing.
 
     This is `vocab.unmet` rendered directly, which is what §3.2 asks for. Legality is
@@ -879,11 +895,18 @@ def ledger(obs: Observation,
 
     `contrast` needs a condition column; a sample without one gets a hollow row with an
     explanation. Recipe availability follows the data's declared and observed capabilities.
+
+    `evidence` is a measured g-vector, and `admitted` the metric names a caller trusts. When
+    `evidence` is given, the rung-support gate (`vocab.rung_support`) joins its sorted reasons
+    to each row's `blocked` list, after the data and availability reasons. When it is `None`
+    the gate is not consulted, and every row is what it was without it.
     """
     from manyruns.catalog import discover_recipes, load_recipe
+    from manyruns.vocab import rung_support
 
     rows: list[LedgerRow] = []
-    for offered in narrate.offer(obs, available=discover_recipes()):
+    for offered in narrate.offer(obs, available=discover_recipes(),
+                                 evidence=evidence, admitted=admitted):
         try:
             recipe = load_recipe(offered["recipe"])
         except Exception:  # noqa: BLE001 - a broken recipe must not empty the ledger
@@ -895,6 +918,8 @@ def ledger(obs: Observation,
         # common; see `narrate.unavailable` for why folding them into one call would cost the
         # invariant that keeps a verdict and its reason from disagreeing.
         why = narrate.blocked(recipe, obs.shape, provided) + narrate.unavailable(recipe)
+        if evidence is not None:
+            why += sorted(rung_support(recipe, evidence, admitted))
         ask, gloss = narrate.split_question(offered["label"])
         rows.append(LedgerRow(
             recipe=offered["recipe"], ask=ask, gloss=gloss, can_run=not why,

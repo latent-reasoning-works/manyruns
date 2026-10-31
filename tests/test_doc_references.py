@@ -26,7 +26,17 @@ def test_documentation_citations_exist():
     assert not missing, "missing documentation citations:\n" + "\n".join(sorted(set(missing)))
 
 
-def test_docs_keep_only_contract_and_sidecars():
+def test_docs_keep_only_contract_sidecars_and_guides():
     docs = Path(__file__).resolve().parents[1] / "docs"
     assert docs.is_dir()
-    assert {path.name for path in docs.iterdir()} == {"environment-contract.md", "sidecars"}
+    assert {path.name for path in docs.iterdir()} == {"environment-contract.md", "guides", "harness.md",
+                                                     "sidecars"}
+
+
+def test_guides_are_markdown_pages_only():
+    # A guide is a worked example a person reads; its code lives in the recipe it shows.
+    guides = Path(__file__).resolve().parents[1] / "docs" / "guides"
+    assert guides.is_dir()
+    entries = list(guides.iterdir())
+    assert entries, "docs/guides/ is empty"
+    assert all(path.is_file() and path.suffix == ".md" for path in entries), entries

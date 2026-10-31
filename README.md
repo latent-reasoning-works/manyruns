@@ -10,7 +10,7 @@
   load. assume. run. repeat.
 </pre>
 
-[![license](https://img.shields.io/badge/license-MIT-F59E0B.svg)](LICENSE)
+[![license](https://img.shields.io/badge/license-Apache--2.0-F59E0B.svg)](LICENSE)
 [![python](https://img.shields.io/badge/python-3.11–3.12-F59E0B.svg)](https://www.python.org)
 [![uv](https://img.shields.io/badge/pkg-uv-F59E0B.svg)](https://docs.astral.sh/uv/)
 
@@ -107,7 +107,7 @@ environments before publishing.
 
 | install | pulls | unlocks |
 |---|---|---|
-| *(base)* | phate, manylatents, manylatents-omics[singlecell], scanpy, scikit-learn, scipy, statsmodels, matplotlib, anndata, textual-image | 11 bundled recipes, the metric suite, terminal figures (`--engine manylatents`); available analyses depend on the data |
+| *(base)* | phate, manylatents, manylatents-omics[singlecell], scanpy, scikit-learn, scipy, statsmodels, matplotlib, anndata, textual-image | 12 bundled recipes, the metric suite, terminal figures (`--engine manylatents`); available analyses depend on the data |
 | `[harness]` | manylatents[omics], scanpy, wandb | the acquire shim + the metric sweep |
 | `[agents]` | manyagents>=0.0.1, anthropic (from PyPI) | the agentic **chat / prompt** stream |
 | `[dev]` | pytest, ruff | the test suite |
@@ -260,9 +260,78 @@ manyruns check
 exercise — a recipe no dataset can run is flagged (not silently pruned at sweep time). It
 exits non-zero on a real error, so CI gates on it. This whole loop is **stackless** (mock).
 
+A program that decides what to run next reads the legal action space with `manyruns actions`
+instead of parsing `check`. The verb is read-only and prints one JSON document: the ledger of a
+dataset (which recipes can run, and why not), the knobs of one recipe's tunable steps
+(`--surface tune --recipe R`), or the scorer's rung tables (`--surface ladder`). The same overlays
+apply as for `check`.
+
+```bash
+manyruns actions pbmc3k --surface tune --recipe cluster
+```
+
 Keep experimental variants out of the shipped app with `$MANYRUNS_RECIPE_DIR` /
 `$MANYRUNS_DATASET_DIR` overlays — the wheel ships the blessed few; your sweep's many arms
 live in your own directory.
+
+## tools
+
+A tool is a recipe step whose code runs in another interpreter: `{name: ..., group: ...,
+tool: <name>}`. Its manifest is a YAML file in `$MANYRUNS_TOOL_DIR`, which replaces the bundled
+tool folder while it is set. A model manifest (`output.schema: result-v1`) returns its facts in
+a `result.json` that `check_result` must accept before anything is merged: an `embedding`,
+`clusters`, a `pseudotime`, `trajectories`, a `graph` or `class_probabilities`. That check is
+the model seam, and manyruns never imports the model. Every manifest declares its `licence`
+and `commercial_use`; a run row names its non-commercial steps in `non_commercial_steps`.
+A manifest that runs code pins its distribution with `==` and an exact version, so an upstream
+release changes nothing until a person moves the pin and runs `manyruns tools verify <name>`.
+manyruns adapts to an unmodified library by one of two routes. A library that takes an array
+and returns arrays in one call needs only a call-mode manifest. A library that needs several
+steps gets a pinned adapter, written once for each pinned version.
+
+A call-mode manifest for a scikit-learn estimator (no adapter code):
+
+```yaml
+name: kmeans
+version: "1"
+mode: call
+licence: BSD-3-Clause
+commercial_use: true
+distribution: scikit-learn
+requires: ["scikit-learn==1.5.2"]
+input: {kind: state_matrix}
+produces: [clusters]
+output: {schema: result-v1}
+call:
+  target: "sklearn.cluster:KMeans"
+  method: fit
+  options: {n_clusters: 8, n_init: 10}
+  params: [n_clusters]
+  args: [matrix]
+  outputs: {clusters: "instance.labels_"}
+```
+
+A precomputed manifest, for a model output made elsewhere. manyruns starts nothing: it reads
+the one `results/*/result.json` whose `cells_sha256` matches the run's cells, checks it, and
+marks the step `precomputed` in the record:
+
+```yaml
+name: outside_partition
+version: "1"
+mode: precomputed
+licence: CC-BY-4.0
+commercial_use: true
+produces: [clusters]
+output: {schema: result-v1, root: results}
+```
+
+```bash
+manyruns tools               # what is declared, and its state
+manyruns tools verify kmeans # run it on a 12-cell fixture and check the result
+```
+
+`examples/tools/mioflow/` is a pinned adapter for upstream MIOFlow (`mioflow==0.1.14`),
+outside the wheel; its README says how to use it.
 
 ## the experiment
 
@@ -298,9 +367,9 @@ manyruns (this repo)   the harness — distribution + workflow + the config laye
 manylatents · manyagents · shop   DR algorithms, metrics, orchestration, cluster infra
 
 
-the learner             a separate process — and it is NOT in the chain above
+the learner             outside this package — and it is NOT in the chain above
     ╎ observes ▶  manyruns's artifacts (index.jsonl, g-vectors, decision rows)
-    ╎ drives   ▶  manyruns's CLI, as any other user would
+    ╎ drives   ▶  manyruns's CLI or its Python API, as any other user would
 ```
 
 **manyruns names no learner** — no dependency, no import, no `--engine` value, no
@@ -329,21 +398,48 @@ boundary between this application and its callers.
 | [CHANGELOG.md](CHANGELOG.md) | user-visible changes |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | community standards and reporting |
 | [docs/environment-contract.md](docs/environment-contract.md) | the environment contract |
+| [docs/guides/](docs/guides/) | worked examples: start from a published figure in minutes, then change it yourself |
 | [docs/sidecars/](docs/sidecars/) | out-of-process sidecar tools: the pyrovelocity brief, its fixture generator and recipe |
 
 Source comments keep their reasoning self-contained; cited documentation paths are checked
 for existence by the test suite.
 
+## commercial use
+
+Some steps run code under a non-commercial licence: the manylatents port of MIOFlow, and the
+other Yale-derived manylatents modules that `cflows`, `traced` and `sandbox` reach through their
+`mioflow` step. Someone who builds a proprietary application on the free components sets one
+variable in the process that runs manyruns:
+
+```sh
+export MANYRUNS_COMMERCIAL=1
+```
+
+With the flag on:
+
+- every recipe with a non-commercial step is a hollow row with one reason, in the app,
+  `manyruns actions` and `manyruns check`, and it is never recommended;
+- `manyruns run` refuses such a recipe with exit 2 before any step, and writes nothing;
+- a step that a session adds, a trained-weights inference, and a tool whose manifest says
+  `commercial_use: false` are refused too;
+- manyruns imports none of the seven Yale-derived manylatents modules.
+
+Unset, empty and `0` leave the flag off; any other value is an error, so a typo never turns it
+off. Without the flag everything runs, and the run row lists the non-commercial steps that ran
+in `non_commercial_steps`. The flag covers manyruns' own imports only: a host application that
+imports one of those modules itself still has it in its process.
+
 ## licensing and sample data
 
-manyruns is [MIT licensed](LICENSE). Its dependencies `phate`, `graphtools`, `tasklogger`,
-`leidenalg`, and `igraph` are GPL licensed; they are imported rather than bundled in the
+manyruns is licensed under [Apache-2.0](LICENSE); see [NOTICE](NOTICE) for the MIT notice of
+releases up to 0.1.0 and the MIOFlow files the relicense does not cover. Its dependencies
+`phate`, `graphtools`, `tasklogger`, `leidenalg`, and `igraph` are GPL licensed; they are imported rather than bundled in the
 manyruns distribution.
 
 The `pbmc3k` sample is **10x Genomics, 3k PBMCs from a Healthy Donor**, Cell Ranger 1.1.0
 (2016): [original dataset](https://www.10xgenomics.com/datasets/3-k-pbm-cs-from-a-healthy-donor-1-standard-1-1-0).
 The app fetches the [Scanpy H5AD copy](https://exampledata.scverse.org/scanpy/pbmc3k_raw.h5ad)
-on explicit first use. The data is not bundled with manyruns; the MIT license covers this
+on explicit first use. The data is not bundled with manyruns; the license covers this
 project's code, not third-party data.
 
 ## status
@@ -363,5 +459,5 @@ lets the trajectory step drop its local shim.
 ---
 
 <p align="center">
-<sub>MIT License · <a href="https://github.com/latent-reasoning-works">Latent Reasoning Works</a></sub>
+<sub>Apache-2.0 License · <a href="https://github.com/latent-reasoning-works">Latent Reasoning Works</a></sub>
 </p>

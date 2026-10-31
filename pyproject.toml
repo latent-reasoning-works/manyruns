@@ -3,7 +3,7 @@
 # manykinds — and names this one by its artifact, the run record. There is deliberately NO
 # `geomancer` console-script alias; see [project.scripts] for why.
 name = "manyruns"
-version = "0.1.0"
+version = "0.1.1"
 # This package holds no dependency, import, config or engine value naming a learner
 # (CLAUDE.md, "No track to a learner"). It delegates compute to
 # manylatents; the learner observes this package's artifacts and drives its CLI from outside.
@@ -34,8 +34,8 @@ readme = "README.md"
 # DECLARED, not implied. The README carried an MIT badge and this field was absent, so the
 # claim had no text behind it anywhere — and a badge is not a grant. PEP 639 SPDX form, so the
 # identifier travels into the wheel metadata where a consumer's tooling can actually read it.
-license = "MIT"
-license-files = ["LICENSE"]
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.11,<3.13"
 # THE COMPUTE IS NOT OPTIONAL. Until now the core was "tiny + fully public" so that
 # `uv tool install manyruns` worked with no GitHub token — and what it installed could not
@@ -97,8 +97,9 @@ dependencies = [
     # Public on PyPI, so the tokenless install survives fixing it in. It pulls torch +
     # lightning, which is not a new cost: the lightning step group (MIOFlow) and every training
     # path already needed them.
-    # 0.1.7 ships the MIOFlow/CFlows modules used by the bundled recipe paths.
-    "manylatents>=0.1.7",
+    # 0.1.7 ships the MIOFlow/CFlows modules used by the bundled recipe paths; 0.1.9 is the first
+    # release in which `aa` fits (the archetypes recipe), and it adds the Reeb cell cap.
+    "manylatents>=0.1.9",
     # Biology needs the singlecell extra: bare omics supplies the module, but normalize
     # imports scanpy lazily inside the operation. This declaration travels to consumers;
     # tool.uv.sources and our lock do not. 0.1.3 first ships singlecell/preprocessing.py.
@@ -179,24 +180,19 @@ agents = [
 [project.scripts]
 # this console-script IS the distributable artifact (#9 / distribution path "A").
 #
-# `manyruns` is the name. There is deliberately NO `geomancer` script here: that name is going
-# to its own repo, which will alias into this one from the outside, and declaring it here too
-# would collide with that. `shop` and `shop-spin` used to declare one as well; both dropped it
+# `manyruns` is the only name. There is deliberately NO `geomancer` script here: that name
+# belongs to the geomancer repo, which hands its command line to this `main` from outside, and
+# declaring it here too would collide with that. `shop` and `shop-spin` used to declare one as well; both dropped it
 # (two installed tools claiming one console-script name resolve by install order, silently), so
 # the name is now unclaimed and should stay that way. Do not add it back.
-manyruns = "manyruns.app:main"
-# `co-science` is the SAME program under the name the work goes by out loud. Not a mode, not a
-# second entry point, not a demo build — the identical `main`, deliberately, because the loop a
-# person drives here is the loop a policy will drive later: observe → legal moves → step →
-# record (`Session.step` takes a typed NAME or a step DICT; that is the whole
-# human/agent split). A separate name that ran a separate path would make the thing shown and
-# the thing built two different things, which is the one failure this alias exists to avoid.
 #
-# The learner stays OUT of this package (CLAUDE.md, "No track to a learner"): the world-models
-# harness observes the record and drives this interface from outside, exactly as any user does.
-# When it needs to enumerate the action space rather than filter it, that is `actions()` and it
-# does not exist yet — design it against that harness, not ahead of it.
-"co-science" = "manyruns.app:main"
+# The loop a person drives here is the loop an agent drives: observe → legal moves → step →
+# record (`Session.step` takes a typed NAME or a step DICT; that is the whole human/agent
+# split). A learner stays OUT of this package (CLAUDE.md, "No track to a learner"): it observes
+# the record and drives this interface from outside, exactly as any user does. When it needs to
+# enumerate the action space rather than filter it, it reads `manyruns actions`, the read-only
+# verb that prints that space as one JSON document (`manyruns/actions.py`).
+manyruns = "manyruns.app:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -204,7 +200,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "/manyruns/", "/tests/", "/README.md", "/LICENSE", "/CHANGELOG.md", "/pyproject.toml",
+    "/manyruns/", "/tests/", "/README.md", "/LICENSE", "/NOTICE", "/CHANGELOG.md", "/pyproject.toml",
 ]
 
 [tool.hatch.build.targets.wheel]

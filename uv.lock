@@ -1040,7 +1040,7 @@ wheels = [
 
 [[package]]
 name = "manylatents"
-version = "0.1.7"
+version = "0.1.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "archetypes", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -1072,9 +1072,9 @@ dependencies = [
     { name = "umap-learn", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "wandb", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/65/24/5c5d7089201e82d631831100b36303995853b6b61669a183ba56f80d02e3/manylatents-0.1.7.tar.gz", hash = "sha256:b3867d345000695719c5a106b78234e801fab1a812f94368a4db80cbc424308d", size = 724995, upload-time = "2026-09-10T18:05:19.276Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4c/68/4dee0070e27e465753f486a1381d1f4e6686129db380b7b8ae1f6784ca55/manylatents-0.1.9.tar.gz", hash = "sha256:1d801583aec2e91c33a8be94acbe4375cb19d8a1d760f832907e7f641a27ae0f", size = 787639, upload-time = "2026-10-30T23:22:40.179Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b0/20/e9353100c7764a59bcbc004c558c9a0ed3192f028cc1dc5a6bf646435ab4/manylatents-0.1.7-py3-none-any.whl", hash = "sha256:b6505db7f09b7bf650d38d93bcd096ac41f08fad5d4ab2b6f52dc6cbff6a463a", size = 482095, upload-time = "2026-09-10T18:05:15.521Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/da/cc91f10c7b5010b36c2b91660589de76b82d18b0c533e328780069948fb6/manylatents-0.1.9-py3-none-any.whl", hash = "sha256:e3007b0d03e1f7f392609e7c3970fe8c02c0cc578b76205e5d3dfdbcbbb69ed1", size = 515260, upload-time = "2026-10-30T23:22:38.607Z" },
 ]
 
 [package.optional-dependencies]
@@ -1112,7 +1112,7 @@ singlecell = [
 
 [[package]]
 name = "manyruns"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "anndata", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -1168,7 +1168,7 @@ requires-dist = [
     { name = "click", marker = "extra == 'harness'", specifier = ">=8.0" },
     { name = "hydra-core", specifier = ">=1.3.0" },
     { name = "manyagents", marker = "extra == 'agents'", specifier = ">=0.0.1" },
-    { name = "manylatents", specifier = ">=0.1.7" },
+    { name = "manylatents", specifier = ">=0.1.9" },
     { name = "manylatents", extras = ["omics"], marker = "extra == 'harness'" },
     { name = "manylatents-omics", extras = ["singlecell"], specifier = ">=0.1.3" },
     { name = "matplotlib" },

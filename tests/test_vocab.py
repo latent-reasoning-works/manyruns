@@ -9,6 +9,8 @@ evenly-spaced timepoints. A trajectory invented out of batch structure is exactl
 """
 from __future__ import annotations
 
+import pytest
+
 from manyruns import vocab as obs_keys
 
 
@@ -85,3 +87,86 @@ def test_selector_and_loader_agree_on_every_vocabulary_word():
     for col in obs_keys.CONDITION_KEYS:
         assert _detect_condition_key(_FakeAdata(col)) == col
         assert obs_keys.has_time_axis([col]) is False  # a condition is never a time axis
+
+
+# ── the vocabulary version and the topology mappings ─────────────────────────
+def test_vocab_version_is_pinned_to_topologies():
+    """`decisions.append` hashes `VERSION` into `legal_id`, so an edit to the topologies that
+    keeps the old version would give a new task space the id of the old one."""
+    assert (obs_keys.VERSION, obs_keys.TOPOLOGIES) == (
+        "1", ("clusters", "single-trajectory", "multi-branching", "archetypal", "cycle",
+              "surface")), "TOPOLOGIES changed: bump vocab.VERSION and update this pin"
+
+
+def test_scshapebench_table():
+    """The benchmark's four label columns, each to one canonical name."""
+    assert obs_keys.SCSHAPEBENCH_TOPOLOGY == {
+        "multi_branch": "multi-branching", "simple_traj": "single-trajectory",
+        "archetypal": "archetypal", "clusters": "clusters"}
+    assert obs_keys.scshapebench_to_topology("multi_branch") == "multi-branching"
+    assert obs_keys.check_topology(list(obs_keys.SCSHAPEBENCH_TOPOLOGY.values())) == []
+
+
+def test_scshapebench_refuses_unknown():
+    """`cycle` is a canonical name, not a benchmark column."""
+    with pytest.raises(ValueError, match="cycle"):
+        obs_keys.scshapebench_to_topology("cycle")
+
+
+def test_labeler_table():
+    """The harness labeler's five words; `other` claims no topology."""
+    assert obs_keys.LABELER_TOPOLOGY == {
+        "cluster": "clusters", "trajectory": "single-trajectory", "cycle": "cycle",
+        "surface": "surface", "other": None}
+    assert obs_keys.labeler_to_topology("trajectory") == "single-trajectory"
+    assert obs_keys.labeler_to_topology("other") is None
+    for value in obs_keys.LABELER_TOPOLOGY.values():
+        if value is not None:
+            assert obs_keys.check_topology([value]) == []
+
+
+def test_labeler_refuses_canonical_names():
+    """The two vocabularies differ by one letter; the plural is not a labeler word."""
+    with pytest.raises(ValueError, match="clusters"):
+        obs_keys.labeler_to_topology("clusters")
+
+
+def test_collapse_table():
+    """scShapeBench's own scoring folds a cycle into a trajectory and a surface into a simplex."""
+    assert obs_keys.collapse_for_benchmark("cycle") == "single-trajectory"
+    assert obs_keys.collapse_for_benchmark("surface") == "archetypal"
+    for name in ("clusters", "single-trajectory", "multi-branching", "archetypal"):
+        assert obs_keys.collapse_for_benchmark(name) == name
+
+
+def test_collapse_range_is_the_four_benchmark_classes():
+    results = {obs_keys.collapse_for_benchmark(t) for t in obs_keys.TOPOLOGIES}
+    assert results == set(obs_keys.SCSHAPEBENCH_TOPOLOGY.values()) == {
+        "clusters", "single-trajectory", "multi-branching", "archetypal"}
+
+
+def test_collapse_refuses_unknown():
+    with pytest.raises(ValueError, match="tree"):
+        obs_keys.collapse_for_benchmark("tree")
+
+
+# ── the four benchmark classes ───────────────────────────────────────────────
+def test_benchmark_classes_match_the_scshapebench_map():
+    """One tuple fixes the key order of the benchmark scorers; its set is the map's range."""
+    assert obs_keys.BENCHMARK_CLASSES == (
+        "clusters", "single-trajectory", "multi-branching", "archetypal")
+    assert set(obs_keys.BENCHMARK_CLASSES) == set(obs_keys.SCSHAPEBENCH_TOPOLOGY.values())
+    wanted = set(obs_keys.BENCHMARK_CLASSES)
+    assert list(obs_keys.BENCHMARK_CLASSES) == [t for t in obs_keys.TOPOLOGIES if t in wanted]
+
+
+def test_collapse_lands_in_benchmark_classes():
+    for t in obs_keys.TOPOLOGIES:
+        assert obs_keys.collapse_for_benchmark(t) in obs_keys.BENCHMARK_CLASSES
+
+
+def test_no_second_raw_label_map():
+    """The raw-label maps live once; a second copy would drift from the first."""
+    names = dir(obs_keys)
+    assert "RAW_LABELS" not in names
+    assert "UNSCOREABLE_RAW_LABELS" not in names

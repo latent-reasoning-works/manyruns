@@ -251,7 +251,7 @@ def test_metadata_requests_the_shipped_singlecell_runtime():
     assert root.is_dir()
     metadata = tomllib.loads((root / "pyproject.toml").read_text())
     assert "manylatents-omics[singlecell]>=0.1.3" in metadata["project"]["dependencies"]
-    assert "manylatents>=0.1.7" in metadata["project"]["dependencies"]
+    assert "manylatents>=0.1.9" in metadata["project"]["dependencies"]
     pipeline_root = root / "manyruns" / "pipeline"
     assert pipeline_root.is_dir()
     for name in ("loading.py", "runner.py", "prep.py"):
@@ -276,7 +276,7 @@ def test_install_docs_pin_python():
     (None, "unavailable"), ('{"url":"file:///wheel"}', "unavailable"),
     ("malformed", "unavailable"),
 ])
-@pytest.mark.parametrize("program", ["co-science", "manyruns"])
+@pytest.mark.parametrize("program", ["geomancer", "manyruns"])
 def test_version_reports_installed_build_without_becoming_a_run(direct, revision, program, monkeypatch, capsys):
     from importlib import metadata
     from types import SimpleNamespace

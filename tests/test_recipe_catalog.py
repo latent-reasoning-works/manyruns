@@ -8,13 +8,12 @@ import pytest
 
 np = pytest.importorskip("numpy")
 
-from manyruns import catalog, vocab  # noqa: E402
+from manyruns import catalog, narrate, vocab  # noqa: E402
 
-#: `archetypes` is blocked UPSTREAM, not here: manylatents' `aa` raises
-#: `TypeError: AA.__init__() got an unexpected keyword argument 'method'` — a version skew
-#: against the `archetypes` package, one line, and theirs. Named rather than skipped silently,
-#: so that when it is fixed this list shrinks and the test tells us.
-UPSTREAM_BLOCKED = {"archetypes"}
+#: Recipes whose steps fail in the pinned engine, named rather than skipped silently, so that
+#: when one is fixed this list shrinks and the test tells us. Empty since manylatents 0.1.9,
+#: the first release in which `aa` fits; `archetypes` was the last member.
+UPSTREAM_BLOCKED: set = set()
 
 #: Legal on no BUNDLED dataset, each for a stated reason. A DATA gap, not a dead recipe:
 #: `contrast` needs `conditions`, which only a `case-control` shape provides, and the starter
@@ -183,8 +182,12 @@ def test_the_recipe_runs(name, tmp_path):
     else:
         X, genes, counts = _point_cloud(), None, None
 
+    # A recipe whose `mioflow` step needs `time` runs with a real time axis: three time points
+    # over the three blobs. It never runs on an invented one.
+    time = ({"labels": np.repeat([0.0, 1.0, 2.0], len(X) // 3), "label_kind": "time"}
+            if "time" in vocab.unmet(recipe, "clusters") else {})
     res = runner.run_manylatents(recipe, tmp_path, array=X, counts=counts, genes=genes,
-                                 seed=0, fast_dev_run=True)
+                                 seed=0, fast_dev_run=True, **time)
 
     if name in UPSTREAM_BLOCKED:
         failed = [s for s in res["steps"] if s["outcome"] == "error"]
@@ -231,6 +234,10 @@ def test_the_recipe_runs(name, tmp_path):
     assert not [s for s in res["steps"] if s["outcome"] == "error"], [
         (s["name"], s["detail"]) for s in res["steps"] if s["outcome"] == "error"]
     assert len(res["g_vector"]) > 20, "a run that emits nothing measurable is not a recipe"
+    if name == "archetypes":
+        # The aa step runs on the pinned engine, and `simplex` reads real convex weights.
+        assert isinstance(res["g_vector"]["simplex_purity"], float), res["g_vector"].get(
+            "simplex_purity_note")
 
 
 def test_adding_recipes_grows_the_dropdown_not_the_top_menu():
@@ -238,7 +245,6 @@ def test_adding_recipes_grows_the_dropdown_not_the_top_menu():
     recipe, so a scientific question and a raw recipe name sat side by side and the list grew
     without bound. Recipes now carry their own `question:`, and everything but the recommended
     one sits behind a single agnostic entry."""
-    from manyruns import narrate
     from manyruns.narrate import Observation
 
     obs = Observation(shape="clusters", modality="scrna", conditions=None, n_timepoints=0,
@@ -257,3 +263,18 @@ def test_adding_recipes_grows_the_dropdown_not_the_top_menu():
     suited = (recommended or offered)[:1]
     assert len(suited) == 1, "the top menu must not grow with the catalog"
     assert len(offered) >= 6, "the dropdown should carry the whole legal set"
+
+
+def test_the_ledger_no_longer_marks_archetypes_unavailable():
+    assert narrate.unavailable(catalog.load_recipe("archetypes")) == []
+
+
+def test_the_archetypes_file_states_no_upstream_breakage():
+    import yaml
+
+    path = catalog.recipe_dir() / "archetypes.yaml"
+    assert path.parent.is_dir()
+    text = path.read_text()
+    assert "blocked" not in yaml.safe_load(text)
+    assert "broken upstream" not in text.lower()
+    assert "blocked upstream" not in text.lower()

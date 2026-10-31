@@ -50,3 +50,17 @@ def test_existing_extra_merge_keeps_core_fields_and_downstream_namespace(tmp_pat
         assert row[key] == extra[key]
     assert row['schema_version'] == 1
     assert next(iter(json.loads(store.index_path(tmp_path).read_text()))) == 'schema_version'
+
+
+def test_non_commercial_steps_follows_caveats(tmp_path):
+    """A row names the non-commercial steps of its run, directly after `caveats`. An empty list
+    means none; a missing key on an older row means unknown."""
+    store.append({'run_id': 'run-one', 'caveats': ['x'],
+                  'non_commercial_steps': ['golden_precomputed']}, out_dir=tmp_path)
+    store.append({'run_id': 'run-two'}, out_dir=tmp_path)
+    first, second = [json.loads(line) for line in
+                     store.index_path(tmp_path).read_text().splitlines()]
+    assert first['non_commercial_steps'] == ['golden_precomputed']
+    assert second['non_commercial_steps'] == []
+    keys = list(first)
+    assert keys.index('non_commercial_steps') == keys.index('caveats') + 1

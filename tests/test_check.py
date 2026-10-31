@@ -38,7 +38,11 @@ def test_coverage_warns_when_a_recipe_has_no_legal_dataset(tmp_path, capsys):
     # to run, and it cannot — `filter_genes` and `filter_mito` read gene names.
     assert "WARN  qc" in out and "WARN  markers" in out and "WARN  preprocess" in out
     assert "comes from the data itself and not from any shape" in out
-    assert "4 unexercisable" in out   # was 1 — contrast, plus the three that read gene names
+    # `cflows`, `traced` and `sandbox` joined when `mioflow` declared `time`: a swissroll-only
+    # directory has no time axis, and no recipe step of theirs declares one.
+    assert "WARN  cflows" in out and "WARN  traced" in out and "WARN  sandbox" in out
+    assert "needs a shape providing ['time']" in out
+    assert "7 unexercisable" in out   # contrast, the three that read genes, the three MIOFlow
     assert rc == 0, "an unexercisable recipe is a WARN, not a FAIL — exit stays 0"
 
 
@@ -49,7 +53,9 @@ def test_coverage_clears_when_a_case_control_dataset_exists(tmp_path, capsys):
     out = capsys.readouterr().out
 
     assert "ok    contrast" in out and "runs on case-control" in out
-    assert "unexercisable" not in out
+    assert "WARN  contrast" not in out
+    # what remains is exactly the three MIOFlow recipes, which need a time axis
+    assert "3 unexercisable" in out
 
 
 def test_an_invalid_file_is_a_FAIL_and_flips_the_exit_code(tmp_path, capsys):
@@ -118,7 +124,8 @@ def test_no_bundled_prep_step_declares_a_parameter_its_executor_cannot_read():
     Checked by SOURCE rather than by a hand-kept table of readable keys, because a table would
     be the second home for a fact `prep.py` already states — a name that never appears in its
     executor's body cannot be read by it. Measured 2026-08-16: 19 bundled prep steps across 8
-    recipes declare 20 params, and every one of the 20 is named by its executor.
+    recipes declare 20 params, and every one of the 20 is named by its executor. `branches`
+    (2026-10-30) adds the two preamble steps and their two params: 22.
     """
     import inspect
 
@@ -136,7 +143,7 @@ def test_no_bundled_prep_step_declares_a_parameter_its_executor_cannot_read():
                     f"{name}: {step['name']} declares {key!r} and its executor never names it — "
                     "a param nothing reads is a silent lie on the page")
                 checked += 1
-    assert checked == 20, "the bundled prep params moved; re-read the measurement above"
+    assert checked == 22, "the bundled prep params moved; re-read the measurement above"
 
 
 def test_the_preamble_asks_the_short_half_like_every_other_row():
@@ -377,3 +384,39 @@ def test_catalog_validation_and_loading_never_fetch_or_verify_data_bytes(tmp_pat
     assert tmp_path.is_dir()
     assert catalog.load_dataset("sample", config_dir=tmp_path) == ds
     assert catalog.check_dataset(ds) == []
+
+
+_GOLDEN_CHECK = """\
+recipes
+  ok    solo           latent:pca
+
+datasets
+  ok    plane          manylatents:swissroll  shape=manifold
+
+coverage (recipe × dataset legality)
+  ok    solo           runs on manifold
+
+ladder (rungs the offered recipes can claim)
+  WARN  unroutable rungs: [1, 2, 3, 4]
+
+1 recipes, 1 datasets — all valid, unroutable rungs [1, 2, 3, 4]
+"""
+
+
+def test_check_output_is_golden_on_a_fixed_catalog(tmp_path, monkeypatch, capsys):
+    """`check` is the authors' transcript, and `actions` is the callers' document; adding the
+    second must not move a byte of the first. An inline catalog, so a recipe added to the
+    bundled set does not change the golden string."""
+    rdir, ddir = tmp_path / "recipes", tmp_path / "datasets"
+    rdir.mkdir()
+    ddir.mkdir()
+    (rdir / "solo.yaml").write_text(
+        "name: solo\nid: test.solo\n"
+        "steps:\n  - {name: pca, group: latent, params: {n_components: 2}, via: manylatents}\n"
+        'question: "What is here?"\nsuits: [manifold]\nclaims: surface\n')
+    (ddir / "plane.yaml").write_text(
+        "name: plane\nhandle: {kind: manylatents, ref: swissroll}\nshape: manifold\n")
+    assert rdir.is_dir() and ddir.is_dir()
+    monkeypatch.setenv("MANYRUNS_RECIPE_DIR", str(rdir))
+    assert _check(dataset_dir=str(ddir)) == 0
+    assert capsys.readouterr().out == _GOLDEN_CHECK

@@ -50,8 +50,40 @@ DEFAULTS: dict[str, Any] = {
 #: float steps multiplicatively and 0.1 → 0.09 never reaches zero; declared here anyway,
 #: because a recipe that declares `min_dist: 0.0` breaks even that (`abs(value or 1.0)` reads
 #: 0.0 as falsy and steps by a whole 0.1, straight to −0.1, which UMAP rejects).
-FLOOR: dict[str, Any] = {"knn": 1, "n_neighbors": 1, "n_components": 1, "resolution": 0.1,
+#:
+#: Every floor lies inside its `DOMAIN` entry, so an arrow never composes a value the step
+#: refuses.
+FLOOR: dict[str, Any] = {"knn": 1, "n_neighbors": 2, "n_components": 1, "resolution": 0.1,
                          "t": 1, "decay": 1, "min_dist": 0.0}
+
+#: Knob name -> the values for which the step is DEFINED, as the library that runs it checks
+#: them. `FLOOR` is where an arrow stops; this is what a value typed or chosen anywhere must
+#: satisfy. `kind` is "int" or "number"; `min_open`/`max_open` exclude the bound itself; `also`
+#: lists the non-numeric values that are legal. Each row cites the check it mirrors, read in the
+#: installed packages; a library upgrade can move one.
+DOMAIN: dict[str, dict] = {
+    # phate 2.0.0 phate/phate.py:372: a positive int or "auto"
+    "t": {"kind": "int", "min": 1, "min_open": False, "max": None, "max_open": False,
+          "also": ("auto",)},
+    # phate 2.0.0 phate/phate.py:363: positive
+    "decay": {"kind": "number", "min": 0, "min_open": True, "max": None, "max_open": False,
+              "also": ()},
+    # phate 2.0.0 phate/phate.py:358-361: a positive int
+    "knn": {"kind": "int", "min": 1, "min_open": False, "max": None, "max_open": False,
+            "also": ()},
+    # phate 2.0.0 phate/phate.py:358-361; umap-learn 0.5.12 umap/umap_.py:1799
+    "n_components": {"kind": "int", "min": 1, "min_open": False, "max": None,
+                     "max_open": False, "also": ()},
+    # umap-learn 0.5.12 umap/umap_.py:1784-1785: n_neighbors >= 2
+    "n_neighbors": {"kind": "int", "min": 2, "min_open": False, "max": None,
+                    "max_open": False, "also": ()},
+    # umap-learn 0.5.12 umap/umap_.py:1757-1760: 0 <= min_dist <= spread (default 1.0, no knob)
+    "min_dist": {"kind": "number", "min": 0, "min_open": False, "max": 1.0, "max_open": False,
+                 "also": ()},
+    # leiden: 0 puts every cell in one community and a negative value has no meaning
+    "resolution": {"kind": "number", "min": 0, "min_open": True, "max": None,
+                   "max_open": False, "also": ()},
+}
 
 #: Where an arrow starts when the current value is not a number. `t="auto"` is honest on screen
 #: and cannot be stepped, and `t` is the knob that moves this product's picture most — so

@@ -4,7 +4,7 @@ Dep-free: dir-shape reads reuse app's structural detection; describe/offer/narra
 string logic over an Observation or a g-vector."""
 from __future__ import annotations
 
-from manyruns import narrate
+from manyruns import intent, narrate
 from manyruns.narrate import Observation
 
 
@@ -59,6 +59,24 @@ def test_does_not_refuse_a_trajectory_on_a_time_course():
     assert narrate.refusal("trace the progression", tc) is None      # valid — no refusal
     cc = Observation(shape="case-control", conditions=["a", "b"])
     assert narrate.refusal("compare the groups", cc) is None         # not a trajectory ask
+
+
+def test_refusal_fires_for_clusters_shape():
+    """Cell types captured at one moment carry no clock either: pbmc3k declares `clusters`."""
+    obs = Observation(shape="clusters", modality="scrna", n_obs=2700, n_vars=32738)
+    msg = narrate.refusal("show me the developmental trajectory", obs)
+    assert msg and "no clock" in msg
+    assert msg.endswith("what cell types are here and how they separate.")
+
+
+def test_refusal_does_not_fire_for_time_course():
+    obs = Observation(shape="time-course", modality="scrna", n_timepoints=4)
+    assert narrate.refusal("show me the developmental trajectory", obs) is None
+
+
+def test_structure_request_on_clusters_still_routes_to_embed():
+    obs = Observation(shape="clusters", modality="scrna")
+    assert intent.route_recipe("map the structure", obs, ["embed", "cluster"]) == ("embed", None)
 
 
 def test_interpret_maps_plain_questions_to_recipes():

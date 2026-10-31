@@ -17,7 +17,7 @@ import json
 
 import pytest
 
-from manyruns import decisions  # noqa: E402
+from manyruns import decisions, vocab  # noqa: E402
 
 OFFERED = [
     {"recipe": "embed", "can_run": True, "blocked": [], "recommended": True},
@@ -82,8 +82,8 @@ def test_the_row_carries_no_data(tmp_path):
 
     text = decisions.index_path(tmp_path).read_text()
     row = json.loads(text)
-    assert set(row) == {"schema_version", "decision_id", "run_id", "at", "surface", "dataset", "shape",
-                        "topology", "offered", "chosen"}
+    assert set(row) == {"schema_version", "decision_id", "run_id", "at", "surface", "chooser",
+                        "bound", "legal_id", "dataset", "shape", "topology", "offered", "chosen"}
 
 
 def test_a_choice_from_nothing_is_not_a_decision(tmp_path):
@@ -115,6 +115,127 @@ def test_rows_accumulate_and_a_corrupt_one_is_skipped(tmp_path):
     _write(tmp_path, chosen="markers")
 
     assert [r["chosen"] for r in decisions.read(tmp_path)] == ["embed", "cluster", "markers"]
+
+
+# ── who chose, how the choice was bound, and over which task space ──────────
+def _row(tmp_path):
+    (row,) = list(decisions.read(tmp_path))
+    return row
+
+
+def test_an_existing_caller_records_a_human_with_no_bound(tmp_path):
+    """Environment contract §2.1-2.2: the two callers that exist pass neither field, and both
+    are a person choosing from a rendered list."""
+    decisions.append(offered=OFFERED, chosen="embed", out_dir=tmp_path)
+    row = _row(tmp_path)
+    assert row["chooser"] == "human" and row["bound"] == "none"
+
+
+def test_a_model_chooser_is_recorded(tmp_path):
+    decisions.append(offered=OFFERED, chosen="embed", chooser="llm:claude-opus-4-8",
+                     bound="schema", out_dir=tmp_path)
+    row = _row(tmp_path)
+    assert row["chooser"] == "llm:claude-opus-4-8" and row["bound"] == "schema"
+
+
+def test_an_unknown_bound_is_a_caller_bug_not_a_row(tmp_path):
+    """A wrong `bound` is the silent lie §2.2 warns about, so it raises rather than records."""
+    assert decisions.BOUNDS == ("logits", "schema", "prompt", "none")
+    with pytest.raises(ValueError, match="enum"):
+        decisions.append(offered=OFFERED, chosen="embed", bound="enum", out_dir=tmp_path)
+    assert list(decisions.read(tmp_path)) == []
+
+
+def test_an_empty_chooser_raises_before_the_file_is_opened(tmp_path):
+    with pytest.raises(ValueError):
+        decisions.append(offered=OFFERED, chosen="embed", chooser="", out_dir=tmp_path)
+    assert not (tmp_path / "decisions.jsonl").exists()
+
+
+def test_a_non_string_chooser_raises(tmp_path):
+    with pytest.raises(ValueError):
+        decisions.append(offered=OFFERED, chosen="embed", chooser=None, out_dir=tmp_path)
+    assert list(decisions.read(tmp_path)) == []
+
+
+def test_validation_runs_before_the_empty_offer_check(tmp_path):
+    """A caller bug does not hide behind the empty-offer no-op."""
+    with pytest.raises(ValueError):
+        decisions.append(offered=[], chosen="embed", bound="enum", out_dir=tmp_path)
+
+
+def test_the_legal_id_of_a_ledger_offer_with_one_blocked_recipe(tmp_path):
+    """The id is a hash of the legal set and the vocabulary version, and nothing else: the
+    blocked `contrast` is not in it."""
+    assert decisions._legal_set(OFFERED) == ["cluster", "embed"]
+    _write(tmp_path)
+    assert _row(tmp_path)["legal_id"] == "d293a2ccd28b"
+
+
+def test_the_order_of_the_offer_does_not_change_the_legal_id(tmp_path):
+    _write(tmp_path, offered=list(reversed(OFFERED)))
+    assert _row(tmp_path)["legal_id"] == "d293a2ccd28b"
+
+
+def test_an_entry_without_can_run_is_legal(tmp_path):
+    """The offer `tests/test_record_schema.py` writes."""
+    assert decisions._legal_set([{"recipe": "embed"}]) == ["embed"]
+    _write(tmp_path, offered=[{"recipe": "embed"}])
+    assert _row(tmp_path)["legal_id"] == "85075bbaef66"
+
+
+def test_an_offer_with_no_named_entry_has_an_empty_legal_set(tmp_path):
+    """The offer `tests/test_tui_run.py` writes. The row is still written."""
+    assert decisions._legal_set([{"a": 1}, {"b": 2}]) == []
+    _write(tmp_path, offered=[{"a": 1}, {"b": 2}])
+    assert _row(tmp_path)["legal_id"] == "25931395e736"
+
+
+def test_the_vocabulary_version_changes_the_legal_id(tmp_path, monkeypatch):
+    """`append` reads `vocab.VERSION` at call time, so a bump takes effect without a reload."""
+    monkeypatch.setattr(vocab, "VERSION", "2")
+    _write(tmp_path)
+    assert _row(tmp_path)["legal_id"] == "63c20f253f6b"
+
+
+def test_a_tune_offer_is_named_by_its_label():
+    """Two attempts of one step differ only by params, and the label renders the params."""
+    offered = [{"step": "pca", "params": {}, "label": "b"},
+               {"step": "pca", "params": {}, "label": "a"}]
+    assert decisions._legal_set(offered) == ["a", "b"]
+
+
+def test_duplicate_tune_labels_count_once(tmp_path):
+    offered = [{"step": "pca", "params": {"n_components": 2}, "label": "pca n_components=2"}] * 2
+    assert decisions._legal_set(offered) == ["pca n_components=2"]
+    _write(tmp_path, offered=offered)
+    assert _row(tmp_path)["legal_id"] == "e28f4684e82c"
+
+
+def test_a_caller_cannot_set_the_legal_id(tmp_path):
+    """A caller that passes its own id can compute it another way, and the corpus cannot tell."""
+    with pytest.raises(TypeError):
+        decisions.append(offered=OFFERED, chosen="embed", legal_id="x", out_dir=tmp_path)
+    assert list(decisions.read(tmp_path)) == []
+
+
+def test_the_new_keys_follow_surface_and_the_version_stays_1(tmp_path):
+    _write(tmp_path)
+    row = json.loads(decisions.index_path(tmp_path).read_text())
+    assert list(row) == ["schema_version", "decision_id", "run_id", "at", "surface", "chooser",
+                         "bound", "legal_id", "dataset", "shape", "topology", "offered", "chosen"]
+    assert row["schema_version"] == 1
+
+
+def test_a_legacy_row_is_read_unchanged(tmp_path):
+    """No migration: a row written before these fields existed reads without them."""
+    path = decisions.index_path(tmp_path)
+    path.write_text(json.dumps({"offered": OFFERED, "chosen": "embed"}) + "\n")
+    before = path.read_bytes()
+
+    row = next(decisions.read(tmp_path))
+    assert not {"chooser", "bound", "legal_id"} & set(row)
+    assert path.read_bytes() == before
 
 
 # ── the training shape ───────────────────────────────────────────────────────
@@ -158,6 +279,79 @@ def test_a_decision_with_one_legal_move_is_not_an_example(tmp_path):
 
     assert len(list(decisions.read(tmp_path))) == 1
     assert decisions.examples(tmp_path) == []
+
+
+# ── filtering the training pairs ─────────────────────────────────────────────
+PAIR_KEYS = {"shape", "topology", "legal", "blocked", "recommended", "chosen", "took_default"}
+
+
+def _hand_written(tmp_path, **row):
+    """A row as an older writer left it: no `surface`, no `chooser`."""
+    row = {"offered": OFFERED, "chosen": "embed", **row}
+    with decisions.index_path(tmp_path).open("a") as fh:
+        fh.write(json.dumps(row) + "\n")
+
+
+def test_examples_keep_the_ledger_surface_by_default(tmp_path):
+    _write(tmp_path, surface="ledger")
+    _write(tmp_path, surface="audit")
+    assert len(decisions.examples(tmp_path)) == 1
+    assert len(decisions.examples(tmp_path, surface="audit")) == 1
+    assert len(decisions.examples(tmp_path, surface=None)) == 2
+
+
+def test_a_row_without_a_surface_counts_as_ledger(tmp_path):
+    _hand_written(tmp_path)
+    assert len(decisions.examples(tmp_path)) == 1
+
+
+def _three_choosers(tmp_path):
+    """Each chooser takes a different recipe, so a surviving pair says whose row it came from."""
+    for chooser, chosen in (("human", "embed"), ("llm:claude-opus-4-8", "cluster"),
+                            ("llm:qwen3:8b", "contrast")):
+        _write(tmp_path, chooser=chooser, chosen=chosen)
+
+
+def test_examples_drop_one_model_by_exact_chooser(tmp_path):
+    """Environment contract §2.1: a row a policy chose is not training data for that policy."""
+    _three_choosers(tmp_path)
+    assert len(decisions.examples(tmp_path, exclude_chooser="llm:claude-opus-4-8")) == 2
+
+
+def test_examples_drop_every_model_by_prefix(tmp_path):
+    _three_choosers(tmp_path)
+    (ex,) = decisions.examples(tmp_path, exclude_chooser="llm:")
+    assert ex["chosen"] == "embed"
+
+
+def test_examples_drop_by_a_list_of_choosers(tmp_path):
+    _three_choosers(tmp_path)
+    (ex,) = decisions.examples(tmp_path, exclude_chooser=["human", "llm:qwen3:8b"])
+    assert ex["chosen"] == "cluster"
+
+
+def test_a_chooser_without_a_trailing_colon_matches_exactly(tmp_path):
+    _three_choosers(tmp_path)
+    assert len(decisions.examples(tmp_path, exclude_chooser="llm")) == 3
+
+
+def test_a_legacy_row_counts_as_human(tmp_path):
+    _hand_written(tmp_path)
+    assert decisions.examples(tmp_path, exclude_chooser="human") == []
+
+
+def test_a_pair_does_not_carry_the_chooser(tmp_path):
+    """The pair keeps its seven keys; a trainer filters with `exclude_chooser` instead."""
+    _write(tmp_path, chooser="llm:x")
+    (ex,) = decisions.examples(tmp_path)
+    assert set(ex) == PAIR_KEYS
+
+
+def test_the_default_rate_uses_the_default_filters(tmp_path):
+    _write(tmp_path, chosen="embed")
+    _write(tmp_path, chosen="embed", surface="audit")
+    assert decisions.default_rate(tmp_path) == 1.0
+    assert len(decisions.examples(tmp_path)) == 1
 
 
 # ── the call site ────────────────────────────────────────────────────────────
@@ -243,7 +437,7 @@ def test_every_recipe_that_asserts_a_structure_now_declares_it():
     # nothing about which. `check_claims` makes absence legal precisely so a recipe can say so
     # rather than pick the nearest word.
     assert set(discover_recipes()) - set(claimed) == {"qc", "sandbox", "preprocess"}
-    assert claimed == {"archetypes": 4, "cflows": 2, "cluster": 1, "contrast": 1,
+    assert claimed == {"archetypes": 4, "branches": 3, "cflows": 2, "cluster": 1, "contrast": 1,
                        "embed": 0, "markers": 1, "pseudotime": 2,
                        # `traced` is `cflows` plus a probe, and claims the same structure: the
                        # probe REPORTS on the trajectory rather than asserting a second one, so
@@ -252,13 +446,87 @@ def test_every_recipe_that_asserts_a_structure_now_declares_it():
 
 
 def test_the_unreachable_rung_is_reported_rather_than_hidden():
-    """`unroutable_rungs()` went [3, 4] → [3]: `archetypes` now claims rung 4. It reads what
-    recipes CLAIM, not what they can RUN, and `archetypes` is `blocked:` upstream — so rung 4 is
-    closed on paper and unreachable in fact. Pinned so the distinction is not lost: a perfect
-    selector is still capped by both, and `multi-branching` has no recipe at all while
-    `tree_narrow`/`tree_wide` ship as datasets whose correct answer nothing can give."""
+    """`unroutable_rungs()` went [3, 4] → [3] → []: `archetypes` claimed rung 4 while it was
+    `blocked:` upstream, and `branches` now claims rung 3. With manylatents 0.1.9 `archetypes`
+    runs, so the catalogue answer and the offer answer agree: rung 4 is closed in fact, not only
+    on paper. Pinned so a regression on either rung is reported rather than hidden."""
     from manyruns import narrate, score
     from manyruns.catalog import load_recipe
 
-    assert score.unroutable_rungs() == [3]
-    assert narrate.unavailable(load_recipe("archetypes")), "rung 4's only claimant is blocked"
+    assert score.unroutable_rungs() == []
+    assert narrate.unavailable(load_recipe("archetypes")) == []
+
+
+# ── the gate and the proposed block: two optional core keys that `run --choice` writes ──
+_THIRTEEN = ["schema_version", "decision_id", "run_id", "at", "surface", "chooser", "bound",
+             "legal_id", "dataset", "shape", "topology", "offered", "chosen"]
+
+
+@pytest.mark.parametrize("gate", [True, False])
+def test_append_records_gate(tmp_path, gate):
+    _write(tmp_path, gate=gate)
+    row, = decisions.read(tmp_path)
+    assert row["gate"] is gate
+    assert list(row) == [*_THIRTEEN, "gate"]
+
+
+def test_append_without_gate_writes_no_key(tmp_path):
+    _write(tmp_path)
+    row, = decisions.read(tmp_path)
+    assert list(row) == _THIRTEEN
+
+
+@pytest.mark.parametrize("gate", ["on", 1, 0])
+def test_append_refuses_non_bool_gate(tmp_path, gate):
+    with pytest.raises(ValueError, match="gate"):
+        _write(tmp_path, gate=gate)
+    assert not (tmp_path / "decisions.jsonl").exists()
+
+
+def test_row_without_gate_reads_as_missing(tmp_path):
+    hand = {"offered": [{"recipe": "embed"}], "chosen": "embed"}
+    (tmp_path / "decisions.jsonl").write_text(json.dumps(hand) + "\n")
+    decisions.append(offered=[{"recipe": "embed"}], chosen="embed", out_dir=tmp_path)
+    before = (tmp_path / "decisions.jsonl").read_bytes()
+    rows = list(decisions.read(tmp_path))
+    assert len(rows) == 2
+    assert all("gate" not in row and row.get("gate") is None for row in rows)
+    assert list(rows[1]) == _THIRTEEN
+    assert (tmp_path / "decisions.jsonl").read_bytes() == before
+
+
+def test_append_records_proposed_last(tmp_path):
+    proposed = {"chooser": "llm:x", "bound": "schema", "chosen": "embed",
+                "offer_sha256": "0" * 64}
+    decisions.append(offered=[{"recipe": "embed"}], chosen="embed", chooser="human:a3",
+                     gate=True, proposed=proposed, out_dir=tmp_path)
+    row, = decisions.read(tmp_path)
+    assert list(row)[-2:] == ["gate", "proposed"]
+    assert row["proposed"]["chooser"] == "llm:x"
+    assert row["proposed"] == proposed
+
+
+def test_append_without_proposed_writes_no_key(tmp_path):
+    _write(tmp_path, gate=True)
+    row, = decisions.read(tmp_path)
+    assert "proposed" not in row and row.get("proposed") is None
+
+
+@pytest.mark.parametrize("proposed", ["embed", ["embed"]])
+def test_append_refuses_non_dict_proposed(tmp_path, proposed):
+    with pytest.raises(ValueError, match="proposed"):
+        decisions.append(offered=[{"recipe": "embed"}], chosen="embed", proposed=proposed,
+                         out_dir=tmp_path)
+    assert not (tmp_path / "decisions.jsonl").exists()
+
+
+def test_append_copies_proposed(tmp_path):
+    proposed = {"chooser": "llm:x", "bound": "schema", "chosen": "embed",
+                "offer_sha256": "0" * 64, "meta": {"tags": ["a"]}}
+    decisions.append(offered=[{"recipe": "embed"}], chosen="embed", chooser="human:a3",
+                     proposed=proposed, out_dir=tmp_path)
+    proposed["chosen"] = "cluster"
+    proposed["meta"]["tags"].append("b")
+    row, = decisions.read(tmp_path)
+    assert row["proposed"]["chosen"] == "embed"
+    assert row["proposed"]["meta"] == {"tags": ["a"]}

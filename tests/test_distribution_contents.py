@@ -9,7 +9,7 @@ from packaging.requirements import Requirement
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SDIST_ROOTS = {'manyruns', 'tests', 'README.md', 'LICENSE', 'CHANGELOG.md', 'pyproject.toml'}
+SDIST_ROOTS = {'manyruns', 'tests', 'README.md', 'LICENSE', 'NOTICE', 'CHANGELOG.md', 'pyproject.toml'}
 # The sdist must contain the application, tests, README, license, pyproject and generated
 # PKG-INFO, plus CHANGELOG.md when present in the source tree. Hatch may force-include
 # .gitignore and .hgignore; allow only those optional roots. Checkout tooling, local data,

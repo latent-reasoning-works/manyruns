@@ -109,20 +109,3 @@ def test_labels_with_no_declared_kind_do_not_reach_mioflow(tmp_path, monkeypatch
 
     assert seen["labels"] is None
     assert "mioflow.n_timepoints" not in out["g_vector"]
-
-
-def test_the_fix_is_label_typing_not_over_pruning():
-    """cflows is legal on BOTH manifold and case/control — the guard is that MIOFlow ignores
-    a condition axis, NOT that the planner prunes cflows off shapes with no time (which would
-    wrongly kill cflows-on-swissroll, a valid pseudotime run)."""
-    from manyruns.vocab import unmet
-
-    # Mirrors the real recipe: phate → mioflow, no analysis step. It used to carry
-    # `granger`, which was deleted; do NOT substitute another analysis step here, because
-    # `separation`/`composition` DECLARE a `conditions` need in `vocab.STEP_NEEDS` and would
-    # make `unmet(cflows, "manifold")` non-empty — turning this legality test into an
-    # assertion about the substitute rather than about cflows.
-    cflows = {"name": "cflows", "steps": [
-        {"name": "phate", "group": "latent"}, {"name": "mioflow", "group": "lightning"}]}
-    assert unmet(cflows, "manifold") == frozenset()
-    assert unmet(cflows, "case-control") == frozenset()

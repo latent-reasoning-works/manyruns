@@ -23,9 +23,9 @@ _GENERATOR_ATTRS = ("X", "data", "DATA", "dataset")
 #
 # The one bundled dataset that carries a real time axis. Measured 2026-07-28: the other 12
 # declare `shape: manifold` or `clusters`, and `vocab.SHAPE_PROVIDES` maps `time-course →
-# ("time",)`, so before this existed MIOFlow could only ever run on the pseudotime fallback
-# in `steps._step_mioflow` — an ordering derived FROM the embedding, which returns a full
-# [0, 1] range on data with no time in it.
+# ("time",)`. Before this existed MIOFlow had no real time axis to run on. MIOFlow now needs
+# one (`vocab.STEP_NEEDS`): this dataset, or a recipe that declares an inferred axis with
+# `discretize_time` (`examples/recipes/cflows_inferred.yaml`).
 #
 # TIME IS A GENERATIVE PARAMETER. Each snapshot is `randn(n, d) + drift * t` carrying the
 # label `t` — the construction manylatents' own MIOFlow tests use — so the timepoint is an

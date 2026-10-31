@@ -1007,9 +1007,7 @@ def _resolve_dataset(name: str) -> tuple[Optional[Path], Optional[str], str, Obs
         # `missing_dataset_file` — an absent file is a fact about this machine, not about the
         # declaration, and the two are separate questions.
         if found is None:
-            return data_folder, None, modality, Observation(
-                shape=ds.get("shape", "unknown"), modality=modality, conditions=None, source=name,
-                declared=tuple(narrate.declared_facts(ds)))
+            return data_folder, None, modality, narrate.declared_observation(ds, name)
         # MERGE, DO NOT CHOOSE. `read_data` reports facts about the BYTES — `n_obs`, `n_vars`,
         # `conditions`, `n_timepoints`. The YAML reports the experimental DESIGN — `shape`. They
         # answer different questions, so taking one wholesale throws the other away.
@@ -1026,9 +1024,7 @@ def _resolve_dataset(name: str) -> tuple[Optional[Path], Optional[str], str, Obs
         return found, None, modality, replace(
             narrate.read_data(found, modality, source=name),
             shape=ds.get("shape") or "unknown", declared=tuple(narrate.declared_facts(ds)))
-    obs = Observation(shape=ds.get("shape", "unknown"), modality=modality,
-                      conditions=None, source=name, declared=tuple(narrate.declared_facts(ds)))
-    return None, handle.get("ref", name), modality, obs
+    return None, handle.get("ref", name), modality, narrate.declared_observation(ds, name)
 
 
 def _resolve_path_source(

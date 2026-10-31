@@ -16,6 +16,6 @@ Include any workaround you use today.
 Describe the behavior you want and how you would know it worked.
 
 **Environment**
-- `co-science --version` output (or say you have not installed it):
+- `manyruns --version` output (or say you have not installed it):
 - Platform and OS version:
 - Python version:

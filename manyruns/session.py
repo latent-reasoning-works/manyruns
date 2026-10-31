@@ -37,6 +37,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
+from manyruns import trace as _trace
 from manyruns.pipeline import runner as _runner
 
 
@@ -267,6 +268,7 @@ class Session:
         counts: Any = None,
         genes: Any = None,
         layers: Optional[dict] = None,
+        agent_id: str = _trace.HUMAN,
     ):
         from manyruns.pipeline import bounds
 
@@ -288,6 +290,10 @@ class Session:
         self.data_kwargs = dict(data_kwargs or {})
         self.shape = shape
         self.on_step = on_step
+        # WHO drives this lineage: the person, or a model chooser (`llm:<model>`) that
+        # `agents.propose` sets for the length of its call. It stamps the `step` and
+        # `run_complete` trace events, so a reader can tell a person's steps from a model's.
+        self.agent_id = agent_id
         self.compute = None  # Optional execution placement; never an engine selection.
         # A caller-supplied embedding is a fact the CALLER provided, which is what
         # `vocab.noncanonical` needs to say "legal and unusual" rather than nothing at all.
@@ -389,7 +395,7 @@ class Session:
                 rec.update(outcome='error', detail=f'{type(exc).__name__}: {exc}', seconds=0.0)
                 _runner._settle(rec)
                 _runner._report(self.on_step, rec, self.steps)
-                return rec
+                return self._emit_step(rec)
             for target, source in ((self.state, state), (self.g, g),
                                    (self.ctx, ctx), (self.carry, carry)):
                 target.clear()
@@ -398,11 +404,21 @@ class Session:
             self.ctx['plots'] = self.plots
             self.steps[:] = steps
             _runner._report(self.on_step, self.steps[index], self.steps)
-            return self.steps[index]
-        return _runner.apply_step(
+            return self._emit_step(self.steps[index])
+        return self._emit_step(_runner.apply_step(
             step, self.state, self.g, dispatch=self.dispatch, ctx=self.ctx,
             index=len(self.steps), carry=self.carry, on_step=self.on_step, steps=self.steps,
-        )
+        ))
+
+    def _emit_step(self, rec: dict) -> dict:
+        """The `step` trace event for one returned record, then the record itself, unchanged.
+
+        The default sink writes nothing and no sink raises, so this changes no step result."""
+        _trace.current().emit(_trace.stamp(
+            {"kind": "step", "index": rec.get("index"), "name": rec.get("name"),
+             "group": rec.get("group"), "outcome": rec.get("outcome")},
+            run_id=self.run_id, agent_id=self.agent_id))
+        return rec
 
     def step(self, action: Any) -> dict:
         """Apply one step and return it in the shape the REPL renders.
@@ -549,6 +565,7 @@ class Session:
             metrics=self.ctx["metrics"], on_step=self.on_step, shape=self.shape,
             embedding=_artifacts.load_array(path),
             parent={"run_id": self.run_id, "index": index},
+            agent_id=self.agent_id,
         )
         if alignment is None:
             # A positional branch inherits the uncertainty and must not turn reloaded
@@ -659,13 +676,20 @@ class Session:
         the single guarantee it exists to give.
         """
         try:
-            return self.results(abandoned=abandoned, not_run=not_run)
+            res = self.results(abandoned=abandoned, not_run=not_run)
         finally:
             if self.compute is not None:
                 self.compute.close()
             # The child must be stopped before marking the parent's retained artifacts
             # complete; a cancelled child may otherwise still be writing them.
             _runner.finish_carry(self.carry, self.ctx)
+        if isinstance(res, dict):
+            # After `finish_carry`, so the event follows the `COMPLETE` marker it reports on.
+            _trace.current().emit(_trace.stamp(
+                {"kind": "run_complete", "ok": res.get("ok"), "complete": res.get("complete"),
+                 "spec_id": res.get("spec_id"), "n_steps": len(self.steps)},
+                run_id=self.run_id, agent_id=self.agent_id))
+        return res
 
     # ── views over the record (never a second accumulator) ───────────────────
     @property

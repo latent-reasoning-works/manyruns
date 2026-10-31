@@ -25,6 +25,7 @@ source:
 # AGPL. Recorded because it is a REASON this runs as a separate program communicating through a
 # file rather than as a library we link — not merely a licence note.
 licence: AGPL-3.0-only
+commercial_use: true   # AGPL permits commercial use, with source obligations
 
 produces: [velocity]
 needs:    [splicing]

@@ -6,11 +6,159 @@ During the open beta, the CLI and record schema can still change.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-31
+
+### Added
+
+- `manyruns.action_space` and `manyruns run --choice FILE`: one interface for any program that
+  decides what manyruns runs next, through the CLI or as a library. `ActionSpace.offer` returns
+  the action document and `ActionSpace.act` runs a choice document; `run --choice` checks the
+  choice against the action document whose digest it names, refuses an illegal or stale choice
+  with exit 2 before it writes anything, writes the decision row (with the new optional keys
+  `gate` and `proposed`), runs, and joins the run row by `decision_id`. Also `review`,
+  `as_tools`, `choice_from_tool_call`, `python -m manyruns`, and the page `docs/harness.md`.
+- `MANYRUNS_COMMERCIAL`: someone who builds a proprietary application on the free components
+  sets it to `1`. Then every recipe with a non-commercial step (a step named in
+  `commercial.NON_COMMERCIAL_STEPS`, such as `mioflow`, or a tool step whose manifest says
+  `commercial_use: false`) is a hollow row with one reason, `manyruns run` refuses it with exit
+  2 before any step and writes nothing, an added step is refused, `registry.apply_weights`
+  refuses, and a `commercial_use: false` tool manifest does not load. manyruns then imports none
+  of the seven Yale-derived manylatents modules (`commercial.NON_COMMERCIAL_MODULES`). Unset,
+  empty and `0` leave it off; any other value is an error. The flag covers manyruns' own imports
+  only.
+- `examples/recipes/cflows_inferred.yaml`: MIOFlow on data with no time axis, with the axis
+  declared by the recipe (`dpt`, then `discretize_time`, then `mioflow`).
+- The model seam: a tool manifest with `output.schema: result-v1` returns an embedding,
+  clusters, a pseudotime, trajectories, a graph or class probabilities in a `result.json` that
+  `external.check_result` checks before any merge. Call mode (`mode: call`) calls an unmodified
+  library from its manifest alone; `mode: precomputed` reads a result made elsewhere, found by
+  the sha256 of the run's cells and marked in the record. `manyruns tools verify <name>` runs a
+  tool on a 12-cell fixture and checks its result. Every manifest declares `licence` and
+  `commercial_use`, run and call manifests pin their distribution with `==`, and run rows gain
+  `non_commercial_steps`. `examples/tools/mioflow/` runs upstream `mioflow==0.1.14` through a
+  pinned adapter, outside the wheel.
+- `manyruns claim RUN --topology NAME=P[,NAME=P...] --chooser C [--bound B]` appends a
+  structure-class verdict about a stored run to `outputs/index.jsonl`: one independent
+  probability per topology, nested under `extra.verdict` with the chooser, the bound, the
+  `legal_id` and the model. The chooser is `human:<pseudonym>`, `llm:<model>`, `learner:<id>` or
+  `prior:<id>`; a non-human chooser needs `--bound`. A usage error exits 2 and an unknown run
+  exits 1. A verdict row shares its run's `run_id`; a reader that counts runs skips rows where
+  `score.verdict_of(row)` is not `None`.
+- Scorer functions in `manyruns.score`: `verdict_of`, `pred_rung`, `truth_from_annotations`,
+  `soft_truth`, `class_auprc` (macro and per-class average precision against the annotator
+  majority), `brier` and `check_raw_labels`. `vocab.BENCHMARK_CLASSES` names the four benchmark
+  classes.
+- `MANYRUNS_BLIND_DATASET`: when on, run rows, the model prompt and the roster payload carry a
+  blinded name (`ds-` plus 12 hex characters of a SHA-256) in place of the true dataset name,
+  and `outputs/blind_names.jsonl` keeps the true name so `blind.unblind_rows` can join verdicts
+  to labels. Step artifact paths are not rewritten.
+- `manyruns actions [DATASET] [--surface ledger|tune|ladder]` prints the legal action space as
+  one JSON document: the ledger of a dataset, the knobs of a recipe's tunable steps with their
+  domains, or the scorer's rung tables. It is read-only. `--gate on|off` and `--seed N` record
+  the geometry mask and select the probe run it reads. Every tunable knob declares its domain
+  in `tui.params.DOMAIN`, and the `n_neighbors` arrow floor moves from 1 to 2.
+- Decision rows carry `chooser`, `bound` and `legal_id` (still `schema_version` 1;
+  older rows are read unchanged). `decisions.examples()` gains `surface` and
+  `exclude_chooser` filters. `vocab` gains `VERSION` and the scShapeBench and harness
+  labeler topology mappings. The labeler's `VALID_LABELS` is now derived from
+  `vocab.LABELER_TOPOLOGY`, and labeled entries gain a canonical `topology`.
+- An engine byproduct that is a dict of scalars, such as the Reeb graph
+  `structural_summary`, is flattened one level into the g-vector as
+  `<step>.<key>.<subkey>`; non-scalar sub-values are not recorded.
+- An annotation store, `outputs/annotations.jsonl` (`manyruns.annotations`), records a
+  judgment about a run, which is not a committed choice: a topology `label`, a `rating`, or a
+  `correction`. Each row is `schema_version` 1 and names its chooser as `human:<pseudonym>` or
+  `llm:<model>`. `decisions.jsonl` and `index.jsonl` are unchanged.
+- Four verbs write it: `manyruns label RUN --topology T[,T...] --annotator P`,
+  `manyruns import-labels scshapebench --source FILE --revision SHA` (one row per dataset per
+  annotator; the file's SHA-256 is kept, its path is not), `manyruns rate RUN [RUN ...]
+  --annotator P` with `--rank`, `--rubric` or `--blind`, and
+  `manyruns correct RUN --step N --should STEP --annotator P`.
+- The run screen labels a finished run: keys `1` to `6` toggle the six topologies, and `enter`
+  records them as `human:` plus `MANYRUNS_ANNOTATOR`.
+- `MANYRUNS_PROPOSER_MODEL` sets the proposer model. `agents.proposer_model(fallback=None)`
+  returns it, else `fallback`, else `agents.MODEL`; a blank value counts as unset.
+  `agents.proposer_extra(model, agent)` puts the model on a run row under `extra.proposer`.
+- `agents.propose(session, prompt, ...)` runs manyAgents' `run_agent_loop` once with that
+  model and records it under the session's `run_id`: the transcript in
+  `<run folder>/agent/messages.jsonl` and trace events. It returns `None` and raises nothing
+  when manyAgents is absent, an event loop is running, or the loop fails.
+- New trace kinds: `step` and `run_complete` (`Session`), `decision` (`decisions.append`,
+  with the row's `chooser` as `agent_id`), and `proposer_assistant`, `proposer_tool_call`,
+  `proposer_tool_result` and `proposer_call` (`agents.propose`). `Session` gains `agent_id`
+  (default `human`), and tune decision rows name the session's driver as `chooser`.
+- A manylatents latent step writes the engine's `outputs.json` into
+  `<run folder>/engine/<NN>-<step>/` through `pipeline.runner.RunStepLogger`, with an
+  `outputs.done` marker. `COMPLETE` keeps its meaning.
+- Section 8 of the environment contract documents the run folder layout and names `run_id` as
+  the join key.
+- The `branches` recipe (`sc.branch.reeb`, `claims: multi-branching`): the preamble, `pca`,
+  `phate`, `reeb_graph` and the `branch_points` readout. It closes rung 3 of the ladder.
+- The `branch_points` analysis step copies the Reeb summary's `n_branch_points` and
+  `n_endpoints` to `branch_points.*`; an absent summary is recorded as `None` with a note.
+- The `graph` fact. `reeb_graph` is a graph-valued latent step: it keeps the embedding, its
+  node-membership matrix goes to the artifact channel as `reeb_graph.membership`, and the
+  metric suite is not sent to it. It provides only `graph`, so a readout that needs
+  coordinates is illegal after a lone Reeb step.
+- `vocab.rung_support(recipe, evidence, admitted)`, the rung-support gate: it refuses a
+  `clusters`, `multi-branching` or `single-trajectory` claim that the measured g-vector does
+  not support, with one of the nine fixed reasons in `vocab.SUPPORT_REASONS`. An unavailable
+  value refuses. `narrate.offer` and `tui.state.ledger` take `evidence` and `admitted`;
+  `manyruns actions` applies the gate when `--gate on`, from the probe run, and fills
+  `detail.<recipe>.support`. `vocab.LID_1D_BAND` is a placeholder until calibrated, and
+  `vocab.ADMITTED_READOUTS` is empty. `configs/recipe/README.md` states the rule table.
+- `score.unroutable_rungs(offer)` returns the rungs that no offered and runnable recipe claims.
+- `manyruns check` prints a ladder line: the rungs that the offered recipes leave unroutable.
+  A gap fails the check on the bundled catalogue and warns in a `$MANYRUNS_RECIPE_DIR`.
+- `manyruns run --ask TEXT` routes a plain-words request to one legal recipe by rules, never
+  a model. A request the data cannot support is declined with nothing run: a trajectory
+  request on `clusters` data, which has no time axis, is refused and reframed.
+
+### Changed
+
+- Relicensed from MIT to Apache-2.0. Releases up to and including 0.1.0 stay under MIT; NOTICE keeps the MIT notice and lists the MIOFlow files it does not cover.
+- The public-safety gate now also stops two more forbidden names: `tests/learners.py` holds
+  two more SHA-256 digests. A new local name hook, `.githooks/forbidden_names.py`, blocks a
+  commit whose staged files or message hold a forbidden name and prints locations only. Turn
+  it on once per clone with `git config core.hooksPath .githooks`.
+- `non_commercial_steps` in the run row now also names an in-process MIOFlow step: every step
+  whose name is in `commercial.NON_COMMERCIAL_STEPS`, whatever its outcome and engine. Runs of
+  `cflows`, `traced` and `sandbox` record `["mioflow"]` (`sandbox` also `granger`).
+- `mioflow` needs a time axis (`vocab.STEP_NEEDS["mioflow"] = ("embedding", "time")`), so
+  `cflows`, `traced` and `sandbox` are blocked at plan time on data with no time axis.
+  `discretize_time` provides `time`.
+- `sample_trajectories` reads `state["trajectories"]`, which the in-process MIOFlow route fills
+  from the trained model and a tool step that returns `trajectories` fills the same way; the
+  probe runs on the in-process loop too, and a step that sets trajectories draws `<step>.png`
+  with them.
+- Auto-selection takes the first recipe that can run, and names a skipped best match and its
+  reason: with `MANYRUNS_COMMERCIAL=1`, time-course data gets `pseudotime`.
+- The `archetypes` recipe is runnable: its `blocked:` field is removed, and its `aa` step
+  declares `n_components: 3`.
+- The `manylatents` lower bound is `manylatents>=0.1.9`, the first release in which `aa` fits.
+- `score.unroutable_rungs` takes `config_dir` by keyword only.
+- `manyruns actions`, with its gate on (the default), refuses a recipe whose claim the probe
+  run does not support. With no probe run, every claim that has a rule is refused.
+
+### Removed
+
+- The second console-script name. The wheel installs one command, `manyruns`; run
+  `manyruns` wherever you ran the other name.
+- The invented time axis: with no time labels, the in-process MIOFlow route no longer computes
+  a diffusion pseudotime binned into five time points. It refuses the run and names
+  `discretize_time`. The params `n_neighbors` and `n_timepoints` of a `mioflow` step are gone and
+  now raise the "unknown param" error.
+- The `label` and `rlhf` stubs of `python -m manyruns.harness`, which printed "not yet
+  implemented". Use `manyruns label` and the other annotation verbs.
+
 ### Fixed
 
 - Installation and runtime repair guidance consistently uses uv tool installs for
   the application and `uv sync` for developer checkouts, with uv's official installer
   for first-time setup.
+- A latent step that produces a partition, such as `leiden`, is no longer scored by
+  the declared geometry suite, so one declining metric no longer fails the run; the
+  g-vector records `<step>.suite_note` instead.
 
 ## [0.1.0] - 2026-09-17
 
@@ -39,5 +187,6 @@ First public release: an open beta for macOS and Linux, Python 3.11–3.12.
 - An explicit seed of 0 is preserved.
 - Displayed figures survive tuning renames and file changes without crashing the TUI.
 
-[Unreleased]: https://github.com/latent-reasoning-works/manyruns/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/latent-reasoning-works/manyruns/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/latent-reasoning-works/manyruns/releases/tag/v0.1.1
 [0.1.0]: https://github.com/latent-reasoning-works/manyruns/releases/tag/v0.1.0

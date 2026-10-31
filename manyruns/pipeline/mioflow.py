@@ -10,21 +10,17 @@ from __future__ import annotations
 
 from typing import Any  # noqa: F401 - used by the nested datamodule shims
 
-from manyruns.pipeline.steps import _diffusion_pseudotime
+from manyruns.pipeline.steps import _StepUnsupported
 
-# NOTE (surfaced by the split): the REAL trained step depends on `_diffusion_pseudotime`,
-# which lives with the public-library stand-ins — it computes MIOFlow's time label when the
-# data carries no real time axis. So the trained path and the no-private-stack path share a
-# geometry primitive. Acyclic (steps never imports mioflow) but worth naming: changing that
-# pseudotime silently changes what MIOFlow is trained against.
+# TIME IS DECLARED, NEVER INVENTED. This route used to compute a diffusion pseudotime and bin it
+# into five time points when the data carried no time axis, with no recipe step that said so.
+# That fallback is gone, and with it the two params it read (`n_neighbors`, `n_timepoints`): a
+# recipe that still sets one gets the "unknown param" error below. A run with no time labels is
+# refused before any import (`NO_TIME`). `vocab.STEP_NEEDS["mioflow"]` refuses it at plan time.
 
-#: Params this file consumes ITSELF and never forwards — the time axis it builds when the data
-#: carries no real one (`steps._diffusion_pseudotime`; read at :199 and :201, and only when the
-#: caller supplied no real timepoints). Written down here, unlike the two sets `_resolve_kwargs`
-#: derives from a signature, because manyruns genuinely implements this bit: it is our
-#: vocabulary, not a copy of somebody else's catalogue. A third one added below without being
-#: added here reads as `unknown` and errors the step, which is the loud direction to fail in.
-_TIME_PARAMS = ("n_neighbors", "n_timepoints")
+#: The refusal for a run with no time labels.
+NO_TIME = ("mioflow needs a time axis: real time labels from the data, or a `discretize_time` "
+           "step after an ordering step such as `dpt` (see the example recipe cflows_inferred)")
 
 #: Constructor args the RUN owns, not the recipe — refused with their own reason, because "you
 #: may not set this" and "there is no such param" are different mistakes and a reader has to be
@@ -92,12 +88,12 @@ def _resolve_kwargs(params: dict, fast_dev_run: bool) -> tuple[dict, dict]:
     if both:
         raise ValueError(f"mioflow: {both} name both the algorithm and its network — the flat "
                          "`params` block cannot say which was meant")
-    unknown = sorted(set(declared) - algo_names - net_names - set(_TIME_PARAMS))
+    unknown = sorted(set(declared) - algo_names - net_names)
     if unknown:
         raise ValueError(
             f"mioflow: unknown param(s) {unknown}. Check the spelling — a silently ignored "
             "parameter makes two different configurations return identical results. This step "
-            f"takes {sorted(algo_names | net_names | set(_TIME_PARAMS))}")
+            f"takes {sorted(algo_names | net_names)}")
 
     # NO NUMERIC COERCION SURVIVES HERE, and that is four changes rather than one. The old call
     # site wrapped every value in `int(...)`; none of them does now, so `sample_size: "256"` and
@@ -198,10 +194,10 @@ def _run_mioflow_experiment(X, seed: int, fast_dev_run: bool, params: dict, labe
                             device: str = "cpu"):
     """Run the REAL MIOFlow on an (n, d) array via manylatents.experiment.run_experiment.
 
-    MIOFlow is a flow between timepoints, so each sample needs a time `label`. If real
-    per-cell timepoints are provided (e.g. EB collection days), use them; otherwise compute
-    a diffusion pseudotime on the (phate) embedding and discretize it into T timepoints.
-    Built to match manylatents' own MIOFlow run_experiment test.
+    MIOFlow is a flow between timepoints, so each sample needs a time `label`: real per-cell
+    timepoints (e.g. EB collection days), or the bins of a declared `discretize_time` step.
+    With no labels it raises `_StepUnsupported` (`NO_TIME`) before any import; it never
+    invents a time axis. Built to match manylatents' own MIOFlow run_experiment test.
 
     `params` is the step's flat block; `_resolve_kwargs` decides where each name goes and
     refuses the ones it cannot place. Returns (embeddings, scores, extras, model) — the
@@ -210,6 +206,8 @@ def _run_mioflow_experiment(X, seed: int, fast_dev_run: bool, params: dict, labe
 
     TRAJECTORIES COME OFF `model`, not a fifth return value: `model.trajectories` is
     `(n_bins, n_trajectories, d)` or None. See the return statement for why that is enough."""
+    if labels is None:
+        raise _StepUnsupported(NO_TIME)
     import functools
 
     import numpy as np
@@ -222,8 +220,7 @@ def _run_mioflow_experiment(X, seed: int, fast_dev_run: bool, params: dict, labe
     from manylatents.experiment import run_experiment
 
     # FIRST, before any work: `_resolve_kwargs` raises on a param it cannot place, and a run
-    # that is going to be refused for a typo should be refused before it spends a kNN graph and
-    # a shortest-path pass computing the pseudotime it will never train against.
+    # that is going to be refused for a typo should be refused before it builds a datamodule.
     net_kwargs, algo_kwargs = _resolve_kwargs(params, fast_dev_run)
 
     # `_dense` first — torch rejects negative strides AND cannot see a sparse matrix at all;
@@ -234,23 +231,13 @@ def _run_mioflow_experiment(X, seed: int, fast_dev_run: bool, params: dict, labe
     n, d = Xn.shape
     from manyruns import vocab
 
-    if labels is not None:
-        # real timepoints → [0, 1] with REAL spacing preserved (day0/day3/day9 → 0, ⅓, 1, not
-        # the even 0, ½, 1 that ranks would give). Magnitude lives in vocab.numeric_time so the
-        # name-side (which column is time) and the value-side (what the clock reads) agree.
-        # This is also where an upstream `discretize_time` step's bins arrive: they are already
-        # discrete integer tokens, and `numeric_time` reads bare numbers as real magnitudes, so
-        # the bin SPACING (not just the bin count) survives into MIOFlow's clock.
-        time_labels = vocab.numeric_time(labels)
-    else:
-        # No real time axis AND no upstream ordering was threaded in (`runner._ml_lightning`
-        # only reaches this branch when `state["labels"]` is empty) — fall back to computing
-        # our OWN pseudotime on the embedding, same binning rule `discretize_time` uses.
-        n_neighbors = int(params.get("n_neighbors") or min(15, max(2, n - 1)))
-        pt = _diffusion_pseudotime(Xn, n_neighbors)
-        n_timepoints = int(params.get("n_timepoints") or 5)
-        bins = vocab.discretize_pseudotime(pt, n_timepoints)
-        time_labels = (bins / max(n_timepoints - 1, 1)).astype(np.float32)
+    # real timepoints → [0, 1] with REAL spacing preserved (day0/day3/day9 → 0, ⅓, 1, not
+    # the even 0, ½, 1 that ranks would give). Magnitude lives in vocab.numeric_time so the
+    # name-side (which column is time) and the value-side (what the clock reads) agree.
+    # This is also where an upstream `discretize_time` step's bins arrive: they are already
+    # discrete integer tokens, and `numeric_time` reads bare numbers as real magnitudes, so
+    # the bin SPACING (not just the bin count) survives into MIOFlow's clock.
+    time_labels = vocab.numeric_time(labels)
 
     x_t = torch.tensor(Xn)
     y_t = torch.tensor(time_labels)

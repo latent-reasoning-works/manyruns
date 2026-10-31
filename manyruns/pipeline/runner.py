@@ -23,6 +23,7 @@ from typing import Any
 
 from manyruns import __version__
 from manyruns import artifacts as _artifacts
+from manyruns import commercial as _commercial
 from manyruns.measurements import annotate
 from manyruns.pipeline import bounds as _bounds
 from manyruns.pipeline import io as _io
@@ -34,7 +35,7 @@ from manyruns.pipeline import stubs as _stubs
 from manyruns.pipeline import suite as _suite
 from manyruns.pipeline.io import _numeric_quiet
 from manyruns.pipeline.loading import as_matrix, dense as _dense
-from manyruns.vocab import CATEGORICAL_KINDS, INPROC, STEP_GROUPS
+from manyruns.vocab import CATEGORICAL_KINDS, INPROC, STEP_GROUPS, STEP_PRODUCES
 from manyruns.watch import describe
 
 
@@ -405,8 +406,12 @@ GVECTOR_SIZE = ("n_samples", "n_features", "n_embedded", "final_dim")
 #:            a narrowing by construction. Carried and narrowed, never transformed — see
 #:            `frame.new_frame`. Absent from `artifacts.PERSISTED` for the reason `counts` is:
 #:            it is more of the scientist's data, not less.
+#:   clusters, graph, trajectories — SUPPLIED by a model through the model seam
+#:            (`pipeline/external.py`), never computed here: a per-cell partition, the graph
+#:            interchange arrays, and the (B, T, d) trajectories. Derived, like `emb`.
 _STATE_KEYS = ("X", "emb", "pseudotime", "labels", "label_key", "seed", "counts", "genes",
-               "frame", "rows", "cols", "model", "layers", "velocity")
+               "frame", "rows", "cols", "model", "layers", "velocity", "clusters", "graph",
+               "trajectories")
 
 
 #: Re-exported from `steps`, which is where it has to be DEFINED (this module imports that
@@ -454,6 +459,8 @@ def _new_state(X: Any = None, labels: Any = None, seed: Any = None, emb: Any = N
             # a field is fitted over a neighbourhood, so a narrowing invalidates the rows that
             # remain — the same rule as `emb`, and the opposite of the `layers` it came from.
             "velocity": None,
+            # SUPPLIED by a model through the model seam. Derived, for the same reason.
+            "clusters": None, "graph": None, "trajectories": None,
             "frame": _frame.new_frame(counts=counts, genes=genes, labels=labels, layers=layers),
             "rows": _frame.full_selection(n_rows),
             "cols": _frame.full_selection(n_cols)}
@@ -611,6 +618,12 @@ def _persist(rec: dict, state: dict, ctx: dict, index: int, name: str, written: 
 ENGINE_CLAIMED = ("embeddings", "scores", "label", "metadata")
 
 
+def _is_scalar(value: Any) -> bool:
+    """The g-vector's value test: an `int` or `float`, and not a `bool`. One function for
+    a top-level byproduct and for a sub-value of a dict byproduct, so the two cannot drift."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def _collect_extras(name: str, out: Any, state: dict, g: dict) -> None:
     """Route whatever the engine returned BESIDES the embedding, instead of dropping it.
 
@@ -632,7 +645,12 @@ def _collect_extras(name: str, out: Any, state: dict, g: dict) -> None:
         so it is comparable across runs by the same fixed-key rule everything else obeys;
       * anything with a shape goes to the **artifact channel**, which already has the atomic
         write, the manifest and the size cap. Namespaced the same way, so two steps that both
-        emit `affinity` do not overwrite each other.
+        emit `affinity` do not overwrite each other;
+      * a dict is opened ONE level: each scalar sub-value goes to the g-vector as
+        `<step>.<key>.<subkey>` (the flattened extra key, `subkey` through `str()`). Lists,
+        strings, bools, arrays and nested dicts inside it are not recorded. This is how the
+        Reeb graph `structural_summary` counts reach the record, without its
+        variable-length `degree_sequence`.
 
     Nothing here decides whether a byproduct is *interesting*. It decides that a byproduct
     which crossed the boundary is written down — the same argument `artifacts.py` makes about
@@ -645,7 +663,11 @@ def _collect_extras(name: str, out: Any, state: dict, g: dict) -> None:
             continue
         if hasattr(value, "shape"):
             state.setdefault("extras", {})[f"{name}.{key}"] = value
-        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+        elif isinstance(value, dict):
+            for sub, v in value.items():
+                if _is_scalar(v):
+                    g[f"{name}.{key}.{sub}"] = v
+        elif _is_scalar(value):
             g[f"{name}.{key}"] = value
 
 
@@ -732,7 +754,9 @@ def open_gvector(state: dict) -> dict:
 #: unlike a stale embedding it can be ASKED questions — so a probe would return a confident,
 #: well-formed, wrong answer. `vocab.STEP_PRODUCES["mioflow"]` makes the same statement at plan
 #: time; both have to hold or the two disagree about one recipe.
-DERIVED_SLOTS = ("emb", "pseudotime", "model", "velocity")
+#: `clusters`, `graph` and `trajectories` arrive through the model seam and were fitted over
+#: the cells the run held then, so a narrowing clears them as `vocab.invalidated` does.
+DERIVED_SLOTS = ("emb", "pseudotime", "model", "velocity", "clusters", "graph", "trajectories")
 
 
 def _apply_transition(out: dict, state: dict, rec: dict, ctx: dict) -> None:
@@ -938,6 +962,14 @@ def apply_step(step: dict, state: dict, g: dict, *, dispatch: dict, ctx: dict,
         _settle(rec)
         _report(on_step, rec, lineage)
         return rec
+    # COMMERCIAL MODE, before any executor and so before any import. A step a session adds to a
+    # run never passed `narrate.unavailable`, so the refusal has to be here too.
+    if _commercial.enabled() and _commercial.is_non_commercial(step):
+        rec["outcome"], rec["unsupported"] = "skipped", True
+        rec["detail"] = _commercial.REASON
+        _settle(rec)
+        _report(on_step, rec, lineage)
+        return rec
     # THE `tool:` SEAM, ahead of the group lookup and only ahead of it. A step naming a tool
     # keeps its honest `group` — the calculus reads that, and nothing here changes what `unmet`
     # decides — but its IMPLEMENTATION is in another interpreter, so the group's engine executor
@@ -988,8 +1020,19 @@ def apply_step(step: dict, state: dict, g: dict, *, dispatch: dict, ctx: dict,
     started = time.perf_counter()
     try:
         before_labels = state.get("labels")
+        # The step's position, for an executor that addresses a file by it (`_ml_latent`'s
+        # `RunStepLogger`). Through `ctx`, so no executor signature changes.
+        ctx["step_index"] = index
+        before_traj = state.get("trajectories")
         try:
             override = fn(name, rec["params"], state, g, ctx)
+            # A STEP THAT SET TRAJECTORIES draws them, over the embedding the step received
+            # (the frame the paths start in), as `<step>.png`: the in-process MIOFlow route and
+            # a tool step that returns `trajectories` get the same figure.
+            traj = state.get("trajectories")
+            if traj is not None and traj is not before_traj:
+                base = before_obj if before_obj is not None else state.get("X")
+                _display_scatter(base, state, ctx, f"{name}.png", name, trajectories=traj)
         finally:
             # Derived labels no longer name the source column. Keep provenance in
             # state so tune rollback restores it together with the labels themselves.
@@ -1248,6 +1291,22 @@ def as_parent(ref: Any) -> "dict | None":
     return {"run_id": str(run_id), "index": int(index)}
 
 
+def _non_commercial_steps(recipe: dict, steps: list, g: dict) -> list:
+    """The sorted names of the run's non-commercial steps (see `_finalize`)."""
+    declared = {}
+    for step in (recipe or {}).get("steps") or []:
+        if isinstance(step, dict):
+            declared.setdefault(step.get("name"), []).append(step)
+    names = set()
+    for rec in steps:
+        name = rec.get("name")
+        if (_commercial.is_non_commercial(rec)
+                or any(_commercial.is_non_commercial(s) for s in declared.get(name, ()))
+                or g.get(f"{name}.tool_commercial_use") is False):
+            names.add(name)
+    return sorted(names)
+
+
 def _finalize(state: dict, g: dict, *, engine: str, recipe: dict, steps: list,
               plots: list, seed: Any = None, dataset: Any = None,
               dataset_name: str | None = None, data_kwargs: dict | None = None,
@@ -1321,6 +1380,13 @@ def _finalize(state: dict, g: dict, *, engine: str, recipe: dict, steps: list,
         # recipe. A result reached off the beaten path is exactly the one whose provenance a
         # reader needs, so it rides in the record rather than being printed once and lost.
         "caveats": list(caveats or []),
+        # Every non-commercial step of the run, so a reader can select research-only runs with
+        # one key instead of scanning every `*.tool_commercial_use`: a step whose name or tool
+        # manifest `commercial.is_non_commercial` names, or whose tool fields say
+        # `commercial_use: false`. Whatever its outcome and engine — a mock or refused step is
+        # counted too, which is the safe direction: a reader that refuses non-commercial rows
+        # refuses one row too many, never one too few.
+        "non_commercial_steps": _non_commercial_steps(recipe, steps, g),
         "recipe": recipe.get("name"),
         "num_steps": len(trace),
         "trace": trace,
@@ -1474,13 +1540,25 @@ def _run_probe_step(name, params, state, g, ctx):
     fn = _probes._PROBE_STEPS.get(name)
     if fn is None:
         raise _StepUnsupported(f"no probe named {name!r}")
-    model = state.get("model")
-    if model is None:
+    if _stubs.is_stub(fn):
+        # A declared-but-unimplemented probe refuses as UNSUPPORTED before any slot is read:
+        # an empty slot is a benign decline, and checking it first would let a probe that does
+        # not exist read as an ordinary skip on an engine whose lightning step trains nothing.
+        fn(None, params or {})
+    # A probe in `PROBE_READS` reads its declared slot (`sample_trajectories` reads
+    # `state["trajectories"]`, which the in-process route and a tool step both fill); every
+    # other probe reads `state["model"]`.
+    slot = _probes.PROBE_READS.get(name)
+    value = state.get(slot) if slot else state.get("model")
+    if value is None:
         raise _StepSkipped(
+            f"no {slot} in this state — {name} reads what a trajectory step returned, and no "
+            "step of this run wrote them (the in-process stand-in and the mock write none)"
+            if slot else
             "no trained model in this state — a probe asks a question of a fitted object, and "
             "the lightning step on this engine trains nothing")
     try:
-        answer = fn(model, params or {})
+        answer = fn(value, params or {})
     except _probes._NoAnswer as e:
         raise _StepSkipped(str(e)) from None
     for key, value in (answer or {}).items():
@@ -1611,6 +1689,97 @@ def _display_scatter(emb, state, ctx, fname, title, *, trajectories=None):
     return result
 
 
+def _label_valued(name: str) -> bool:
+    """Whether a latent step leaves a PARTITION in ``state["emb"]`` rather than coordinates.
+
+    Read off `vocab.STEP_PRODUCES` — the one table that already says `leiden` yields
+    `clusters` — so this cannot drift from the calculus the first time a second clustering
+    step is added. What such a step leaves behind is an (N, 1) label column (the shape
+    `test_analysis_readouts` measured), and the geometry suite has nothing to measure in it."""
+    return "clusters" in STEP_PRODUCES.get(name, ())
+
+
+def _graph_valued(name: str) -> bool:
+    """Whether a latent step hands back a GRAPH and leaves the coordinates where they are.
+
+    Read off `vocab.STEP_PRODUCES`, as `_label_valued` is. Today that is `reeb_graph`, whose
+    engine `embeddings` are an (N, M) 0/1 node-membership matrix: not coordinates, so it must
+    not replace `state["emb"]`, and the geometry suite has nothing to measure in it."""
+    return "graph" in STEP_PRODUCES.get(name, ())
+
+
+class RunStepLogger:
+    """The manylatents `StepLogger` protocol, addressed by the run folder.
+
+    `SaveOutputs` writes the engine's own record of a latent step (`outputs.json`) into
+    `get_step_dir()`. Here that is `<run folder>/engine/<NN>-<step>/`, with the same `NN` as the
+    run folder's array names, so the engine's files join the run on `run_id` and pair with the
+    step's arrays by index. One subfolder per step, because `SaveOutputs` always writes the
+    fixed name `outputs.json`.
+
+    Structural, not a subclass: manylatents is not imported here, so the class works where the
+    engine is absent.
+    """
+
+    #: The engine's per-step marker. NOT `artifacts.DONE`: `COMPLETE` means the whole lineage is
+    #: finished, `finish_carry` is its only writer, and `SaveOutputs` calls the marker after
+    #: every latent step of a session that is still open.
+    MARKER = "outputs.done"
+
+    def __init__(self, out_dir, run_id: str, index: int, step: str) -> None:
+        self.out_dir = Path(out_dir)
+        self.run_id = run_id
+        self.index = int(index)
+        self.step = step
+
+    def get_step_dir(self, create: bool = False) -> Path:
+        path = _artifacts.root(self.out_dir, self.run_id) / "engine" / f"{self.index:02d}-{self.step}"
+        if create:
+            path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def get_experiment_id(self) -> str:
+        return self.run_id
+
+    def write_completion_marker(self, step_dir: Path) -> None:
+        """`step_dir / "outputs.done"`, holding the ISO-8601 UTC time. Raises nothing."""
+        try:
+            (Path(step_dir) / self.MARKER).write_text(
+                _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds") + "\n")
+        except OSError:
+            return None
+        return None
+
+
+def _save_engine_outputs(name: str, out: dict, emb: Any, ctx: dict) -> None:
+    """The engine's `SaveOutputs`, writing into this step's folder under the run folder.
+
+    Guarded whole: a failed import, constructor or write changes nothing about the step — not
+    its outcome, its state or its g-vector, and no `g` key records it (the key set is declared,
+    not conditional). The import comes first, so an engine without `SaveOutputs` creates no
+    folder. Skipped for an over-size embedding, because `SaveOutputs` writes the coordinates
+    again beside `outputs.json`.
+    """
+    if not ctx.get("run_id") or not ctx.get("out_dir") or _artifacts.too_large(emb):
+        return
+    try:
+        import manylatents
+
+        # A `manylatents` that is not a package (a test double holding only `api`) has no
+        # `callbacks`. A fresh import would fail on it; a submodule cached in `sys.modules` by
+        # an earlier import would not, so the check makes both cases agree.
+        if not hasattr(manylatents, "__path__"):
+            return
+        from manylatents.callbacks.embedding.save_outputs import SaveOutputs
+
+        logger = RunStepLogger(ctx["out_dir"], ctx["run_id"], ctx["step_index"], name)
+        SaveOutputs(save_dir=str(logger.get_step_dir(create=True)), save_format="npy",
+                    experiment_name=name, use_timestamp=False,
+                    step_logger=logger).on_latent_end(None, out)
+    except Exception:  # noqa: BLE001 - the engine's record must never fail the step
+        return
+
+
 def _ml_latent(name, params, state, g, ctx):
     """A latent step → ``manylatents.api.run(algorithms={'latent': name})``."""
     import numpy as np
@@ -1626,8 +1795,25 @@ def _ml_latent(name, params, state, g, ctx):
     kwargs.update(params or {})
     # The declared metric suite. manylatents' registry computes these and returns them in
     # `scores`, which we fold into the g-vector below — this is the whole mechanism by which
-    # "a suite of 10-20 metrics" reaches the experiment table. Omitted → engine defaults.
-    if ctx.get("metrics"):
+    # "a suite of 10-20 metrics" reaches the experiment table. Omitted → NO engine metrics
+    # (`api._resolve_metrics(None)` is "no metrics", not a default bundle).
+    #
+    # NOT FOR A PARTITION STEP. The engine evaluates the suite inside `run()` on the step's own
+    # output, and its list-of-names path has no per-metric catch (manylatents `evaluate.py`,
+    # `_evaluate_registry`): the first metric that declines takes the whole call down, output
+    # included. `leiden` leaves an (N, 1) label column, and `lid` refuses fewer than k+1
+    # distinct points — so on the bundled `cluster` recipe over swissroll 800×10 (17 clusters,
+    # k=20) the step recorded `error: MeasurementUnavailable: only 17 distinct points for k=20`,
+    # the run `ok=False`, exit 1, with the partition computed and lost. The suite is geometry
+    # on coordinates; a partition has none, so it is not sent, and the absence is stated below
+    # rather than implied by a missing `leiden.lid` key (`suite.py`, "declared, not
+    # conditional"). One metric declining is the metric's absence, never the step's error —
+    # the rule `suite.measure` already applies to the final suite.
+    #
+    # NOR FOR A GRAPH-VALUED STEP (`_graph_valued`), for the same reason: its output is a
+    # node-membership matrix, not coordinates.
+    graph = _graph_valued(name)
+    if ctx.get("metrics") and not _label_valued(name) and not graph:
         kwargs["metrics"] = list(ctx["metrics"])
     # "first" is derived from the state, not a flag: a flag that only cleared on full
     # success meant a step failing *after* producing an embedding sent the next step back
@@ -1653,12 +1839,28 @@ def _ml_latent(name, params, state, g, ctx):
         kwargs["input_data"] = np.ascontiguousarray(state["emb"])  # chain
     out = run(**kwargs)
     emb = np.ascontiguousarray(np.asarray(out.get("embeddings")))
+    _save_engine_outputs(name, out, emb, ctx)
     if source_fit:
         # A fresh fit starts on the selected source axis, even after an unverified
         # resume. Check its output anew; chained coordinates retain their uncertainty.
         ctx["metadata_aligned"] = True
+    if graph:
+        # The coordinates stay; the graph goes beside them. The final suite then measures the
+        # embedding this step was built over, and a readout after it reads the summary that
+        # `_collect_extras` flattens into the g-vector.
+        if ctx.get("metrics"):
+            g[f"{name}.suite_note"] = ("geometry suite not measured: this step produces a "
+                                       "graph (node membership), not coordinates")
+        state.setdefault("extras", {})[f"{name}.membership"] = emb
+        for k, v in (out.get("scores") or {}).items():
+            g[f"{name}.{k}"] = v
+        _collect_extras(name, out, state, g)
+        return
     _check_metadata_alignment(emb, state, ctx, out.get("obs_names", out.get("sample_ids")))
     state["emb"] = emb
+    if ctx.get("metrics") and _label_valued(name):
+        g[f"{name}.suite_note"] = ("geometry suite not measured: this step produces a "
+                                   "partition (clusters), not coordinates")
     for k, v in (out.get("scores") or {}).items():
         g[f"{name}.{k}"] = v
         if not k.endswith("_note"):
@@ -1696,8 +1898,8 @@ def _ml_lightning(name, params, state, g, ctx):
     # AN ALLOWLIST, and the difference is not style. This read `None if … == "condition"` — a
     # denylist of one — so any kind added upstream fell through and became a time axis. `group`
     # (a cell type, a cluster, a branch) is as much a fabricated trajectory as treated -> healthy
-    # is, and it would have arrived silently. Only `time` is a time axis; everything else falls
-    # back to pseudotime, exactly as unlabelled manifold data does.
+    # is, and it would have arrived silently. Only `time` is a time axis; with anything else the
+    # route gets no labels and refuses (`mioflow.NO_TIME`) — it never invents a time axis.
     time_labels = state.get("labels") if state.get("label_kind") == "time" else None
     # `_run_mioflow_experiment`'s returned "embeddings" is MIOFlow's own `encode()` output —
     # every row integrated from t_min to t_max regardless of that row's own time bin, NOT the
@@ -1716,9 +1918,13 @@ def _ml_lightning(name, params, state, g, ctx):
     if time_labels is not None:
         g["mioflow.n_timepoints"] = len(set(map(str, time_labels)))
     # This used to read `state["emb"] = emb` and nothing else, so the trained flow — the simulatable
-    # object — was dropped one frame later while its coordinates were kept. It is kept now, and
-    # `probe` steps are what it is kept for.
+    # object — was dropped one frame later while its coordinates were kept. It is kept now: the
+    # declared stub probes (`growth_rate`, `decode_to_gene_space`) and `granger` read it.
     state["model"] = model
+    # THE READOUT SLOT. `sample_trajectories` and the figure read `state["trajectories"]`, which
+    # a tool step that returns `trajectories` fills the same way, so one readout serves both
+    # routes. `apply_step` draws `<step>.png` with them over the embedding the step received.
+    state["trajectories"] = _mioflow.trajectories_of(model)
     _check_metadata_alignment(emb, state, ctx)
     state["emb"] = emb
     for k, v in scores.items():
@@ -1726,11 +1932,10 @@ def _ml_lightning(name, params, state, g, ctx):
         if not k.endswith("_note"):
             annotate(g, f"{name}.{k}", kind="measurement", stage=f"{name} engine evaluation")
     _collect_extras(name, extras, state, g)
-    # `base_emb`, not `emb` — see above. The paths come off the RETAINED MODEL rather than a
-    # return value of their own: `state["model"]` is the object the flow left behind, and
-    # `trajectories_of` is the defensive read of the one property a figure needs from it.
-    _display_scatter(base_emb, state, ctx, f"{name}.png", name,
-                     trajectories=_mioflow.trajectories_of(model))
+    # `base_emb`, not `emb` — see above. With trajectories, `apply_step` draws `<step>.png` over
+    # that same frame; without them (an empty datamodule), the plain scatter is drawn here.
+    if state["trajectories"] is None:
+        _display_scatter(base_emb, state, ctx, f"{name}.png", name)
     return None
 
 
@@ -2032,15 +2237,17 @@ def _mock_vec(state: dict, ctx: dict) -> list:
 # mock to invent, and the alternative is `mock` declining every recipe the migration gives a
 # prep block to, which is every bundled recipe but `qc`.
 _DISPATCH: dict[str, dict] = {
-    # `probe` is on manylatents ALONE, and that is the honest asymmetry: it is the only row
-    # whose `lightning` executor trains anything. The in-process stand-in computes a diffusion
-    # pseudotime and the mock invents numbers, so offering a probe there would put a step in the
-    # menu that can only ever decline — which is precisely what `dispatchable` exists to prevent.
+    # `probe` is on every row that runs tool steps. `sample_trajectories` reads
+    # `state["trajectories"]`, which the in-process MIOFlow route fills on manylatents and a tool
+    # step that returns `trajectories` fills on manylatents and on the in-process loop alike.
+    # NOT on `mock`: the mock writes no trajectories and trains nothing, so a probe there could
+    # only ever decline — which is precisely what `dispatchable` exists to prevent.
     "manylatents": {"latent": _ml_latent, "lightning": _ml_lightning,
                     "analysis": _run_analysis_step, "prep": _run_prep_step,
                     "probe": _run_probe_step},
     INPROC: {"latent": _inproc_step, "lightning": _inproc_step,
-             "analysis": _run_analysis_step, "prep": _run_prep_step},
+             "analysis": _run_analysis_step, "prep": _run_prep_step,
+             "probe": _run_probe_step},
     "mock": {"latent": _mock_transform, "lightning": _mock_transform,
              "analysis": _mock_measure, "prep": _run_prep_step},
 }

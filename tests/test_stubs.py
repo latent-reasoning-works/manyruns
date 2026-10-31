@@ -107,15 +107,18 @@ def test_nothing_that_already_exists_is_stubbed():
 
 
 # ── the sandbox recipe ───────────────────────────────────────────────────────
-def test_the_sandbox_recipe_is_legal_on_every_shape():
+def test_the_sandbox_recipe_is_refused_only_for_time():
     """A recipe refused at plan time never reaches the step pane, which is the surface it exists
     to drive. `decode_to_gene_space` is deliberately absent from it for exactly this reason — it
-    needs `genes`, which no bundled dataset carries."""
+    needs `genes`, which no bundled dataset carries. Its `mioflow` step needs `time` (declared,
+    never invented), so it is legal on `time-course` and refused for `time` and nothing else
+    on every other shape."""
     recipe = catalog.load_recipe("sandbox")
 
     assert catalog.check_recipe(recipe, "sandbox") == []
     for shape in vocab.SHAPES:
-        assert vocab.unmet(recipe, shape) == frozenset(), shape
+        time = frozenset() if shape == "time-course" else frozenset({"time"})
+        assert vocab.unmet(recipe, shape) == time, shape
 
 
 def test_the_sandbox_recommends_nothing():

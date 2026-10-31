@@ -1,10 +1,9 @@
 """The trace sink — that it writes what it was given, and that it cannot break the app.
 
-WHAT IS TESTED IS THE WIRE AND THE SILENCE. There is no emitter yet: nothing in `manyruns/`
-imports this module, so no screen and no run can be asserted through it. What can be — and what
-the rest of the trace layer will be built on top of — is that one `emit` is one line, that the
-second one does not eat the first, and that every way of getting the configuration wrong ends in
-`NullTracer` rather than a traceback.
+WHAT IS TESTED IS THE WIRE, THE SILENCE AND THE EMITTERS. The wire: one `emit` is one line, the
+second one does not eat the first, and every way of getting the configuration wrong ends in
+`NullTracer` rather than a traceback. The emitters: a session's `step` and `run_complete` events,
+a written decision's `decision` event, and the module docstring's table of every stamped kind.
 
 THE SILENCE IS THE HALF THAT ROTS. A sink whose failures are dropped is indistinguishable from a
 sink that works until somebody looks, so the drops are pinned here one by one — an event with no
@@ -314,3 +313,269 @@ def test_a_symlink_named_for_a_run_is_not_followed(tmp_path):
     trace.JsonlTracer(directory).emit({"run_id": "abc"})
     assert outside.read_text() == '{"keep":true}\n'
     assert (directory / "abc.jsonl").is_symlink()
+
+
+# ── the emit sites: who drives a session, and what it emits ──────────────────────────────────
+
+STEP = {"name": "phate", "group": "latent", "params": {}}
+
+
+def _traced(monkeypatch, tmp_path):
+    traces = tmp_path / "traces"
+    monkeypatch.setenv("MANYRUNS_TRACE", f"jsonl://{traces}")
+    return traces
+
+
+def _mock_session(tmp_path, **kw):
+    from manyruns.session import Session
+
+    return Session("p", engine="mock", out_dir=tmp_path / "out", **kw)
+
+
+def _kind(path, kind):
+    return [e for e in _lines(path) if e["kind"] == kind] if path.is_file() else []
+
+
+def test_the_default_driver_is_the_person(tmp_path):
+    assert _mock_session(tmp_path).agent_id == "human" == trace.HUMAN
+
+
+def test_a_branch_keeps_the_agent(tmp_path):
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("sklearn")
+    pytest.importorskip("phate")
+    from manyruns.session import Session
+
+    s = Session(project="p", engine="_inproc", out_dir=tmp_path, modality="scrna",
+                array=np.random.default_rng(0).normal(size=(150, 12)), seed=0,
+                agent_id="llm:qwen3:8b")
+    s.step({"name": "phate", "group": "latent", "params": {"n_components": 3}})
+    assert s.branch(0).agent_id == "llm:qwen3:8b"
+
+
+def test_a_two_step_session_writes_two_step_events(monkeypatch, tmp_path):
+    traces = _traced(monkeypatch, tmp_path)
+    s = _mock_session(tmp_path)
+    s.step(dict(STEP))
+    s.step(dict(STEP))
+
+    events = _kind(traces / f"{s.run_id}.jsonl", "step")
+    assert [e["index"] for e in events] == [0, 1]
+    for event, rec in zip(events, s.steps):
+        assert event["run_id"] == s.run_id
+        assert event["agent_id"] == "human"
+        assert (event["name"], event["group"], event["outcome"]) == (
+            rec["name"], rec["group"], rec["outcome"])
+
+
+def test_a_step_event_names_the_session_driver(monkeypatch, tmp_path):
+    traces = _traced(monkeypatch, tmp_path)
+    s = _mock_session(tmp_path, agent_id="llm:x")
+    s.step(dict(STEP))
+    (event,) = _kind(traces / f"{s.run_id}.jsonl", "step")
+    assert event["agent_id"] == "llm:x"
+
+
+def test_the_null_sink_is_the_default(monkeypatch, tmp_path):
+    monkeypatch.delenv("MANYRUNS_TRACE", raising=False)
+    s = _mock_session(tmp_path)
+    before = sorted(tmp_path.rglob("*"))
+    rec = s.apply(dict(STEP))
+    assert sorted(tmp_path.rglob("*")) == before
+    assert (rec["index"], rec["name"], rec["group"]) == (0, "phate", "latent")
+    assert rec["outcome"] in ("ok", "skipped", "error")
+
+
+class _Compute:
+    """An offloaded-compute stand-in: `call` runs in process on COPIES of its arguments, as a
+    worker process receives pickled ones, or raises what it is told to."""
+
+    def __init__(self, raises=None):
+        self.raises = raises
+
+    def call(self, fn, *args, **kwargs):
+        import copy
+
+        if self.raises is not None:
+            raise self.raises
+        return fn(*copy.deepcopy(args), **copy.deepcopy(kwargs))
+
+    def close(self):
+        pass
+
+
+@pytest.mark.parametrize("raises, outcome", [(None, None), (RuntimeError("worker died"), "error")])
+def test_the_offloaded_paths_emit_one_step_event(monkeypatch, tmp_path, raises, outcome):
+    traces = _traced(monkeypatch, tmp_path)
+    s = _mock_session(tmp_path)
+    s.compute = _Compute(raises)
+    rec = s.apply(dict(STEP))
+    (event,) = _kind(traces / f"{s.run_id}.jsonl", "step")
+    assert event["index"] == 0 and event["outcome"] == rec["outcome"]
+    if outcome:
+        assert rec["outcome"] == outcome
+
+
+def test_a_cancelled_step_emits_nothing(monkeypatch, tmp_path):
+    from manyruns.pipeline import runner
+
+    traces = _traced(monkeypatch, tmp_path)
+    s = _mock_session(tmp_path)
+    s.compute = _Compute(runner.ComputeCancelled())
+    with pytest.raises(runner.ComputeCancelled):
+        s.apply(dict(STEP))
+    assert _kind(traces / f"{s.run_id}.jsonl", "step") == []
+
+
+def test_one_completion_event_per_close(monkeypatch, tmp_path):
+    traces = _traced(monkeypatch, tmp_path)
+    s = _mock_session(tmp_path)
+    s.step(dict(STEP))
+    res = s.close()
+
+    events = _lines(traces / f"{s.run_id}.jsonl")
+    assert [e["kind"] for e in events].count("run_complete") == 1
+    last = events[-1]
+    assert last["kind"] == "run_complete"
+    assert last["ok"] == res["ok"] and last["complete"] == res["complete"]
+    assert last["spec_id"] == res["spec_id"]
+    assert last["n_steps"] == 1
+    assert last["run_id"] == s.run_id and last["agent_id"] == "human"
+
+
+def test_a_close_that_raises_emits_nothing(monkeypatch, tmp_path):
+    traces = _traced(monkeypatch, tmp_path)
+    s = _mock_session(tmp_path)
+
+    def boom(**kw):
+        raise ValueError("no record")
+
+    monkeypatch.setattr(s, "results", boom)
+    with pytest.raises(ValueError):
+        s.close()
+    assert _kind(traces / f"{s.run_id}.jsonl", "run_complete") == []
+
+
+DECISION_KEYS = {"schema_version", "decision_id", "run_id", "at", "surface", "chooser", "bound",
+                 "legal_id", "dataset", "shape", "topology", "offered", "chosen"}
+
+
+def test_a_tune_decision_is_attributed(monkeypatch, tmp_path):
+    import types
+
+    from manyruns import tune
+
+    traces = _traced(monkeypatch, tmp_path)
+    session = types.SimpleNamespace(run_id="abc123def456", agent_id="llm:claude-opus-4-8",
+                                    out_dir=tmp_path / "out", dataset=None, shape="unknown")
+    attempts = [{"name": "phate", "params": {"knn": 5}, "label": "a"},
+                {"name": "phate", "params": {"knn": 9}, "label": "b"}]
+    tune._record_decision(session, attempts, "b")
+
+    from manyruns import decisions
+
+    rows = [r for d in tmp_path.rglob("decisions.jsonl") for r in decisions.read(d.parent)]
+    assert len(rows) == 1 and rows[0]["chooser"] == "llm:claude-opus-4-8"
+    (event,) = _kind(traces / "abc123def456.jsonl", "decision")
+    assert event["agent_id"] == "llm:claude-opus-4-8"
+    assert event["surface"] == "tune"
+    assert event["n_offered"] == 2
+    assert event["decision_id"] == rows[0]["decision_id"]
+    assert event["chosen"] == "b"
+
+
+def test_an_empty_offer_emits_nothing(monkeypatch, tmp_path):
+    from manyruns import decisions
+
+    traces = _traced(monkeypatch, tmp_path)
+    assert decisions.append(offered=[], chosen=None, run_id="abc123def456",
+                            out_dir=tmp_path) is None
+    assert not traces.exists() or not any(
+        e["kind"] == "decision" for f in traces.glob("*.jsonl") for e in _lines(f))
+
+
+def test_the_decision_row_schema_is_unchanged(monkeypatch, tmp_path):
+    from manyruns import decisions
+
+    traces = _traced(monkeypatch, tmp_path)
+    decision_id = decisions.append(offered=[{"recipe": "embed"}], chosen="embed",
+                                   chooser="llm:x", out_dir=tmp_path)
+    (row,) = list(decisions.read(tmp_path))
+    assert row["chooser"] == "llm:x" and "agent_id" not in row
+    assert set(row) == DECISION_KEYS
+    (event,) = _kind(traces / f"{trace.UNKNOWN_RUN}.jsonl", "decision")
+    assert event["agent_id"] == "llm:x"
+    assert event["decision_id"] == decision_id
+    assert event["run_id"] is None
+
+
+def test_no_second_keyword_for_the_chooser(tmp_path):
+    from manyruns import decisions
+
+    with pytest.raises(TypeError):
+        decisions.append(offered=[{"recipe": "embed"}], chosen="embed", agent_id="llm:x",
+                         out_dir=tmp_path)
+    assert not (tmp_path / "decisions.jsonl").exists()
+
+
+# ── the docstring lists every stamped kind ───────────────────────────────────────────────────
+
+#: Kinds built at run time (`"proposer_" + kind` in `agents.propose`), which a scan for string
+#: literals cannot see.
+DYNAMIC_KINDS = {"proposer_assistant", "proposer_tool_call", "proposer_tool_result"}
+
+
+def stamped_kinds(source: str) -> set[str]:
+    """Every literal `"kind"` value in a dict literal passed first to `trace.stamp`,
+    `_trace.stamp` or `stamp`."""
+    import ast
+
+    kinds: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        fn = node.func
+        name = (fn.attr if isinstance(fn, ast.Attribute)
+                and isinstance(fn.value, ast.Name) and fn.value.id in ("trace", "_trace")
+                else fn.id if isinstance(fn, ast.Name) else None)
+        if name != "stamp" or not isinstance(node.args[0], ast.Dict):
+            continue
+        for key, value in zip(node.args[0].keys, node.args[0].values):
+            if (isinstance(key, ast.Constant) and key.value == "kind"
+                    and isinstance(value, ast.Constant) and isinstance(value.value, str)):
+                kinds.add(value.value)
+    return kinds
+
+
+def _missing(kinds) -> list[str]:
+    return sorted(k for k in kinds if k not in trace.__doc__)
+
+
+def test_a_new_kind_without_documentation_is_found():
+    kinds = stamped_kinds('trace.stamp({"kind": "tune_attempt"}, run_id=None)')
+    assert kinds == {"tune_attempt"}
+    assert _missing(kinds) == ["tune_attempt"]
+
+
+def test_the_helper_reads_all_three_spellings_and_ignores_other_calls():
+    source = ('_trace.stamp({"kind": "a"}, run_id=None)\nstamp({"kind": "b"}, run_id=None)\n'
+              'other.stamp({"kind": "c"})\nemit({"kind": "d"})\n'
+              'trace.stamp({"kind": "p_" + k}, run_id=None)')
+    assert stamped_kinds(source) == {"a", "b"}
+
+
+def test_every_stamped_kind_in_the_package_is_documented():
+    from pathlib import Path
+
+    package = Path(trace.__file__).parent
+    assert package.is_dir()
+    kinds = set(DYNAMIC_KINDS)
+    for path in package.rglob("*.py"):
+        kinds |= stamped_kinds(path.read_text())
+    assert {"ask", "step", "run_complete", "decision", "proposer_call", "message"} <= kinds
+    assert _missing(kinds) == []
+
+
+def test_the_stale_sentence_is_gone():
+    assert "Nothing imports this module yet" not in trace.__doc__
+    assert "any emit site at all" not in trace.__doc__
