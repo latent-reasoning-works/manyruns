@@ -265,7 +265,9 @@ def test_the_bundled_set_cannot_yet_exercise_contrast():
 
     # was `{"contrast"}` — `qc`/`markers` joined the ledger when they declared `("genes",)`,
     # and `preprocess` was born in it for the same reason
-    assert set(pruned) == {"contrast", "qc", "markers", "preprocess"}
+    # and `cflows`/`traced`/`sandbox` joined when `mioflow` declared `time`
+    assert set(pruned) == {"contrast", "qc", "markers", "preprocess", "cflows", "traced",
+                           "sandbox"}
 
     # contrast is still pruned on EVERY bundled dataset; pbmc3k is the 14th and is
     # `clusters`/`design: single`, so it does not close this gap either
@@ -275,6 +277,10 @@ def test_the_bundled_set_cannot_yet_exercise_contrast():
     # ...and the three gene-axis recipes are pruned on 13 of 14 — everything but pbmc3k
     for recipe in ("qc", "markers", "preprocess"):
         assert pruned[recipe] == {name: ["genes"] for name in names - {"pbmc3k"}}
+
+    # ...and the three MIOFlow recipes on 13 of 14 — everything but synthetic_timecourse
+    for recipe in ("cflows", "traced", "sandbox"):
+        assert pruned[recipe] == {name: ["time"] for name in names - {"synthetic_timecourse"}}
 
 
 # ── the precondition calculus (the legal-move function) ─────────────────────
@@ -287,18 +293,6 @@ def test_a_contrast_recipe_is_illegal_on_data_with_no_conditions():
     assert unmet(contrast, "manifold") == {"conditions"}
     assert unmet(contrast, "clusters") == {"conditions"}
     assert unmet(contrast, "case-control") == frozenset()   # legal
-
-
-def test_recipes_that_fall_back_are_not_over_pruned():
-    """mioflow computes a diffusion pseudotime when there is no time axis, and the
-    orders by row index — so cflows is legal everywhere. the learner's own PRECONDITIONS
-    require a `time` coord for mioflow; copying that table would have dropped these cells."""
-    from manyruns.vocab import unmet
-
-    cflows = catalog.load_recipe("cflows")
-    for shape in ("manifold", "clusters", "single", "time-course"):
-        assert unmet(cflows, shape) == frozenset(), f"cflows wrongly pruned on {shape}"
-    assert unmet(catalog.load_recipe("embed"), "unknown") == frozenset()
 
 
 def test_plan_prunes_the_illegal_cells():
