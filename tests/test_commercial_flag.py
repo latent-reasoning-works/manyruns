@@ -156,6 +156,11 @@ def _actions(capsys) -> dict:
 def _subprocess_env(tmp_path, **extra) -> dict:
     env = {k: v for k, v in os.environ.items() if not k.startswith("MANYRUNS_")}
     env.update({"HOME": str(tmp_path), "OMP_NUM_THREADS": "1", "KMP_DUPLICATE_LIB_OK": "TRUE"})
+    # The child must import the same manyruns this test imported. In a job that runs the
+    # tests against the source tree without installing it, only PYTHONPATH says where it is
+    # (test_tui_responsiveness does the same).
+    root = str(Path(commercial.__file__).resolve().parents[1])
+    env["PYTHONPATH"] = os.pathsep.join(p for p in (root, env.get("PYTHONPATH")) if p)
     env.update(extra)
     return env
 
