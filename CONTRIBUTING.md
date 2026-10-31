@@ -42,6 +42,11 @@ import a learner, depend on one, or expose a config or engine path to one. Use t
 role in prose too. The hash-based guard checks every tracked file without printing
 forbidden names. Read [CLAUDE.md](CLAUDE.md) for the layering rules.
 
+Run `git config core.hooksPath .githooks` once in each clone. It turns on the
+name hook, which runs the same hash-based matcher before a commit exists. The hook
+blocks a commit whose staged file paths, staged file contents or commit message hold
+a forbidden name. It prints only the locations, never the name.
+
 This is an open beta. The CLI and record schema can still change; describe any
 compatibility impact in the pull request and changelog. Include `manyruns --version`
 output, platform, and Python version when reporting a problem. Share a
