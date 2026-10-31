@@ -3,9 +3,10 @@
 The gap these pin, measured over `catalog.load_datasets()` before this dataset existed: all
 12 bundled datasets declared `shape: manifold` or `shape: clusters`, `vocab.SHAPE_PROVIDES`
 maps `time-course → ("time",)` and nothing else provides it, so no bundled data carried a
-time axis. Every MIOFlow run therefore reached the pseudotime fallback in
-`steps._step_mioflow`, which derives an ordering FROM the embedding — and so reports a full
-[0, 1] range on data with no time in it whatsoever.
+time axis. Every MIOFlow run therefore reached the in-process pseudotime fallback, which
+derived an ordering FROM the embedding — and so reported a full [0, 1] range on data with no
+time in it whatsoever. (That fallback is removed: MIOFlow runs only as a tool step, whose
+manifest needs `time`, so this dataset is now the only bundled one `cflows` is legal on.)
 
 What must not regress, in order of how quietly it would break:
 
@@ -175,12 +176,22 @@ def test_the_bundled_set_now_carries_a_time_axis():
     assert "time" in provided
 
 
-def test_cflows_is_legal_here_and_contrast_still_is_not():
+def test_cflows_is_legal_here_and_contrast_still_is_not(monkeypatch):
     """`unmet` is the legal-move function, and the point of this dataset is that `cflows`
     has nothing unmet on it. `contrast` is asserted loosely — only that `conditions` is
     still missing — because this dataset must not be mistaken for the case-control one that
-    is still absent, and the rest of that recipe's needs are not this test's business."""
+    is still absent, and the rest of that recipe's needs are not this test's business.
+
+    The MIOFlow tool is declared first (the stub MIOFlow folder): without it `cflows` is refused
+    for `tool:mioflow` on every shape, an install fact rather than a data fact."""
+    from pathlib import Path
+
     from manyruns import catalog, vocab
+
+    stub = Path(__file__).resolve().parent / "fixtures" / "mioflow_tool"
+    assert stub.is_dir()
+    monkeypatch.delenv("MANYRUNS_TOOL_DIR", raising=False)
+    monkeypatch.setenv("MANYRUNS_TOOL_PATH", str(stub))
 
     assert vocab.unmet(catalog.load_recipe("cflows"), "time-course") == frozenset()
     assert "conditions" in vocab.unmet(catalog.load_recipe("contrast"), "time-course")

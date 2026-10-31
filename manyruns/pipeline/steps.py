@@ -55,8 +55,9 @@ class _StepUnsupported(_StepSkipped):
 def _require_embedding(state, step: str) -> None:
     """Refuse a trajectory step that has no coordinates to run on. ONE home for that rule.
 
-    Both engines need it and only one had it. `_ml_lightning` (manylatents) raised; the real
-    engine's `_step_mioflow` fell back to `state["X"]` and ran the ordering on the RAW input.
+    Both engines needed it and only one had it. `_ml_lightning` (manylatents) raised; the
+    in-process `mioflow` stand-in (removed since; MIOFlow runs only as a tool step) fell back
+    to `state["X"]` and ran the ordering on the RAW input.
     Measured on a `mioflow -> phate` recipe, 120x8 gaussian noise, in-process: every step
     reported `outcome=ok`, the run reported `ok=True`, and the g-vector carried
     `pseudotime_range = [0.0, 1.0]` — a full-range trajectory over data no embedding had
@@ -139,10 +140,10 @@ def _diffusion_pseudotime(Z, n_neighbors: int, info: "dict | None" = None):
     `root` and `unreachable` (cells with no path to the root, which the return value silently
     fills with the maximum finite distance). A cell that is unreachable and a cell that is
     genuinely farthest away are indistinguishable in the returned vector — the caller has to
-    be able to tell them apart. An out-parameter rather than a second return value because
-    two other call sites (`_step_mioflow`, `mioflow._run_mioflow_experiment`) unpack this as
-    a bare array, and widening the return type for a diagnostic is how a signature change
-    reaches files that did not ask for one."""
+    be able to tell them apart. An out-parameter rather than a second return value, because
+    widening the return type for a diagnostic is how a signature change reaches call sites
+    that did not ask for one. (Two of those call sites, the in-process `mioflow` stand-in and
+    MIOFlow's invented time axis, are removed: MIOFlow runs only as a tool step.)"""
     import numpy as np
     from scipy.sparse.csgraph import shortest_path
     from sklearn.neighbors import kneighbors_graph
@@ -162,19 +163,24 @@ def _diffusion_pseudotime(Z, n_neighbors: int, info: "dict | None" = None):
     return (pt - pt.min()) / (np.ptp(pt) or 1.0)  # normalize 0..1 (np.ptp: NumPy 2.0-safe)
 
 
-def _step_mioflow(state, g, params, out_dir, plots, target_dim) -> None:
-    """Trajectory step — diffusion pseudotime (a real MIOFlow stand-in for the in-process loop).
+#: The refusal of a `mioflow` step without `tool:`, on every engine that would compute it.
+#: ONE home, so the in-process loop (`_step_mioflow`) and the manylatents engine
+#: (`runner._ml_lightning`) say the same sentence, and plan time agrees with both
+#: (`vocab.step_needs` returns `tool:mioflow` for such a step).
+MIOFLOW_NEEDS_TOOL = (
+    "mioflow runs only as a tool step: add `tool: mioflow` to the step, and add the MIOFlow "
+    "example folder (examples/tools/mioflow) to $MANYRUNS_TOOL_PATH — manyruns never imports "
+    "MIOFlow")
 
-    The manylatents engine runs the *actual* MIOFlow (see _run_mioflow_experiment); this
-    stand-in keeps the in-process loop dependency-light (no torch)."""
-    _require_embedding(state, "mioflow")
-    Z = state["emb"]
-    n_neighbors = int(params.get("n_neighbors") or min(15, max(2, Z.shape[0] - 1)))
-    pt = _diffusion_pseudotime(Z, n_neighbors)
-    state["pseudotime"] = pt
-    g["pseudotime_range"] = [float(pt.min()), float(pt.max())]
-    # unconditional now — `_require_embedding` above has already refused the None case
-    _io._save_scatter(Z, pt, out_dir, "trajectory.png", plots, title="pseudotime")
+
+def _step_mioflow(state, g, params, out_dir, plots, target_dim) -> None:
+    """A `mioflow` step without `tool:` on the in-process loop: refused, with the fix.
+
+    This was a diffusion-pseudotime stand-in that ran under the name `mioflow`. MIOFlow now runs
+    only through the model seam, so a stand-in under its name would report a trajectory the
+    cited method never fitted. The name stays in `_INPROC_STEPS` so the refusal is a sentence
+    that names the fix, not "no in-process implementation"."""
+    raise _StepUnsupported(MIOFLOW_NEEDS_TOOL)
 
 
 def _step_separation(state, g, params, out_dir, plots, target_dim) -> None:
@@ -600,8 +606,8 @@ def _step_dpt(state, g, params, out_dir, plots, target_dim) -> None:
     A THIRD of the cells have no path to the root, and the fragmentation is in the embedding
     rather than in either method — the raw 15-NN graph on those coordinates has three
     connected components of 200 / 58 / 42 (scipy `connected_components`, no scanpy involved).
-    `_step_mioflow` fills unreachable cells with the largest finite distance and then
-    normalizes, so it reports a full-range trajectory and nothing else: a run in three pieces
+    The in-process `mioflow` stand-in (removed since) filled unreachable cells with the largest
+    finite distance and then normalized, so it reported a full-range trajectory: a run in three pieces
     is indistinguishable in its record from a clean one. That is the same shape of silent
     success `_require_embedding`'s docstring records, one layer further in.
 
@@ -659,7 +665,7 @@ def _step_dpt(state, g, params, out_dir, plots, target_dim) -> None:
     # [0, 1] BY CONSTRUCTION whenever two cells are reachable — measured [0.0, 1.0] on all
     # three fixtures in the docstring, at every n_dcs tried. Recorded because the degenerate
     # case ([0, 0], nothing ordered) is a real outcome, NOT because the endpoints measure the
-    # data. `_step_mioflow`'s `pseudotime_range` has the same shape and the same limit.
+    # data. The removed in-process `mioflow` stand-in's `pseudotime_range` had the same limit.
     g["dpt_range"] = [float(np.nanmin(pt)), float(np.nanmax(pt))] if finite.any() else None
     if not finite.any():
         g["dpt_range_note"] = "no cell is reachable from the root — the kNN graph is empty"
@@ -676,19 +682,16 @@ def _step_dpt(state, g, params, out_dir, plots, target_dim) -> None:
 
 
 def _step_discretize_time(state, g, params, out_dir, plots, target_dim) -> None:
-    """Bin an upstream ordering (`state["pseudotime"]`, e.g. `dpt`'s output) into MIOFlow
-    timepoints — MIOFlow trains on discrete timepoint GROUPS, not a continuous ordering.
+    """Bin an upstream ordering (`state["pseudotime"]`, e.g. `dpt`'s output) into time points
+    — MIOFlow trains on discrete timepoint GROUPS, not a continuous ordering.
 
-    Without this step, `mioflow` on `engine=manylatents` (`runner._ml_lightning`) never sees
-    `state["pseudotime"]` at all: it only reads `state["labels"]`, and when that is empty it
-    computes its OWN pseudotime from scratch and discards whatever ordering step the recipe
-    actually ran (`mioflow.py`'s no-real-time fallback). This step is what lets a recipe's own
-    `dpt` — or any future ordering step — reach MIOFlow, by writing the binned result into the
-    SAME `state["labels"]` / `state["label_kind"]` channel a real per-cell time axis uses
-    (`runner.py`'s `label_kind == "time"` guard). The presence of `mioflow.n_timepoints`
-    in the run's g-vector afterward is the check that it worked — that key is written only
-    when `_ml_lightning` receives non-None labels (`runner.py`), which never happens on a
-    `phate -> dpt -> mioflow` recipe without this step in between.
+    This step is how a recipe DECLARES a time axis on data that has none. It writes the binned
+    result into the SAME `state["labels"]` / `state["label_kind"] = "time"` channel a real
+    per-cell time axis uses, so the MIOFlow tool step receives it as `time.npy`
+    (`external._write_request`), and `vocab.STEP_PRODUCES` says it provides `time`, so
+    `dpt -> discretize_time -> mioflow` is legal at plan time. Nothing invents a time axis any
+    more: the MIOFlow tool declines without one, and the in-process route that fell back to a
+    diffusion pseudotime is removed.
 
     Refuses (skips) rather than silently overwriting real per-cell time labels already present
     — a derived approximation should never replace real data."""

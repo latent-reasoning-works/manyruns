@@ -25,7 +25,12 @@ from manyruns import artifacts, catalog  # noqa: E402
 from manyruns.pipeline import runner  # noqa: E402
 
 EMBED = {"name": "e", "steps": [{"name": "phate", "group": "latent", "params": {"n_components": 3}}]}
-REUSE = {"name": "r", "steps": [{"name": "mioflow", "group": "lightning", "params": {}}]}
+REUSE = {"name": "r", "steps": [{"name": "dpt", "group": "analysis", "params": {}}]}
+#: An embedding, then an ordering that reads it and writes only `pseudotime`. `dpt` stands in
+#: here for the step these tests used to name, `mioflow`, whose in-process stand-in is gone
+#: (MIOFlow runs only as a tool step); the property under test is about any such step.
+TRACE = {"name": "t", "steps": [{"name": "phate", "group": "latent", "params": {"n_components": 3}},
+                               {"name": "dpt", "group": "analysis", "params": {}}]}
 
 
 def _data(n=150, d=12, seed=0):
@@ -61,30 +66,30 @@ def test_the_embedding_round_trips_into_another_run(tmp_path):
 
 
 def test_every_derived_slot_is_written_not_only_the_embedding(tmp_path):
-    """`mioflow` on the in-process loop sets `pseudotime` and leaves `emb` untouched. Keying the write
+    """An ordering step (`dpt`) sets `pseudotime` and leaves `emb` untouched. Keying the write
     on the embedding alone dropped every ordering this product computes — the first version
-    did exactly that, and `mioflow` recorded no artifact at all."""
-    res = runner.run_inproc(_data(), catalog.load_recipe("cflows"), tmp_path, seed=0)
+    did exactly that, and the ordering step recorded no artifact at all."""
+    res = runner.run_inproc(_data(), TRACE, tmp_path, seed=0)
 
     by_step = {s["name"]: (s.get("artifacts") or {}) for s in res["steps"]}
     assert "emb" in by_step["phate"]
-    assert "pseudotime" in by_step["mioflow"]
-    assert artifacts.load_array(by_step["mioflow"]["pseudotime"]).shape == (150,)
+    assert "pseudotime" in by_step["dpt"]
+    assert artifacts.load_array(by_step["dpt"]["pseudotime"]).shape == (150,)
 
 
 def test_an_unchanged_slot_is_not_written_twice(tmp_path):
     """Object identity, the same test `_attach_geometry` uses. A step that reads the embedding
     without replacing it must not deposit a second identical copy under a different name."""
-    res = runner.run_inproc(_data(), catalog.load_recipe("cflows"), tmp_path, seed=0)
+    res = runner.run_inproc(_data(), TRACE, tmp_path, seed=0)
 
     embs = [s["artifacts"]["emb"] for s in res["steps"] if "emb" in (s.get("artifacts") or {})]
-    assert len(embs) == 1                      # phate wrote it; mioflow did not rewrite it
+    assert len(embs) == 1                      # phate wrote it; dpt did not rewrite it
 
 
 def test_the_folder_says_when_it_is_complete(tmp_path):
     """Without the marker a reader cannot tell "this run produced one artifact" from "this run
     was killed after its first". Taken from manylatents' `write_completion_marker`."""
-    res = runner.run_inproc(_data(), catalog.load_recipe("cflows"), tmp_path, seed=0)
+    res = runner.run_inproc(_data(), TRACE, tmp_path, seed=0)
     state = artifacts.root(tmp_path, res["run_id"])
 
     assert artifacts.complete(state)
@@ -180,16 +185,15 @@ def test_each_step_owns_the_figure_it_drew(tmp_path):
     """`_io._save_scatter` appends to a RUN-scoped list, so nothing recorded WHICH step drew
     WHICH figure. That is why a live panel could never show the plot for the step that just
     ran — a record gap, not a rendering one. Diffed the same way `emitted` is."""
-    from manyruns import catalog
     from manyruns.pipeline import runner
 
-    res = runner.run_inproc(_data(), catalog.load_recipe("cflows"), tmp_path, seed=0)
+    res = runner.run_inproc(_data(), TRACE, tmp_path, seed=0)
 
     by_step = {s["name"]: [Path(p).name for p in s.get("plots", [])] for s in res["steps"]}
     assert by_step["phate"] == ["phate.png"]
-    assert by_step["mioflow"] == ["trajectory.png"]
+    assert by_step["dpt"] == ["dpt.png"]
     # and the run-level list is still the union, unchanged for existing readers
-    assert [Path(p).name for p in res["plots"]] == ["phate.png", "trajectory.png"]
+    assert [Path(p).name for p in res["plots"]] == ["phate.png", "dpt.png"]
 
 
 def test_a_step_that_drew_nothing_carries_no_plots_key(tmp_path):
@@ -204,7 +208,7 @@ def test_a_step_that_drew_nothing_carries_no_plots_key(tmp_path):
     assert "plots" in res["steps"][0]
 
     # a skipped step draws nothing and must not claim an empty figure list
-    backwards = {"name": "b", "steps": [{"name": "mioflow", "group": "lightning", "params": {}}]}
+    backwards = {"name": "b", "steps": [{"name": "dpt", "group": "analysis", "params": {}}]}
     res2 = runner.run_inproc(_data(), backwards, tmp_path, seed=0)
     assert res2["steps"][0]["outcome"] == "skipped"
     assert "plots" not in res2["steps"][0]

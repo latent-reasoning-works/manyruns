@@ -13,10 +13,11 @@
 # not tell it from a real run. The mock ENGINE is the tool for "invent a number"; this is the
 # opposite.
 #
-# `phate` and `mioflow` are REAL and are here because the stubs need what they produce: the
-# calculus refuses `granger` and the two probes without a `model`, so a recipe of stubs alone
-# would be illegal rather than skipped, and would exercise the refusal path instead of the step
-# pane. Two real steps, then three that decline.
+# `phate` and `mioflow` are REAL. `mioflow` is a tool step (`tool: mioflow`, declared by the
+# MIOFlow example folder `examples/tools/mioflow` on `$MANYRUNS_TOOL_PATH`), and it returns
+# `trajectories`, not a model: the fitted model stays in the tool's interpreter. So the stubs
+# below, which need `model`, stay refused at plan time after it, and this recipe is blocked on
+# every install. It still lists the declining steps for a reader of the catalog.
 #
 # NOT A RECOMMENDATION FOR ANYTHING — `suits: []`, like `qc`, so it never competes for the top
 # row of the menu. It is one keystroke away for whoever is working on a screen and invisible
@@ -31,7 +32,7 @@ source:
 
 steps:
   - {name: phate,   group: latent,    params: {n_components: 3}, via: manylatents}
-  - {name: mioflow, group: lightning, params: {}, via: manylatents}
+  - {name: mioflow, group: lightning, params: {}, tool: mioflow}
   # Declines. Brian's, manylatents#292 — and the reason names why manyruns deleted its own
   # granger rather than reading "coming soon".
   - {name: granger,              group: analysis, params: {}}

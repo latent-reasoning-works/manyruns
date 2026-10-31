@@ -67,8 +67,9 @@ def test_a_capability_gap_is_not_ok_and_not_complete():
 
 def test_a_step_that_ran_and_judged_stays_ok_but_not_complete():
     """The decline #66 is about. `_require_embedding` is the clearest case in the tree: the
-    executor is present, it ran, and it declined for want of coordinates."""
-    res = _run([{"name": "mioflow", "group": "lightning"}])
+    executor is present, it ran, and it declined for want of coordinates. (`dpt`, an ordering
+    that needs an embedding; this was the in-process `mioflow` stand-in, since removed.)"""
+    res = _run([{"name": "dpt", "group": "analysis"}])
 
     step = res["steps"][0]
     assert step["outcome"] == "skipped"
@@ -101,19 +102,15 @@ def test_a_clean_run_is_both():
 def test_ok_without_complete_is_reachable_and_is_the_whole_point():
     """If no run could ever be `ok` and incomplete, the split bought nothing. This is the
     combination a sweep over the bundled synthetics produces by the dozen."""
-    # ORDER IS LOAD-BEARING: `mioflow` first, so it declines for want of an embedding that
-    # `phate` has not produced yet. Reverse them and phate supplies one, mioflow runs, and the
+    # ORDER IS LOAD-BEARING: `dpt` first, so it declines for want of an embedding that
+    # `phate` has not produced yet. Reverse them and phate supplies one, dpt runs, and the
     # run is complete — which would make this test pass on the wrong pair.
-    #
-    # NOT a probe step, which was the first thing tried here: the `_inproc` substrate has no
-    # `probe` executor at all, so `decode_to_gene_space` is a genuine capability gap and comes
-    # back `unsupported` — correctly, and uselessly for this test.
-    res = _run([{"name": "mioflow", "group": "lightning"},
+    res = _run([{"name": "dpt", "group": "analysis"},
                 {"name": "phate", "group": "latent"}])
 
     assert [s["outcome"] for s in res["steps"]] == ["skipped", "ok"]
     assert res["ok"] is True, "phate's numbers are real and nothing errored"
-    assert res["complete"] is False, "but mioflow did not run"
+    assert res["complete"] is False, "but dpt did not run"
 
 
 def test_complete_never_claims_more_than_ok():
@@ -122,7 +119,7 @@ def test_complete_never_claims_more_than_ok():
     rather than a coincidence, and it fails loudly if one of them is ever inverted."""
     for steps in ([{"name": "phate", "group": "latent"}],
                   [{"name": "nosuchalgo", "group": "latent"}],
-                  [{"name": "mioflow", "group": "lightning"}],
+                  [{"name": "dpt", "group": "analysis"}],
                   [{"name": "orphan"}]):
         res = _run(steps)
         if res["complete"]:

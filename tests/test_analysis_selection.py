@@ -6,13 +6,41 @@ imposing a trajectory: time axis → CFlows, unordered conditions → embed, ove
 """
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
 from manyruns import app
 
 
 # ── the pure decision ────────────────────────────────────────────────────────
-def test_choose_time_axis_is_trajectory():
+STUB = Path(__file__).resolve().parent / "fixtures" / "mioflow_tool"
+
+
+@pytest.fixture()
+def mioflow_declared(monkeypatch):
+    """The stub MIOFlow folder on the tool search path: `cflows` is no longer blocked."""
+    assert STUB.is_dir()
+    monkeypatch.delenv("MANYRUNS_TOOL_DIR", raising=False)
+    monkeypatch.setenv("MANYRUNS_TOOL_PATH", str(STUB))
+
+
+@pytest.fixture()
+def plain_install(monkeypatch):
+    monkeypatch.delenv("MANYRUNS_TOOL_DIR", raising=False)
+    monkeypatch.delenv("MANYRUNS_TOOL_PATH", raising=False)
+
+
+def test_choose_time_axis_is_trajectory(mioflow_declared):
     name, why = app._choose_recipe(has_time_axis=True, conditions=None, modality="scrna")
     assert name == "cflows" and "time" in why.lower()
+
+
+def test_choose_time_axis_without_the_tool_is_an_ordering(plain_install):
+    """`cflows` needs the MIOFlow tool. Without it the head of the menu is the first recipe
+    that is not blocked, and the rationale names the blocked one and why."""
+    name, why = app._choose_recipe(has_time_axis=True, conditions=None, modality="scrna")
+    assert name == "pseudotime" and "cflows" in why and "MANYRUNS_TOOL_PATH" in why
 
 
 def test_choose_conditions_without_time_is_contrast():
@@ -68,7 +96,7 @@ def test_single_or_no_subdirs_not_a_trajectory(tmp_path):
 
 
 # ── end-to-end selection ─────────────────────────────────────────────────────
-def test_select_analysis_timepoint_folder_gets_cflows(tmp_path):
+def test_select_analysis_timepoint_folder_gets_cflows(tmp_path, mioflow_declared):
     _sample_dir(tmp_path, "day0")
     _sample_dir(tmp_path, "day3")
     recipe, why = app.select_analysis("scrna", tmp_path)

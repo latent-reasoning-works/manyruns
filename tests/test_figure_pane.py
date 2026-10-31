@@ -19,8 +19,14 @@ _needs_embedder = pytest.mark.skipif(importlib.util.find_spec("phate") is None,
                                      reason="runs a real recipe; an absent embedder is not a "
                                             "defect in this code")
 
-from manyruns import catalog, figures  # noqa: E402
+from manyruns import figures  # noqa: E402
 from manyruns.pipeline import runner  # noqa: E402
+
+#: An embedding, then an ordering that draws its own figure. `dpt` replaced `mioflow` here when
+#: MIOFlow's in-process stand-in left (it runs only as a tool step); the pane's behaviour is the
+#: same for any two-figure run.
+TRACE = {"name": "t", "steps": [{"name": "phate", "group": "latent", "params": {"n_components": 3}},
+                               {"name": "dpt", "group": "analysis", "params": {}}]}
 
 
 class _Console:
@@ -75,12 +81,12 @@ def test_each_step_records_the_figure_it_drew(tmp_path):
     figure to its author. That is the same gap `emitted` closed for g-vector keys, and it is
     what a pane following the run needs."""
     res = runner.run_inproc(np.random.default_rng(0).normal(size=(150, 12)),
-                              catalog.load_recipe("cflows"), tmp_path, seed=0)
+                              TRACE, tmp_path, seed=0)
 
     by_step = {s["name"]: [f.rsplit("/", 1)[-1] for f in (s.get("plots") or [])]
                for s in res["steps"]}
     assert by_step["phate"] == ["phate.png"]
-    assert by_step["mioflow"] == ["trajectory.png"]
+    assert by_step["dpt"] == ["dpt.png"]
 
 
 def test_a_step_that_drew_nothing_carries_no_figure_key(tmp_path):
@@ -183,7 +189,7 @@ def test_the_dashboard_shows_each_figure_as_its_step_lands(tmp_path, monkeypatch
     from manyruns import shell
 
     con = _Console()
-    live, on_step = shell.live_dashboard(con, catalog.load_recipe("cflows"), "t")
+    live, on_step = shell.live_dashboard(con, TRACE, "t")
 
     order = []
     real_print = con.print
@@ -194,9 +200,9 @@ def test_the_dashboard_shows_each_figure_as_its_step_lands(tmp_path, monkeypatch
 
     con.print = spy
     runner.run_inproc(np.random.default_rng(0).normal(size=(150, 12)),
-                        catalog.load_recipe("cflows"), tmp_path, seed=0, on_step=on_step)
+                        TRACE, tmp_path, seed=0, on_step=on_step)
 
     drawn = [o for o in order if "png" in o]
     assert len(drawn) == 2
     assert "phate" in drawn[0] and "phate.png" in drawn[0]
-    assert "mioflow" in drawn[1] and "trajectory.png" in drawn[1]
+    assert "dpt" in drawn[1] and "dpt.png" in drawn[1]

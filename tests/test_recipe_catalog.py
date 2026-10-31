@@ -4,6 +4,8 @@ Three recipes was not a menu — the shell hardcoded "run the cflows recipe" bec
 nothing to choose between. Eleven is only an improvement if each one EXECUTES; a catalog of YAML
 that parses and cannot run is a longer dropdown, not a product.
 """
+from pathlib import Path
+
 import pytest
 
 np = pytest.importorskip("numpy")
@@ -22,6 +24,13 @@ UPSTREAM_BLOCKED: set = set()
 #: coverage pass (pinned in `tests/test_check.py`). Named here rather than tolerated silently,
 #: so that declaring a case-control dataset shrinks this set and the test tells us.
 NO_BUNDLED_DATA = {"contrast"}
+
+#: Legal NOWHERE, by an accepted decision rather than by accident. `sandbox` is the `dev.`
+#: fixture of declined steps; its stubs (`granger`, `growth_rate`) need `model`, and since
+#: MIOFlow moved to the tool route nothing produces one (the tool returns `trajectories`; the
+#: fitted model stays in the tool's interpreter). The change that moved it says "sandbox stays
+#: blocked". Named, so the day a step produces `model` again this test says so.
+BLOCKED_BY_DESIGN = {"sandbox"}
 
 
 def test_every_recipe_validates():
@@ -50,7 +59,7 @@ def test_every_recipe_declares_its_provenance():
         assert src.get("doi") or src.get("url"), f"{name} source has neither doi nor url"
 
 
-def test_every_recipe_is_legal_on_some_bundled_dataset():
+def test_every_recipe_is_legal_on_some_bundled_dataset(monkeypatch):
     """A recipe legal on nothing is a dead entry in the menu. `contrast` was exactly that — it
     needs `conditions` and no bundled dataset declared `case-control`.
 
@@ -74,11 +83,23 @@ def test_every_recipe_is_legal_on_some_bundled_dataset():
     satisfies. Measured on the bundled catalog: `contrast` is legal on `case-control` and on
     nothing else, which is why one `.yaml` closes the gap and no code change would.
     """
+    # A recipe whose tool is not bundled (`cflows`, `traced` and `sandbox` need MIOFlow) is
+    # blocked on a plain install by the fact `tool:mioflow`, which no DATASET can supply. This
+    # test asks about the data, so it declares the tools first: the stub MIOFlow folder.
+    stub = Path(__file__).resolve().parent / "fixtures" / "mioflow_tool"
+    assert stub.is_dir()
+    monkeypatch.delenv("MANYRUNS_TOOL_DIR", raising=False)
+    monkeypatch.setenv("MANYRUNS_TOOL_PATH", str(stub))
     datasets = catalog.load_datasets()
     for name in catalog.discover_recipes():
         rec = catalog.load_recipe(name)
         legal = [d["name"] for d in datasets
                  if not vocab.unmet(rec, d.get("shape", "unknown"), handle=d.get("handle"))]
+        if name in BLOCKED_BY_DESIGN:
+            assert not legal and "model" in vocab.unmet(rec, "time-course"), (
+                f"{name} is legal on {legal} — it is no longer blocked, so drop it from "
+                "BLOCKED_BY_DESIGN")
+            continue
         if name in NO_BUNDLED_DATA:
             assert not legal, (
                 f"{name} now runs on {legal} — the data gap closed, so drop it from "
@@ -148,7 +169,7 @@ def _scrna_counts():
 
 
 @pytest.mark.parametrize("name", sorted(catalog.discover_recipes()))
-def test_the_recipe_runs(name, tmp_path):
+def test_the_recipe_runs(name, tmp_path, monkeypatch):
     """THE acceptance criterion. Not that the YAML parses — that the steps execute and the run
     reports ok, on data with enough structure to be worth measuring.
 
@@ -182,8 +203,26 @@ def test_the_recipe_runs(name, tmp_path):
     else:
         X, genes, counts = _point_cloud(), None, None
 
+    # A RECIPE WITH A TOOL STEP runs that tool through the model seam. The MIOFlow tool is not
+    # bundled, so the stub MIOFlow folder declares it, under this interpreter; and the tool
+    # needs a time axis, so the run gets three time points (60 cells each), declared as time.
+    labels = label_kind = None
+    if any(s.get("tool") == "mioflow" for s in recipe["steps"]):
+        import sys
+        from pathlib import Path
+
+        stub = Path(__file__).resolve().parent / "fixtures" / "mioflow_tool"
+        assert stub.is_dir()
+        monkeypatch.delenv("MANYRUNS_TOOL_DIR", raising=False)
+        monkeypatch.setenv("MANYRUNS_TOOL_PATH", str(stub))
+        monkeypatch.setenv("MANYRUNS_TOOL_MIOFLOW_PYTHON", sys.executable)
+        labels, label_kind = np.repeat([0.0, 1.0, 2.0], len(X) // 3), "time"
+
+    # `out_dir` BY NAME: the second positional parameter is `data_ref`, so without it the run
+    # (and a tool step's work folder) lands in the current directory instead of `tmp_path`.
     res = runner.run_manylatents(recipe, tmp_path, array=X, counts=counts, genes=genes,
-                                 seed=0, fast_dev_run=True)
+                                 seed=0, fast_dev_run=True, labels=labels,
+                                 label_kind=label_kind, out_dir=tmp_path)
 
     if name in UPSTREAM_BLOCKED:
         failed = [s for s in res["steps"] if s["outcome"] == "error"]

@@ -34,12 +34,15 @@ def make_session(path):
 
 
 def retain_model(name, params, state, g, ctx):
-    # MIOFlow retains a function-local datamodule. Standard pickle cannot serialize
-    # that object graph; it must remain in the worker, including across tune rollback.
+    # A fitted model can hold a function-local class. Standard pickle cannot serialize that
+    # object graph; it must remain in the worker, including across tune rollback. What crosses
+    # to the parent is an array: the step also returns its `trajectories`, the slot the
+    # `sample_trajectories` probe reads (`probes.PROBE_READS`).
     class Model:
         trajectories = np.arange(24.).reshape(3, 4, 2) * params['scale']
 
     state['model'] = Model()
+    state['trajectories'] = Model.trajectories.copy()
 
 
 def test_retained_model_survives_another_attempt_and_parent_rollback(tmp_path):
@@ -50,9 +53,12 @@ def test_retained_model_survives_another_attempt_and_parent_rollback(tmp_path):
         first = session.apply({'name': 'flow', 'group': 'lightning', 'params': {'scale': 1}})
         assert first['outcome'] == 'ok', first
         baseline = dict(session.state)
+        assert isinstance(baseline['model'], runner._RetainedModel), "the model stayed in the worker"
         session.apply({'name': 'flow', 'group': 'lightning', 'params': {'scale': 2}})
+        assert session.state['model'] is not baseline['model']
         session.state.clear()
         session.state.update(baseline)
+        assert session.state['model'] is baseline['model']
         probe = session.apply({'name': 'sample_trajectories', 'group': 'probe'})
         assert probe['outcome'] == 'ok', probe
         assert session.g['sample_trajectories.median_displacement'] == np.sqrt(512)
@@ -60,8 +66,14 @@ def test_retained_model_survives_another_attempt_and_parent_rollback(tmp_path):
         session.compute.close()
 
 
-def test_real_mioflow_retains_its_model_for_a_later_probe(tmp_path):
-    pytest.importorskip('manylatents')
+def test_a_tool_steps_trajectories_reach_a_later_probe(tmp_path, monkeypatch):
+    """MIOFlow runs as a tool step (here the stub MIOFlow folder); its `trajectories` cross the
+    compute process into the session state, and a later probe answers from them."""
+    stub = Path(__file__).resolve().parent / 'fixtures' / 'mioflow_tool'
+    assert stub.is_dir()
+    monkeypatch.delenv('MANYRUNS_TOOL_DIR', raising=False)
+    monkeypatch.setenv('MANYRUNS_TOOL_PATH', str(stub))
+    monkeypatch.setenv('MANYRUNS_TOOL_MIOFLOW_PYTHON', sys.executable)
     array = np.random.default_rng(0).normal(size=(30, 3)).astype(np.float32)
     session = Session('flow', engine='manylatents', out_dir=tmp_path,
                       array=array, embedding=array.copy(), labels=np.repeat([0., .5, 1.], 10),
@@ -69,13 +81,13 @@ def test_real_mioflow_retains_its_model_for_a_later_probe(tmp_path):
     session.carry['declared'] = []
     session.compute = runner.ComputeProcess()
     try:
-        fitted = session.apply({'name': 'mioflow', 'group': 'lightning',
-                                'params': {'n_bins': 7, 'n_trajectories': 4, 'hidden_dim': 8}})
+        fitted = session.apply({'name': 'mioflow', 'group': 'lightning', 'tool': 'mioflow',
+                                'params': {'n_bins': 7}})
         assert fitted['outcome'] == 'ok', fitted.get('detail')
         probe = session.apply({'name': 'sample_trajectories', 'group': 'probe'})
         assert probe['outcome'] == 'ok', probe.get('detail')
-        assert session.g['sample_trajectories.n_steps'] == 7
-        assert session.g['sample_trajectories.n_trajectories'] == 4
+        assert session.g['sample_trajectories.n_steps'] == 4        # the stub's bins
+        assert session.g['sample_trajectories.n_trajectories'] == 3
     finally:
         session.compute.close()
 

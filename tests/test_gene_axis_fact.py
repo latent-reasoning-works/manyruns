@@ -18,9 +18,23 @@ the pre-cutover sweep are re-framed rather than renumbered — see their docstri
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from manyruns import catalog, vocab
+
+STUB = Path(__file__).resolve().parent / "fixtures" / "mioflow_tool"
+
+
+@pytest.fixture()
+def mioflow_declared(monkeypatch):
+    """The stub MIOFlow folder on the tool search path. The sweeps below price DATA facts; on a
+    plain install `cflows`, `traced` and `sandbox` are also refused for `tool:mioflow`, an
+    install fact that `test_order_calculus.py` pins on its own."""
+    assert STUB.is_dir()
+    monkeypatch.delenv("MANYRUNS_TOOL_DIR", raising=False)
+    monkeypatch.setenv("MANYRUNS_TOOL_PATH", str(STUB))
 
 H5AD = {"kind": "path", "ref": "data/pbmc3k_raw.h5ad"}
 GENERATED = {"kind": "path", "ref": "synthetic:time-course"}
@@ -111,7 +125,7 @@ def test_a_missing_gene_axis_is_not_reported_as_an_ordering_problem():
 
 
 # ── the readers that supply it ───────────────────────────────────────────────
-def test_the_sweep_prices_the_gene_demand_and_every_pruned_cell_is_named():
+def test_the_sweep_prices_the_gene_demand_and_every_pruned_cell_is_named(mioflow_declared):
     """PREMISE RE-FRAMED AT THE CUTOVER. This test used to assert the sweep was UNCHANGED,
     because `qc`/`rank_genes` still abstained from declaring `genes` — the split that let the
     refusal wait for its cause. The cutover landed both halves, so "unchanged" is no longer
@@ -131,6 +145,12 @@ def test_the_sweep_prices_the_gene_demand_and_every_pruned_cell_is_named():
     else we ship. The recipe adds no cell to any other row — it is the third recipe refused for
     exactly one fact, not a third KIND of refusal, which is what the breakdown below shows and
     a total would have hidden.
+
+    THE MIOFLOW ROWS JOINED when MIOFlow moved to the tool route (measured with the tool
+    declared): its manifest needs a real `time` axis, which only `synthetic_timecourse` carries,
+    so `cflows` and `traced` are pruned on the other 13 for `time` — the invented time axis is
+    gone. `sandbox` also needs the `model` its stubs ask for, which nothing supplies now: 13
+    cells for `model` and `time`, 1 (the time course) for `model` alone. 93 pruned.
     """
     recipes = [catalog.load_recipe(n) for n in catalog.discover_recipes()]
     datasets = [catalog.load_dataset(n) for n in catalog.discover_datasets()]
@@ -148,12 +168,22 @@ def test_the_sweep_prices_the_gene_demand_and_every_pruned_cell_is_named():
         ("markers", ("genes",)): 13,        # every dataset but pbmc3k: 13 synthetic clouds
         ("qc", ("genes",)): 13,             # same 13 — pbmc3k is the only `provides: [genes]`
         ("preprocess", ("genes",)): 13,     # same 13, and the same one fact
+        ("cflows", ("time",)): 13,          # every dataset but synthetic_timecourse
+        ("traced", ("time",)): 13,          # same 13, the same one fact
+        ("sandbox", ("model", "time")): 13,  # the stubs' `model`, and no time axis
+        ("sandbox", ("model",)): 1,         # the time course: only the stubs' `model`
     }
-    assert sum(pruned.values()) == 53
+    assert sum(pruned.values()) == 93
+
+
+#: Refused on every shape for a reason no data supplies: `sandbox`'s stubs need `model`, and no
+#: step leaves one in this process since MIOFlow moved to the tool route.
+NEVER_LEGAL = {"sandbox"}
 
 
 @pytest.mark.parametrize("name", catalog.discover_recipes())
-def test_every_bundled_recipe_is_legal_on_its_declared_shape_given_data_that_carries_genes(name):
+def test_every_bundled_recipe_is_legal_on_its_declared_shape_given_data_that_carries_genes(
+        name, mioflow_declared):
     """The regression that matters most, restated for a fact SHAPE CANNOT SUPPLY.
 
     Same protection as before — this change must never newly prune something that runs today,
@@ -172,6 +202,9 @@ def test_every_bundled_recipe_is_legal_on_its_declared_shape_given_data_that_car
          what the original assertion was really guarding and what no data can fix.
     """
     recipe = catalog.load_recipe(name)
+    if name in NEVER_LEGAL:
+        assert "model" in vocab.unmet(recipe, "time-course", handle=H5AD)
+        return
     for suit in (recipe.get("suits") or ["unknown"]):
         assert vocab.unmet(recipe, suit, handle=H5AD) == frozenset(), f"{name} on {suit}"
         assert vocab.unmet(recipe, suit) <= frozenset({"genes"}), f"{name} on {suit}"

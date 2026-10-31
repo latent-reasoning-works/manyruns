@@ -39,10 +39,21 @@ def test_describe_speaks_the_shape():
     assert "time course" in narrate.describe(tc)
 
 
-def test_offer_recommends_the_right_question():
+def test_offer_recommends_the_right_question(monkeypatch):
+    from pathlib import Path
+
     cc = narrate.offer(Observation(shape="case-control", conditions=["a", "b"]))
     assert cc[0]["recipe"] == "contrast" and cc[0]["recommended"] and "different" in cc[0]["label"].lower()
     assert "phate" not in " ".join(m["label"] for m in cc).lower()   # never an algorithm name
+    # `cflows` needs the MIOFlow tool. On a plain install it is blocked (`tool:mioflow`), so it
+    # is not recommended, and the first recommended time-course recipe is `pseudotime`.
+    monkeypatch.delenv("MANYRUNS_TOOL_DIR", raising=False)
+    monkeypatch.delenv("MANYRUNS_TOOL_PATH", raising=False)
+    tc = narrate.offer(Observation(shape="time-course"))
+    assert tc[0]["recipe"] == "pseudotime"
+    stub = Path(__file__).resolve().parent / "fixtures" / "mioflow_tool"
+    assert stub.is_dir()
+    monkeypatch.setenv("MANYRUNS_TOOL_PATH", str(stub))
     tc = narrate.offer(Observation(shape="time-course"))
     assert tc[0]["recipe"] == "cflows"
 

@@ -78,12 +78,16 @@ source:
 # overshoot `score.ladder_cost` weights double.
 claims: single-trajectory
 
-# `via: manylatents` on `mioflow` is load-bearing, and it is the one place in the bundled three
-# where it is. The in-process loop does NOT run MIOFlow under this name: `steps._step_mioflow`
-# computes a diffusion pseudotime on a kNN graph and its own docstring calls itself "a real
-# MIOFlow stand-in". Declaring the canonical implementation is what lets `vocab.standins` say
-# so through the existing `caveats` channel instead of the run reporting a `pseudotime_range`
-# with nothing recording that the cited method never ran.
+# THE TRAJECTORY STEP IS A TOOL STEP. `tool: mioflow` runs upstream MIOFlow through the model
+# seam, in the tool's own interpreter; manyruns never imports it. The tool is NOT bundled: the
+# MIOFlow example folder (`examples/tools/mioflow` in a manyruns checkout) declares it, and a
+# user adds that folder to `$MANYRUNS_TOOL_PATH`. Without it this recipe is blocked at plan time
+# (`tool:mioflow`), with that fix in the reason.
+#
+# NO INVENTED TIME AXIS. The tool needs `time` (its manifest says so), so on data with no time
+# axis this recipe is blocked, not run on a pseudotime binned behind the user's back. A recipe
+# that wants MIOFlow on unordered data says how it orders the cells: `cflows_inferred` in the
+# example folder runs `dpt`, then `discretize_time`, then this step.
 steps:
   # THE PREAMBLE, DECLARED. These ran on every counts-like load inside
   # `loading._anndata_matrix` and appeared in no trace, no g-vector and no caveat; their params
@@ -95,7 +99,7 @@ steps:
   - {name: pca,       group: latent, params: {n_components: 50},
      limits: {n_components: [n_samples, n_features]},          via: manylatents}
   - {name: phate,   group: latent,    params: {n_components: 3}, via: manylatents}  # embedding
-  - {name: mioflow, group: lightning, params: {}, via: manylatents}   # trajectory / flow
+  - {name: mioflow, group: lightning, params: {}, tool: mioflow}   # trajectory / flow
 
 question: "Trace the path — where are these cells heading, and what drives the change?"
 suits:    [time-course]

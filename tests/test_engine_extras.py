@@ -154,19 +154,3 @@ def test_a_real_run_keeps_what_it_used_to_drop(tmp_path):
     assert artifacts.load_array(written["phate.affinity"]).shape == (60, 60)
     # and the caller's labels are still not on disk — see `artifacts.PERSISTED`
     assert not any("label" in k for k in written)
-
-
-def test_the_mioflow_seam_returns_its_byproducts_instead_of_dropping_them():
-    """Previously, "the trained flow — the simulatable object, the model
-    — is discarded at the return statement, and only its coordinates survive." The model is
-    still discarded; everything else the engine computed is not.
-
-    A THIRD return value rather than a tolerant unpack, so a stale fake fails loudly instead of
-    quietly continuing to pass — three tests supply one for this function."""
-    import inspect
-
-    from manyruns.pipeline import mioflow
-
-    src = inspect.getsource(mioflow._run_mioflow_experiment)
-    assert "return np.asarray(result.get(\"embeddings\")), (result.get(\"scores\") or {}), extras" \
-        in src

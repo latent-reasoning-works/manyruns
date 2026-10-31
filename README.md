@@ -277,8 +277,12 @@ live in your own directory.
 ## tools
 
 A tool is a recipe step whose code runs in another interpreter: `{name: ..., group: ...,
-tool: <name>}`. Its manifest is a YAML file in `$MANYRUNS_TOOL_DIR`, which replaces the bundled
-tool folder while it is set. A model manifest (`output.schema: result-v1`) returns its facts in
+tool: <name>}`. Its manifest is a YAML file in a tool folder. `$MANYRUNS_TOOL_DIR` replaces the
+bundled tool folder while it is set; `$MANYRUNS_TOOL_PATH` adds folders after it (separated by
+`:` on macOS and Linux), so the bundled tools stay visible. The adapter and the lock of a tool
+are read beside its manifest. A tool name declared in two folders is refused. A recipe step
+whose tool no folder declares blocks its recipe at plan time (`tool:<name>`), with a reason
+that names `MANYRUNS_TOOL_PATH`. A model manifest (`output.schema: result-v1`) returns its facts in
 a `result.json` that `check_result` must accept before anything is merged: an `embedding`,
 `clusters`, a `pseudotime`, `trajectories`, a `graph` or `class_probabilities`. That check is
 the model seam, and manyruns never imports the model. Every manifest declares its `licence`
@@ -331,7 +335,13 @@ manyruns tools verify kmeans # run it on a 12-cell fixture and check the result
 ```
 
 `examples/tools/mioflow/` is a pinned adapter for upstream MIOFlow (`mioflow==0.1.14`),
-outside the wheel; its README says how to use it.
+outside the wheel; its README says how to use it. The bundled recipes `cflows`, `traced` and
+`sandbox` run MIOFlow only through it, and are blocked until a tool folder declares it. In a
+manyruns checkout, add the example folder to the tool search path for the current shell:
+
+```sh
+export MANYRUNS_TOOL_PATH="$PWD/examples/tools/mioflow"
+```
 
 ## the experiment
 

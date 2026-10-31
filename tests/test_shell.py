@@ -85,14 +85,16 @@ def test_plain_prompter_drives_the_shell_without_a_tty(monkeypatch):
 
     Under pytest stdin isn't a TTY, so run_shell picks PlainPrompter on its own — we only
     script the keystrokes: explore(1) → swissroll(3) → "run a specific recipe"(2) →
-    cflows(by name) → quit(5).
+    cluster(by name) → quit(5).
 
-    `cflows` is now ONE LEVEL DOWN for this data, and that is the behaviour under test rather
-    than an inconvenience. swissroll is `shape: manifold`, which `cflows` does not declare in
-    its `suits:`, so the top menu offers only the question the data is suited to and puts the
-    rest behind a single agnostic entry. Previously every legal recipe was a top-level row —
-    `cflows` appearing as the bare label "Run the cflows recipe" beside a question written in
-    English — so the menu grew by a row per recipe and mixed two kinds of thing.
+    `cluster` is ONE LEVEL DOWN for this data, and that is the behaviour under test rather
+    than an inconvenience. swissroll is `shape: manifold`, which `cluster` does not declare in
+    its `suits:` (it is legal there all the same), so the top menu offers only the question the
+    data is suited to and puts the rest behind a single agnostic entry. Previously every legal
+    recipe was a top-level row — appearing as the bare label "Run the <name> recipe" beside a
+    question written in English — so the menu grew by a row per recipe and mixed two kinds of
+    thing. (This used `cflows`, which is no longer legal on a manifold: it needs the MIOFlow
+    tool and a time axis.)
 
     The last recipe answer goes in BY NAME, exercising `PlainPrompter`'s substring match: a
     positional script would silently pass while selecting the wrong entry the next time the
@@ -100,12 +102,12 @@ def test_plain_prompter_drives_the_shell_without_a_tty(monkeypatch):
     pytest.importorskip("numpy")
     from manyruns import shell
 
-    answers = iter(["1", "3", "2", "cflows", "5"])
+    answers = iter(["1", "3", "2", "cluster", "5"])
     monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
     con = CaptureConsole()
     rc = shell.run_shell(_shell_args(), console=con)   # prompter defaulted → PlainPrompter
     assert rc == 0
-    assert "swissroll" in con.text and "mioflow" in con.text
+    assert "swissroll" in con.text and "leiden" in con.text
 
 
 def test_explore_a_dropped_file_shows_data_loaded(tmp_path, monkeypatch):

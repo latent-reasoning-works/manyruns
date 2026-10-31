@@ -11,8 +11,9 @@ unconditionally. Measured on this tree before the fix:
 identical for `torus` and `dla_tree`. A dataset declaring `shape: time-course` therefore had
 its time axis erased between the declaration the legality check reads and the run that
 consumes it: `vocab.unmet(cflows, "time-course")` is `frozenset()` — LEGAL — and
-`runner._ml_lightning` then computes `time_labels = state["labels"]` = None, so
-`mioflow._run_mioflow_experiment` falls back to a diffusion pseudotime over the embedding.
+`runner._ml_lightning` then computed `time_labels = state["labels"]` = None, so MIOFlow's
+in-process route fell back to a diffusion pseudotime over the embedding. (That route is
+removed: MIOFlow runs only as a tool step, which declines without a time axis.)
 
 End to end, `--dataset swissroll --engine real --recipe cflows`, seed 42, 5000x3
 (as measured then; `--engine real` has since been removed — the loop it named is `run_inproc`):
@@ -99,15 +100,22 @@ def test_a_named_dataset_yields_no_labels_from_the_reader(dataset_dir):
     )
 
 
-def test_unmet_calls_a_trajectory_recipe_legal_on_a_time_course_declaration():
+def test_unmet_calls_a_trajectory_recipe_legal_on_a_time_course_declaration(monkeypatch):
     """Why the loader is the only line of defence: the legality function reads the
     DECLARATION and cannot see that the fact will not arrive. Recorded, not fixed here —
-    `vocab.py` is out of scope for this change."""
+    `vocab.py` is out of scope for this change.
+
+    The trajectory step is the MIOFlow TOOL step, declared through the stub MIOFlow folder:
+    its manifest needs `time`, which the `time-course` declaration supplies on paper."""
     from manyruns.vocab import unmet
 
+    stub = Path(__file__).resolve().parent / "fixtures" / "mioflow_tool"
+    assert stub.is_dir()
+    monkeypatch.delenv("MANYRUNS_TOOL_DIR", raising=False)
+    monkeypatch.setenv("MANYRUNS_TOOL_PATH", str(stub))
     cflows = {"name": "cflows", "steps": [
         {"name": "phate", "group": "latent", "params": {}},
-        {"name": "mioflow", "group": "lightning", "params": {}},
+        {"name": "mioflow", "group": "lightning", "params": {}, "tool": "mioflow"},
     ]}
 
     assert unmet(cflows, "time-course") == frozenset(), (

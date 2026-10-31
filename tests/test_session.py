@@ -669,7 +669,10 @@ def test_a_prep_step_that_never_RAN_does_not_rewrite_the_runs_provenance(tmp_pat
     recipe = {"name": "filtered", "steps": [
         {"name": "phate", "group": "latent", "params": {}},
         {"name": "filter_cells", "group": "prep", "params": {"min_genes": 200}},
-        {"name": "mioflow", "group": "lightning", "params": {}}]}
+        # `dpt`, a step whose one need is `embedding`. This was `mioflow`, which now runs only
+        # as a tool step: untooled it needs `tool:mioflow` and no longer reads an embedding at
+        # plan time, so the provenance note under test could not arise from it.
+        {"name": "dpt", "group": "analysis", "params": {}}]}
     session = _mock(recipe=recipe, out_dir=tmp_path, shape="time-course",
                     embedding=np.zeros((60, 3)))
     session.run_recipe()

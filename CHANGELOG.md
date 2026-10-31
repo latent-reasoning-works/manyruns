@@ -25,6 +25,10 @@ During the open beta, the CLI and record schema can still change.
   `commercial_use`, run and call manifests pin their distribution with `==`, and run rows gain
   `non_commercial_steps`. `examples/tools/mioflow/` runs upstream `mioflow==0.1.14` through a
   pinned adapter, outside the wheel.
+- `$MANYRUNS_TOOL_PATH`: folders, separated by the platform's path separator, that manyruns
+  searches for tool manifests after the base tool folder (`$MANYRUNS_TOOL_DIR` or the bundled
+  one). The bundled tools stay visible. A tool name declared in two folders is refused, and the
+  reason names both.
 - `manyruns claim RUN --topology NAME=P[,NAME=P...] --chooser C [--bound B]` appends a
   structure-class verdict about a stored run to `outputs/index.jsonl`: one independent
   probability per topology, nested under `extra.verdict` with the chooser, the bound, the
@@ -101,6 +105,31 @@ During the open beta, the CLI and record schema can still change.
 
 ### Changed
 
+- The bundled recipes `cflows`, `traced` and `sandbox` run MIOFlow through the tool route: their
+  `mioflow` step is `{name: mioflow, group: lightning, params: {}, tool: mioflow}`, which runs
+  upstream MIOFlow in the tool's own interpreter through the model seam. The MIOFlow tool is not
+  bundled; the example folder `examples/tools/mioflow` declares it. Run rows of these three
+  recipes from before and after this change are NOT comparable: the step's g-vector keys are
+  now `mioflow.tool_*`, `mioflow.n_bins` and `mioflow.n_trajectories`, the embedding after the
+  step is the one the step received (no longer MIOFlow's encoder output), and
+  `non_commercial_steps` is `["mioflow"]`.
+- Data with no time axis is now blocked at plan time for `cflows` and `traced` (`time` unmet),
+  where MIOFlow used to run on an invented time axis. A recipe that wants MIOFlow on unordered
+  data declares how it orders the cells: `examples/tools/mioflow/recipes/cflows_inferred.yaml`
+  runs `dpt`, then `discretize_time`, which now provides `time`, then the tool step.
+- A step whose tool no searched folder declares is a plan-time fact, `tool:<name>`, and no
+  longer a catalog error: the recipe stays valid and shows as blocked in `unmet`, `manyruns
+  check`, the ledger and `manyruns actions`, with a reason that names `MANYRUNS_TOOL_PATH`.
+  `sandbox` stays blocked after its `mioflow` step: its stubs need `model`, which no step
+  produces now.
+- Auto-selection never picks a blocked recipe. On time-course data without the MIOFlow tool
+  `manyruns run` selects `pseudotime`, and the rationale says that `cflows` is blocked and why.
+- On `--engine mock` a tool step runs the mock executor of its group and never starts the tool;
+  its record says `mock stand-in for tool <name>`.
+- The `sample_trajectories` probe reads `state["trajectories"]` (it needs `trajectories`, not
+  `model`), and the in-process loop now offers `probe` steps. A tool step that returns
+  trajectories draws `<step>.png` over the embedding it received.
+- A tool's adapter and lock are read beside its manifest, in the folder that declares it.
 - The `archetypes` recipe is runnable: its `blocked:` field is removed, and its `aa` step
   declares `n_components: 3`.
 - The `manylatents` lower bound is `>=0.1.9`, the first release in which `aa` fits.
@@ -110,6 +139,12 @@ During the open beta, the CLI and record schema can still change.
 
 ### Removed
 
+- The in-process MIOFlow route. manyruns no longer imports MIOFlow:
+  `pipeline/mioflow.py` keeps only the manylatents command-line route for other lightning step
+  names, a `mioflow` step without `tool:` is refused with the fix (`add tool: mioflow`) on every
+  engine but the mock, and the in-process loop's diffusion-pseudotime stand-in under the name
+  `mioflow` is gone. `registry.apply_weights` refuses a weights-kind version instead of loading a
+  MIOFlow network in process.
 - The `label` and `rlhf` stubs of `python -m manyruns.harness`, which printed "not yet
   implemented". Use `manyruns label` and the other annotation verbs.
 

@@ -397,9 +397,12 @@ def test_a_refusal_caused_by_a_filter_does_not_claim_that_nothing_embeds():
         # manifold it would be refused for TWO facts and the assertion would stop isolating
         # the one under test.
         {"name": "filter_cells", "group": "prep", "params": {"min_genes": 200}},
-        {"name": "mioflow", "group": "lightning", "params": {}}]}
+        # `dpt`, a step whose one need is `embedding`. This used `mioflow`, which now runs only
+        # as a tool step and so needs `tool:mioflow` (and `time`) as well; the property under
+        # test is about the embedding reason alone.
+        {"name": "dpt", "group": "analysis", "params": {}}]}
     never_embeds = {"name": "backwards", "steps": [
-        {"name": "mioflow", "group": "lightning", "params": {}}]}
+        {"name": "dpt", "group": "analysis", "params": {}}]}
 
     assert vocab.unmet(filtered, "manifold") == vocab.unmet(never_embeds, "manifold")
     assert narrate.blocked(never_embeds, "manifold") == [narrate.MISSING_FACT["embedding"]]
@@ -425,78 +428,28 @@ def test_vocab_facts_is_derived_from_the_tables_and_not_a_fifth_literal():
                              | set(vocab.TOOL_OUTPUT_FACTS))
 
 
-def test_a_fact_no_step_needs_can_never_reach_a_ledger_row():
-    """MEASURED, and it contradicts the mockup in §3.2 — say so rather than pretend.
+def test_the_timepoints_row_is_reachable_once_a_tool_needs_time(monkeypatch):
+    """The §3.2 mockup's hollow `trace a path — needs timepoints` row, now REACHABLE.
 
-    §3.2 draws a hollow `trace a path — needs timepoints` row. `vocab.unmet` cannot produce it:
-    `time` is provided by `time-course` data and required by NOTHING, because `mioflow` treats a
-    real clock as a preference and falls back to a diffusion pseudotime (`STEP_NEEDS`'s own
-    comment). So `cflows` is legal on all six shapes and that row cannot appear until some step
-    declares a `time` need. This test fails the day one does — which is the day the mockup
-    becomes reachable."""
-    needed = {f for v in vocab.STEP_NEEDS.values() for f in v}
-    assert "time" not in needed
+    This test used to pin the opposite: `time` was required by no step, because `mioflow` ran in
+    process and fell back to a diffusion pseudotime, so `cflows` was legal on all six shapes. It
+    said it would fail "the day some step declares a `time` need". That day is the move of
+    MIOFlow to the tool route: the MIOFlow manifest declares `needs: [embedding, time]`, and no
+    time axis is invented. With the tool declared (the stub MIOFlow folder), `cflows` runs on
+    `time-course` and reads "needs timepoints" on every shape that carries no time."""
+    from pathlib import Path
+
+    stub = Path(__file__).resolve().parent / "fixtures" / "mioflow_tool"
+    assert stub.is_dir()
+    monkeypatch.delenv("MANYRUNS_TOOL_DIR", raising=False)
+    monkeypatch.setenv("MANYRUNS_TOOL_PATH", str(stub))
     for shape in vocab.SHAPES:
         rows = {r.recipe: r for r in state.ledger(_obs(shape))}
-        assert rows["cflows"].can_run, f"cflows unexpectedly blocked on {shape}"
-        assert not any("timepoints" in b for r in rows.values() for b in r.blocked)
-
-
-def test_blocked_says_exactly_what_unmet_refuses_and_agrees_on_legality():
-    """One call, one answer. A caller must never hold a legality verdict and a reason computed
-    separately — that is how the two come to disagree. The invariant is iff, over every bundled
-    recipe × every shape."""
-    from manyruns.catalog import discover_recipes, load_recipe
-
-    checked = 0
-    for name in discover_recipes():
-        recipe = load_recipe(name)
-        for shape in vocab.SHAPES:
-            unmet = vocab.unmet(recipe, shape)
-            why = narrate.blocked(recipe, shape)
-            assert bool(why) == bool(unmet), f"{name}/{shape}: {why} vs {sorted(unmet)}"
-            assert len(why) == len(unmet)
-            checked += 1
-    assert checked == len(discover_recipes()) * len(vocab.SHAPES)
-
-
-def test_an_unphrased_fact_degrades_to_the_machine_word_instead_of_vanishing():
-    """The fallback must never DROP a fact: a silent drop turns an illegal recipe into a
-    runnable-looking one with no reason attached, which is worse than a machine word on screen.
-    Exercised by naming a need nothing phrases."""
-    recipe = {"steps": [{"name": "__probe__", "group": "analysis", "params": {}}]}
-    original = dict(vocab.STEP_NEEDS)
-    vocab.STEP_NEEDS["__probe__"] = ("lineage_barcodes",)
-    try:
-        why = narrate.blocked(recipe, "single")
-        assert why == ["needs lineage_barcodes"]
-        assert bool(why) == bool(vocab.unmet(recipe, "single"))
-    finally:
-        vocab.STEP_NEEDS.clear()
-        vocab.STEP_NEEDS.update(original)
-
-
-# ── the question splits into the ledger's two columns, from the catalog ──────
-def test_every_bundled_recipe_splits_into_an_ask_and_a_gloss():
-    """§3.2 draws two columns. They are DERIVED from each recipe's own `question:` — measured
-    2026-08-16, all 11 bundled recipes write it as `<ask> — <what it will do>`. A hand-kept
-    table of short verbs beside the questions would drift the moment someone reworded one and
-    not its twin, so this pins that the derivation still covers the catalog."""
-    from manyruns.catalog import discover_recipes, load_recipe
-
-    names = discover_recipes()
-    assert len(names) == 12, "catalog changed; re-read the measurement in this test"
-    for name in names:
-        ask, gloss = narrate.split_question(load_recipe(name)["question"])
-        assert ask and gloss, f"{name}: {ask!r} / {gloss!r}"
-        assert "—" not in ask and "—" not in gloss
-        assert len(ask) < len(gloss), f"{name}: the ask should be the short half"
-
-
-def test_a_question_with_no_dash_is_all_ask_and_no_invented_gloss():
-    assert narrate.split_question("Just do the thing") == ("Just do the thing", "")
-    assert narrate.split_question("") == ("", "")
-    assert narrate.split_question(None) == ("", "")
+        if "time" in vocab.SHAPE_PROVIDES.get(shape, ()):
+            assert rows["cflows"].can_run, f"cflows blocked on {shape}, which carries time"
+        else:
+            assert not rows["cflows"].can_run
+            assert rows["cflows"].blocked == (narrate.MISSING_FACT["time"],), shape
 
 
 # ── the ledger ───────────────────────────────────────────────────────────────
@@ -534,9 +487,12 @@ def test_the_ledger_shows_the_refused_recipe_instead_of_hiding_it():
     # reason, so the catalog grew by one and the runnable count did not move.
     # 6 -> 5 with the `dev.` filter: `sandbox` was runnable here and no longer reaches the pane.
     # 5 -> 7: `archetypes` is no longer `blocked:`, and `branches` is legal on every shape.
-    assert sum(1 for r in rows.values() if r.can_run) == 7
+    # 7 -> 5 when MIOFlow moved to the tool route: `cflows` and `traced` need the MIOFlow tool
+    # (`tool:mioflow`), which a plain install does not declare — a third reason, also shown.
+    assert sum(1 for r in rows.values() if r.can_run) == 5
     assert {name for name, r in rows.items() if not r.can_run} == {
-        "contrast", "qc", "markers", "preprocess"}
+        "contrast", "qc", "markers", "preprocess", "cflows", "traced"}
+    assert "MANYRUNS_TOOL_PATH" in rows["cflows"].detail
     # the three gene-axis rows say WHICH fact, and it is not the one `contrast` is missing
     assert rows["qc"].detail == narrate.MISSING_FACT["genes"] == rows["markers"].detail
     assert rows["preprocess"].detail == narrate.MISSING_FACT["genes"]
@@ -660,8 +616,9 @@ def test_the_capability_count_discriminates_once_a_row_reads_its_own_facts():
     # 6 -> 5: `sandbox` no longer reaches the menu (it declares `id: dev.sandbox.stubs`), so
     # every roster row lost the same one. The POINT of this assertion is the constancy, not the
     # number — a reading that is the same on all 14 datasets discriminates nothing. 5 -> 7:
-    # `archetypes` is no longer `blocked:`, and `branches` is legal on every shape.
-    assert set(by_shape.values()) == {7}, f"the shape-only reading is not constant: {by_shape}"
+    # `archetypes` is no longer `blocked:`, and `branches` is legal on every shape. 7 -> 5:
+    # `cflows` and `traced` need the MIOFlow tool, which a plain install does not declare.
+    assert set(by_shape.values()) == {5}, f"the shape-only reading is not constant: {by_shape}"
 
     with_facts = {r.name: sum(1 for row in state.ledger(r.obs, r.obs.provides()) if row.can_run)
                   for r in rows}
@@ -987,7 +944,8 @@ def test_a_recipe_a_NARROWING_blocks_is_hollow_on_both_surfaces_too(tmp_path, mo
         # `filter_cells` for the reason the sibling test above records: `filter_genes` needs
         # a gene axis, which a synthetic manifold has not got.
         "  - {name: filter_cells, group: prep, params: {min_genes: 200}}\n"
-        "  - {name: mioflow, group: lightning, params: {}}\n"
+        # `dpt`, whose one need is `embedding`: `mioflow` now also needs its tool and `time`.
+        "  - {name: dpt, group: analysis, params: {}}\n"
     )
     monkeypatch.setenv("MANYRUNS_RECIPE_DIR", str(tmp_path))
     obs = _obs("manifold", modality="synthetic")

@@ -37,12 +37,17 @@ opposite fixes.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from manyruns import catalog, vocab
 
 PHATE = {"name": "phate", "group": "latent", "params": {}}
-MIOFLOW = {"name": "mioflow", "group": "lightning", "params": {}}
+#: A step that needs an embedding and produces nothing the rule clears. It was `mioflow` until
+#: MIOFlow moved to the tool route (`tool: mioflow`, whose manifest also needs `time`); `dpt`
+#: declares exactly `("embedding",)`, so every refusal below is still about the embedding alone.
+DPT = {"name": "dpt", "group": "analysis", "params": {}}
 LEIDEN = {"name": "leiden", "group": "latent", "params": {}}
 FILTER = {"name": "filter_cells", "group": "prep", "params": {"min_genes": 200}}
 FILTER_GENES = {"name": "filter_genes", "group": "prep", "params": {"min_cells": 3}}
@@ -72,10 +77,10 @@ def _recipe(*steps):
 
 # ── 1. the rule ──────────────────────────────────────────────────────────────
 def test_a_filter_between_the_embedding_and_the_trajectory_is_refused():
-    """The headline. `mioflow` declares `embedding`; the filter dropped the cells it was
+    """The headline. `dpt` declares `embedding`; the filter dropped the cells it was
     fitted over. Refused at PLAN time, which is where a search over recipes has to get its
     answer — it cannot afford to run each one to find out."""
-    assert vocab.unmet(_recipe(PHATE, FILTER, MIOFLOW), "time-course") == frozenset({"embedding"})
+    assert vocab.unmet(_recipe(PHATE, FILTER, DPT), "time-course") == frozenset({"embedding"})
 
 
 def test_the_same_recipe_without_the_filter_stays_legal():
@@ -84,21 +89,21 @@ def test_the_same_recipe_without_the_filter_stays_legal():
     `test_every_bundled_recipe_is_still_legal_on_the_data_its_declared_shape_describes` exists
     below (renamed at the cutover — see its docstring for why the shape alone stopped
     deciding)."""
-    assert vocab.unmet(_recipe(PHATE, MIOFLOW), "time-course") == frozenset()
+    assert vocab.unmet(_recipe(PHATE, DPT), "time-course") == frozenset()
 
 
 def test_filtering_BEFORE_the_embedding_is_legal():
     """Which is the whole standard workflow — filter, then embed (`preprocess.yaml` puts every
     filter first for exactly this reason). The rule refuses a STALE derived array, not the act
     of filtering."""
-    assert vocab.unmet(_recipe(FILTER, PHATE, MIOFLOW), "time-course") == frozenset()
+    assert vocab.unmet(_recipe(FILTER, PHATE, DPT), "time-course") == frozenset()
 
 
 def test_a_prep_step_that_does_not_narrow_clears_nothing():
     """`transform` returns a new matrix, not a mask (`prep._step_transform`). Treating every
     prep step as a narrowing — keying the rule on GROUP, the way `GROUP_PROVIDES` is keyed —
-    would refuse `[phate, transform, mioflow]`, which composes and runs."""
-    assert vocab.unmet(_recipe(PHATE, TRANSFORM, MIOFLOW), "time-course") == frozenset()
+    would refuse `[phate, transform, dpt]`, which composes and runs."""
+    assert vocab.unmet(_recipe(PHATE, TRANSFORM, DPT), "time-course") == frozenset()
 
 
 def test_a_frame_fact_survives_a_narrowing():
@@ -180,7 +185,7 @@ def test_a_column_narrowing_clears_the_embedding_for_the_same_reason_a_row_one_d
     It also errs in the direction `STEP_PRODUCES` says this kind of table is allowed to err in
     ("it prunes a step that would have run, it never admits one that cannot"), and the pruning
     is overridable: see the `provided` test below."""
-    assert vocab.unmet(_recipe(PHATE, FILTER_GENES, MIOFLOW), "manifold",
+    assert vocab.unmet(_recipe(PHATE, FILTER_GENES, DPT), "manifold",
                        handle=H5AD) == frozenset({"embedding"})
 
 
@@ -189,7 +194,7 @@ def test_a_caller_who_says_they_hold_the_embedding_keeps_it_across_a_narrowing()
     caller asserting they hold the object — a precomputed embedding, or one they will re-fit
     themselves — and this function does not get to decide their asset went stale. It is the
     same hatch `STEP_PRODUCES`' commentary names for `clusters`."""
-    recipe = _recipe(PHATE, FILTER_GENES, MIOFLOW)
+    recipe = _recipe(PHATE, FILTER_GENES, DPT)
 
     assert vocab.unmet(recipe, "manifold", provided={"embedding"},
                        handle=H5AD) == frozenset()
@@ -200,14 +205,14 @@ def test_detect_doublets_narrows_only_when_the_recipe_asks_it_to():
     answer depends on them: `_step_detect_doublets` returns an all-True mask unless
     `remove: true` (spec §5 — "a step that silently drops cells is the inverse of this
     product's thesis"). Listing the name unconditionally would refuse
-    `[phate, detect_doublets, mioflow]`, a recipe whose executor removes nothing."""
+    `[phate, detect_doublets, dpt]`, a recipe whose executor removes nothing."""
     flags = {"name": "detect_doublets", "group": "prep", "params": {"threshold": 0.3}}
     removes = {"name": "detect_doublets", "group": "prep", "params": {"remove": True}}
 
     assert vocab.step_narrows(flags) is False
     assert vocab.step_narrows(removes) is True
-    assert vocab.unmet(_recipe(PHATE, flags, MIOFLOW), "manifold") == frozenset()
-    assert vocab.unmet(_recipe(PHATE, removes, MIOFLOW), "manifold") == frozenset({"embedding"})
+    assert vocab.unmet(_recipe(PHATE, flags, DPT), "manifold") == frozenset()
+    assert vocab.unmet(_recipe(PHATE, removes, DPT), "manifold") == frozenset({"embedding"})
 
 
 # ── 3. the rule is derived, not restated ─────────────────────────────────────
@@ -254,11 +259,17 @@ def test_no_step_produced_fact_is_also_a_frame_fact():
     """The disjointness the rule rests on, asserted rather than assumed. If a fact ever appears
     in both a shape table and a producer table, `have &= keep` silently stops clearing it and
     the calculus goes back to being monotone for that one word — the exact silent drift this
-    module opens by describing."""
+    module opens by describing.
+
+    ONE STATED EXCEPTION, `time`: `discretize_time` produces it (so a recipe can declare a time
+    axis it inferred), and it writes the frame's own time channel, which a narrowing masks with
+    the rows rather than discarding. Keeping it is the true answer, and `vocab.step_facts`
+    subtracts the frame facts so no cleared-phrase is owed for it. Any OTHER overlap fails."""
     produced = {f for facts in vocab.GROUP_PROVIDES.values() for f in facts}
     produced |= {f for facts in vocab.STEP_PRODUCES.values() for f in facts}
 
-    assert produced & vocab.frame_facts() == set()
+    assert produced & vocab.frame_facts() == {"time"}
+    assert vocab.step_facts() & vocab.frame_facts() == frozenset()
 
 
 def test_every_prep_step_that_exists_is_classified_by_what_it_returns():
@@ -309,16 +320,16 @@ def test_noncanonical_cannot_call_a_fact_unusual_that_unmet_calls_missing(monkey
 
 def test_noncanonical_names_the_callers_embedding_once_the_runs_own_has_been_cleared():
     """The other half of the mirror: the fact survives, and WHERE IT CAME FROM changed. After
-    the filter, the embedding `mioflow` reads cannot be phate's — the calculus just declared
+    the filter, the embedding `dpt` reads cannot be phate's — the calculus just declared
     that one dead — so the only one left is the caller's, and a result obtained off the beaten
     path is exactly the one whose provenance a reader needs."""
-    recipe = _recipe(PHATE, FILTER, MIOFLOW)
+    recipe = _recipe(PHATE, FILTER, DPT)
 
     notes = vocab.noncanonical(recipe, "manifold", provided={"embedding"})
 
     assert len(notes) == 1
     assert "embedding came from the caller" in notes[0]
-    assert vocab.noncanonical(_recipe(PHATE, MIOFLOW), "manifold", provided={"embedding"}) == []
+    assert vocab.noncanonical(_recipe(PHATE, DPT), "manifold", provided={"embedding"}) == []
 
 
 # ── 5. a refusal a human can act on ──────────────────────────────────────────
@@ -326,13 +337,13 @@ def test_invalidated_names_the_facts_a_narrowing_took_away():
     """`unmet` says WHICH fact is missing; this says WHY it is missing, and the two are one
     fold so they cannot disagree about the same recipe.
 
-    It exists because the answer decides what a human is told. `[phate, filter_cells, mioflow]`
-    and `[mioflow, phate]` both come back `{"embedding"}`, and they are opposite problems: the
+    It exists because the answer decides what a human is told. `[phate, filter_cells, dpt]`
+    and `[dpt, phate]` both come back `{"embedding"}`, and they are opposite problems: the
     first embeds and then throws the coordinates away, the second never embeds at all. Told the
     second reason for the first recipe, the user adds a second embedder and is refused again."""
-    assert vocab.invalidated(_recipe(PHATE, FILTER, MIOFLOW), "time-course") == frozenset(
+    assert vocab.invalidated(_recipe(PHATE, FILTER, DPT), "time-course") == frozenset(
         {"embedding"})
-    assert vocab.invalidated(_recipe(PHATE, FILTER_GENES, MIOFLOW), "manifold",
+    assert vocab.invalidated(_recipe(PHATE, FILTER_GENES, DPT), "manifold",
                              handle=H5AD) == frozenset({"embedding"})
 
     ranks = {"name": "rank_genes", "group": "analysis", "params": {}}
@@ -344,18 +355,18 @@ def test_a_fact_nothing_ever_produced_is_missing_but_was_never_TAKEN_away():
     """The half that keeps the distinction worth drawing. A filter in a recipe that never
     embeds at all removed nothing from the facts on hand, so the honest reason is still that
     nothing here lays the cells out."""
-    assert vocab.unmet(_recipe(MIOFLOW, PHATE), "manifold") == frozenset({"embedding"})
-    assert vocab.invalidated(_recipe(MIOFLOW, PHATE), "manifold") == frozenset()
-    assert vocab.invalidated(_recipe(FILTER, MIOFLOW), "manifold") == frozenset()
-    assert vocab.invalidated(_recipe(PHATE, TRANSFORM, MIOFLOW), "manifold") == frozenset()
+    assert vocab.unmet(_recipe(DPT, PHATE), "manifold") == frozenset({"embedding"})
+    assert vocab.invalidated(_recipe(DPT, PHATE), "manifold") == frozenset()
+    assert vocab.invalidated(_recipe(FILTER, DPT), "manifold") == frozenset()
+    assert vocab.invalidated(_recipe(PHATE, TRANSFORM, DPT), "manifold") == frozenset()
 
 
 def test_what_a_narrowing_took_away_is_always_something_unmet_refuses():
     """One fold, two projections — so `invalidated` can never name a fact `unmet` calls
     satisfied. A caller reads the two together (`narrate.blocked` picks the sentence with
     them), and a fact in one and not the other would be a reason attached to no refusal."""
-    recipes = [_recipe(PHATE, FILTER, MIOFLOW), _recipe(PHATE, FILTER_GENES, MIOFLOW),
-               _recipe(MIOFLOW, PHATE), _recipe(FILTER, PHATE, MIOFLOW),
+    recipes = [_recipe(PHATE, FILTER, DPT), _recipe(PHATE, FILTER_GENES, DPT),
+               _recipe(DPT, PHATE), _recipe(FILTER, PHATE, DPT),
                _recipe(LEIDEN, FILTER, {"name": "rank_genes", "group": "analysis"})]
     recipes += [catalog.load_recipe(n) for n in catalog.discover_recipes()]
 
@@ -367,8 +378,18 @@ def test_what_a_narrowing_took_away_is_always_something_unmet_refuses():
 
 
 # ── 6. nothing that runs today was newly pruned ──────────────────────────────
+#: Bundled recipes refused on every shape for a reason no data can fix, each named. `sandbox` is
+#: a fixture of declining stubs (`granger`, `growth_rate`) that need `model`; its `mioflow` step
+#: is a tool step that returns `trajectories` and keeps the fitted model in the tool's
+#: interpreter, so nothing supplies `model` (the in-process route that did is removed).
+NEVER_LEGAL = {"sandbox": frozenset({"model", "time"})}
+
+STUB = Path(__file__).resolve().parent / "fixtures" / "mioflow_tool"
+
+
 @pytest.mark.parametrize("name", catalog.discover_recipes())
-def test_every_bundled_recipe_is_still_legal_on_the_data_its_declared_shape_describes(name):
+def test_every_bundled_recipe_is_still_legal_on_the_data_its_declared_shape_describes(
+        name, monkeypatch):
     """The regression that matters most: this table's job is to prune what cannot compose, and
     it must never newly prune something that runs today.
 
@@ -389,8 +410,19 @@ def test_every_bundled_recipe_is_still_legal_on_the_data_its_declared_shape_desc
     The third is the narrowing rule's own share of the claim, and it holds with or without a
     handle: seven of the ten gained a `normalize -> transform` prep block at the cutover, and
     neither name is in `NARROWING_STEPS`, so `step_narrows` is still False at every position of
-    every bundled recipe and `invalidated` is empty for all ten."""
+    every bundled recipe and `invalidated` is empty for all ten.
+
+    THE TOOLS ARE DECLARED FIRST. `cflows`, `traced` and `sandbox` run MIOFlow as a tool step,
+    and the tool is not bundled: on a plain install each is refused for `tool:mioflow`, which is
+    a fact about the install, not the data. The stub MIOFlow folder declares it here."""
+    assert STUB.is_dir()
+    monkeypatch.delenv("MANYRUNS_TOOL_DIR", raising=False)
+    monkeypatch.setenv("MANYRUNS_TOOL_PATH", str(STUB))
     recipe = catalog.load_recipe(name)
+    if name in NEVER_LEGAL:
+        for suit in recipe.get("suits") or ["unknown"]:
+            assert vocab.unmet(recipe, suit, handle=H5AD) == NEVER_LEGAL[name], f"{name} on {suit}"
+        return
     # `genes` is the one fact a bundled recipe can need that no shape carries — see H5AD.
     needs_genes = frozenset({"genes"}) & vocab.recipe_needs(recipe)
 

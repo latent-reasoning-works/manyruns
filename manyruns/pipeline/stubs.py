@@ -54,8 +54,8 @@ _STUBS: dict[str, tuple[str, str]] = {
     #
     # MEASURED, twice and independently: GAGA's decoder is built as `_linear(prev, input_dim)`
     # with `input_dim` taken from the first batch, so it maps back to whatever the flow was fitted
-    # on — live fits at widths 5, 15 and 3 decode to 5, 15 and 3. Through manyruns's own
-    # `_run_mioflow_experiment` on a 3-D PHATE frame the decode returns 3 columns: the embedding,
+    # on — live fits at widths 5, 15 and 3 decode to 5, 15 and 3. Through manyruns's former
+    # in-process MIOFlow route on a 3-D PHATE frame the decode returned 3 columns: the embedding,
     # not genes. So a decode is necessary and nowhere near sufficient.
     #
     # That is what makes the backlog's HVG framing the actual design rather than a detail — fit

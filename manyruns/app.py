@@ -1533,7 +1533,14 @@ def cmd_check(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
                 # `conditions` "comes from the data and not from any shape" is false, and
                 # `case-control` is exactly the shape they should go find.
                 absent = sorted(set(need) & set(vocab.DATASET_FACTS) - set(cleared))
-                if cleared:
+                # A fourth reason: a tool no searched folder declares. No dataset and no
+                # reordering fixes it; declaring the tool does, and the phrase says how.
+                tools = [narrate.tool_phrase(f) for f in need
+                         if f.startswith(vocab.TOOL_FACT_PREFIX)]
+                if tools:
+                    print(f"  WARN  {r['name']:<14} no dataset can exercise it — "
+                          + "; ".join(tools))
+                elif cleared:
                     print(f"  WARN  {r['name']:<14} no dataset can exercise it — a later step "
                           f"clears {cleared}, which an earlier step produced; move the filter "
                           "before the step that needs it, or re-run that step after it")
@@ -2078,18 +2085,42 @@ def _choose_recipe(
     `scrna`/`bulk` and defaulted to `cflows` besides). So `manyruns run` asserted a
     trajectory on data the interactive path declined to make any claim about — issue #26,
     and measurably the single largest source of over-claiming in the ladder eval.
+
+    It takes the first entry of that menu that `narrate.blocked` leaves empty, never a blocked
+    one. On time-course data with no MIOFlow tool declared that is `pseudotime`, and the
+    rationale names `cflows` and its first unmet fact (`tool:mioflow`).
     """
     from manyruns import narrate
 
     if override:
         return override, f"recipe forced to {override!r} (auto-selection skipped)"
 
-    shape = narrate.shape_of(has_time_axis, conditions, modality)
-    recipe = narrate.offer(narrate.Observation(
-        shape=shape, modality=modality, conditions=conditions))[0]["recipe"]
+    from manyruns import catalog, vocab
 
-    if shape == "time-course":
+    shape = narrate.shape_of(has_time_axis, conditions, modality)
+    menu = narrate.offer(narrate.Observation(
+        shape=shape, modality=modality, conditions=conditions))
+    # THE HEAD THAT CAN RUN. `offer` never RECOMMENDS a blocked recipe, so a recommended head is
+    # legal; when nothing is recommended the head is alphabetical and could be blocked — a
+    # missing tool (`tool:mioflow`) blocks `cflows` on every install that has not declared it.
+    loaded = {o["recipe"]: catalog.load_recipe(o["recipe"]) for o in menu}
+    legal = [o["recipe"] for o in menu if not narrate.blocked(loaded[o["recipe"]], shape)]
+    recipe = legal[0] if legal else menu[0]["recipe"]
+    # The recipe that suits this shape best is the first suited one in catalog order; when it is
+    # blocked, the rationale says which and why, so a user learns what would unlock it.
+    suited = sorted(o["recipe"] for o in menu if shape in (loaded[o["recipe"]].get("suits") or ()))
+    best = suited[0] if suited else None
+    blocked_note = ""
+    if best is not None and best != recipe:
+        missing = sorted(vocab.unmet(loaded[best], shape))
+        if missing:
+            blocked_note = (f"; {best} is blocked ({missing[0]}: "
+                            f"{narrate.blocked(loaded[best], shape)[0]})")
+
+    if shape == "time-course" and recipe == "cflows":
         why = "detected a time / ordering axis → trajectory (CFlows: phate→mioflow)"
+    elif shape == "time-course":
+        why = f"detected a time / ordering axis → {recipe}{blocked_note}"
     elif shape == "case-control":
         why = (f"detected conditions {sorted(conditions or [])} with no time axis → case/control "
                "contrast (PHATE + condition separation), not a trajectory")
@@ -2437,12 +2468,14 @@ def _require_declared_facts(
     `torus` and `dla_tree`. So a dataset declaring
     `shape: time-course` would have its time axis erased between the declaration the legality
     check reads and the run that consumes it — `unmet(cflows, "time-course")` is `frozenset()`,
-    i.e. LEGAL, and `runner._ml_lightning` then computes `time_labels = state["labels"]` =
-    None and `mioflow._run_mioflow_experiment` falls back to a diffusion pseudotime.
+    i.e. LEGAL, and the run then received `state["labels"]` = None — and MIOFlow's former
+    in-process route fell back to a diffusion pseudotime. (That route is removed: the MIOFlow
+    tool step now declines without a time axis, so the same gap would read as a declined step.)
 
-    What that produces, measured end to end (`--dataset swissroll --recipe cflows` on the
-    in-process loop, seed 42, 5000×3): trace `latent:phate → lightning:mioflow`, status `phate: ok,
-    mioflow: ok`, run `ok=True`, and `g_vector["pseudotime_range"] == [0.0, 1.0]` — a
+    What that produced before the move, measured end to end (`--dataset swissroll --recipe
+    cflows` on the in-process loop, seed 42, 5000×3): trace `latent:phate → lightning:mioflow`,
+    status `phate: ok, mioflow: ok`, run `ok=True`, and
+    `g_vector["pseudotime_range"] == [0.0, 1.0]` — a
     full-range trajectory whose clock came from the embedding, indistinguishable in the record
     from one driven by real collection times. Same failure mode as the step-order bug
     (commit df478cc), one level up: there the ORDER was unchecked, here the DATA is.
