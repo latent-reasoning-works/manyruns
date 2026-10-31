@@ -88,6 +88,21 @@ def _entry(name: str = "swissroll", shape: str = "manifold") -> state.DataEntry:
                            obs=Observation(shape=shape, modality="synthetic", source=name))
 
 
+def _highlight(app, recipe: str) -> None:
+    """Put the ledger highlight on `recipe` before `enter`, for the tests that then drive its
+    steps. On `manifold` data the ledger head is `archetypes` since that recipe stopped being
+    `blocked:` (recommended rows tie on `suits` and sort alphabetically), not `embed`."""
+    from textual.widgets import OptionList
+
+    rows = app.screen.query_one(OptionList)
+    for index in range(rows.option_count):
+        option = rows.get_option_at_index(index)
+        if option.id == recipe and not option.disabled:
+            rows.highlighted = index
+            return
+    raise AssertionError(f"{recipe} is not a runnable ledger row")
+
+
 @pytest.fixture
 def prepared_entries(monkeypatch):
     """Navigation fixtures are already prepared; real source rechecks live in sample-fetch tests."""
@@ -470,6 +485,7 @@ async def test_the_front_door_asks_about_the_steps_that_offer_a_knob_and_no_othe
         await pilot.pause()
         await pilot.press("enter")          # roster -> ledger
         await pilot.pause()
+        _highlight(app, "embed")
         await pilot.press("enter")          # ledger -> the run, which now stops and asks
         await pilot.pause()
         screen = app.screen
@@ -562,6 +578,7 @@ async def test_tui_suppresses_loop_drawing_but_keeps_record_fed_figures(
             capture.setattr(sys, "stdout", stream)
             await pilot.press("enter")
             await pilot.pause()
+            _highlight(app, "embed")
             await pilot.press("enter")
             await pilot.pause()
             screen = app.screen
@@ -603,6 +620,7 @@ async def test_a_tuned_step_says_what_it_wrote_to_the_corpus(tmp_path, monkeypat
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
+        _highlight(app, "embed")
         await pilot.press("enter")
         await pilot.pause()
         screen = app.screen
@@ -677,6 +695,7 @@ async def test_an_abandoned_run_does_not_record_a_completed_one(tmp_path, monkey
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
+        _highlight(app, "embed")
         await pilot.press("enter")
         await pilot.pause()
         screen = app.screen
@@ -928,6 +947,7 @@ async def test_a_tuned_step_shows_what_the_tune_changed(tmp_path, monkeypatch):
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
+        _highlight(app, "embed")
         await pilot.press("enter")
         await pilot.pause()
         screen = app.screen
@@ -1059,6 +1079,7 @@ async def test_the_stepped_run_hands_build_session_the_cli_s_own_project_dict(
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
+        _highlight(app, "embed")
         await pilot.press("enter")
         await pilot.pause()
         await _answer_every_question(pilot, app.screen)

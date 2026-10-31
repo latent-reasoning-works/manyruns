@@ -418,7 +418,7 @@ def test_vocab_facts_is_derived_from_the_tables_and_not_a_fifth_literal():
     """`vocab.facts()` must be computed from the four tables. If it were a literal it would be
     the same closed list stated a fifth time — so adding a need must move it."""
     assert vocab.facts() == {"time", "conditions", "embedding", "clusters", "genes",
-                             "model", "splicing", "velocity"}
+                             "model", "splicing", "velocity", "graph"}
     tables = (vocab.SHAPE_PROVIDES, vocab.GROUP_PROVIDES, vocab.STEP_PRODUCES, vocab.STEP_NEEDS)
     assert vocab.facts() == {f for t in tables for v in t.values() for f in v}
 
@@ -483,7 +483,7 @@ def test_every_bundled_recipe_splits_into_an_ask_and_a_gloss():
     from manyruns.catalog import discover_recipes, load_recipe
 
     names = discover_recipes()
-    assert len(names) == 11, "catalog changed; re-read the measurement in this test"
+    assert len(names) == 12, "catalog changed; re-read the measurement in this test"
     for name in names:
         ask, gloss = narrate.split_question(load_recipe(name)["question"])
         assert ask and gloss, f"{name}: {ask!r} / {gloss!r}"
@@ -518,11 +518,11 @@ def test_the_ledger_shows_the_refused_recipe_instead_of_hiding_it():
     assert contrast.can_run is False
     assert contrast.blocked == ("needs a healthy/disease column",)
     assert contrast.detail == "needs a healthy/disease column"   # the reason IS the 2nd column
-    # Measured on the bundled 11, and the hollow rows are hollow for THREE different reasons:
-    # `contrast` wants a fact this data lacks (`vocab.unmet` → `conditions`), `qc`, `markers` and
-    # `preprocess` want a different one (`genes`), and `archetypes` cannot run against any data at
-    # all until manylatents' `aa` stops rejecting the `method` kwarg (`narrate.unavailable`). The
-    # ledger joins them; none is folded into the others.
+    # Measured on the bundled 12, and the hollow rows are hollow for TWO different reasons:
+    # `contrast` wants a fact this data lacks (`vocab.unmet` → `conditions`), and `qc`, `markers`
+    # and `preprocess` want a different one (`genes`). The ledger joins them; neither is folded
+    # into the other. `archetypes` was a third reason (`narrate.unavailable`, a `blocked:` field)
+    # until manylatents 0.1.9 fixed `aa`.
     #
     # 8 -> 6 at the cutover (#54): `qc` and `rank_genes` now declare `("genes",)` in
     # `vocab.STEP_NEEDS`, and `genes` is a DATASET fact that `SHAPE_PROVIDES` never supplies —
@@ -531,13 +531,10 @@ def test_the_ledger_shows_the_refused_recipe_instead_of_hiding_it():
     # with `preprocess`: the eleventh recipe arrives hollow on this observation for the same
     # reason, so the catalog grew by one and the runnable count did not move.
     # 6 -> 5 with the `dev.` filter: `sandbox` was runnable here and no longer reaches the pane.
-    assert sum(1 for r in rows.values() if r.can_run) == 5
+    # 5 -> 7: `archetypes` is no longer `blocked:`, and `branches` is legal on every shape.
+    assert sum(1 for r in rows.values() if r.can_run) == 7
     assert {name for name, r in rows.items() if not r.can_run} == {
-        "contrast", "archetypes", "qc", "markers", "preprocess"}
-    # The reason is written in the register `contrast` set — what the reader lacks, never what
-    # the code did. It used to read "blocked upstream — manylatents' `aa` rejects the `method`
-    # kwarg (archetypes-package skew)", which is a dependency's API drift on a scientist's screen.
-    assert rows["archetypes"].detail == "not available yet"
+        "contrast", "qc", "markers", "preprocess"}
     # the three gene-axis rows say WHICH fact, and it is not the one `contrast` is missing
     assert rows["qc"].detail == narrate.MISSING_FACT["genes"] == rows["markers"].detail
     assert rows["preprocess"].detail == narrate.MISSING_FACT["genes"]
@@ -660,8 +657,9 @@ def test_the_capability_count_discriminates_once_a_row_reads_its_own_facts():
     by_shape = {r.name: sum(1 for row in state.ledger(r.obs) if row.can_run) for r in rows}
     # 6 -> 5: `sandbox` no longer reaches the menu (it declares `id: dev.sandbox.stubs`), so
     # every roster row lost the same one. The POINT of this assertion is the constancy, not the
-    # number — a reading that is the same on all 14 datasets discriminates nothing.
-    assert set(by_shape.values()) == {5}, f"the shape-only reading is not constant: {by_shape}"
+    # number — a reading that is the same on all 14 datasets discriminates nothing. 5 -> 7:
+    # `archetypes` is no longer `blocked:`, and `branches` is legal on every shape.
+    assert set(by_shape.values()) == {7}, f"the shape-only reading is not constant: {by_shape}"
 
     with_facts = {r.name: sum(1 for row in state.ledger(r.obs, r.obs.provides()) if row.can_run)
                   for r in rows}
@@ -918,7 +916,7 @@ def test_a_misspelled_field_fails_loudly_rather_than_rendering_blank():
         row.recipe = "x"     # frozen: a view must not be edited in place
 
 
-def test_the_two_surfaces_cannot_disagree_about_a_blocked_recipe():
+def test_the_two_surfaces_cannot_disagree_about_a_blocked_recipe(tmp_path, monkeypatch):
     """FOUND BY DRIVING BOTH, and it was a real inconsistency rather than a hypothetical.
 
     `narrate.unavailable` had exactly one caller — `state.ledger` — so the app drew
@@ -931,8 +929,24 @@ def test_the_two_surfaces_cannot_disagree_about_a_blocked_recipe():
     recipe is never RECOMMENDED, and it is still RETURNED — the ledger's hollow row is
     informative precisely because it is on screen with its reason, and dropping it from the
     menu would take a stated blockage back to an invisible one.
+
+    No bundled recipe declares `blocked:` since manylatents 0.1.9 fixed `aa`, so the blocked
+    recipe is a fixture in a temporary `MANYRUNS_RECIPE_DIR`, beside a copy of the catalogue.
     """
-    from manyruns.catalog import load_recipe
+    import shutil
+
+    from manyruns.catalog import load_recipe, recipe_dir
+
+    bundled = recipe_dir()
+    assert bundled.is_dir()
+    rdir = tmp_path / "recipes"
+    shutil.copytree(bundled, rdir)
+    (rdir / "stuck.yaml").write_text(
+        "name: stuck\nid: test.stuck\nblocked: \"not available yet\"\n"
+        "steps: [{name: pca, group: latent}]\n"
+        'question: "Stuck? — a fixture whose steps cannot run anywhere"\n'
+        "suits: [manifold]\nclaims: surface\n")
+    monkeypatch.setenv("MANYRUNS_RECIPE_DIR", str(rdir))
 
     obs = _obs("manifold", modality="synthetic")
     offered = {o["recipe"]: o for o in narrate.offer(obs)}

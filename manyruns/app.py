@@ -1442,10 +1442,12 @@ def cmd_check(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     Catches what a typo actually costs: a step group outside the vocabulary, a dataset shape
     that would invent a spurious class in the results table, a name that disagrees with its
     filename. Exits non-zero if anything is invalid, so CI can run it too."""
-    from manyruns import catalog, vocab
+    from manyruns import catalog, env, narrate, score, vocab
     from manyruns.vocab import unmet
 
     bad = 0
+    gaps: list = []
+    ladder_failed = False
     ddir = getattr(args, "dataset_dir", None)
     recipes: list[dict] = []   # the valid ones, for the coverage pass
     datasets: list[dict] = []
@@ -1541,11 +1543,32 @@ def cmd_check(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
                     print(f"  WARN  {r['name']:<14} no dataset can exercise it — needs a shape "
                           f"providing {need or '?'} (have: {', '.join(shapes)})")
 
+        # ladder: the rungs no OFFERED recipe can claim. The check offer is structural — a
+        # valid recipe that is not `blocked:` and is legal on at least one declared dataset;
+        # `check` has no measurements, so the rung-support gate does not apply here. A gap in
+        # the bundled catalogue is a FAIL. A `$MANYRUNS_RECIPE_DIR` holds a sweep's arms and
+        # need not cover the ladder, so a gap there is a WARN and keeps the exit code.
+        check_offer = [r["name"] for r in recipes
+                       if not narrate.unavailable(r)
+                       and any(not unmet(r, d.get("shape", "unknown"), handle=d.get("handle"))
+                               for d in datasets)]
+        gaps = list(score.unroutable_rungs(check_offer))
+        print("\nladder (rungs the offered recipes can claim)")
+        if not gaps:
+            print("  ok    unroutable rungs: none")
+        elif not env.get("RECIPE_DIR"):
+            ladder_failed = True
+            print(f"  FAIL  unroutable rungs: {gaps}")
+        else:
+            print(f"  WARN  unroutable rungs: {gaps}")
+
     tail = "all valid" if not bad else f"{bad} INVALID"
     if warn:
         tail += f", {warn} unexercisable"
+    if gaps:
+        tail += f", unroutable rungs {gaps}"
     print(f"\n{len(names)} recipes, {len(dnames)} datasets — {tail}")
-    return 1 if bad else 0
+    return 1 if bad or ladder_failed else 0
 
 
 # ── building blocks ──────────────────────────────────────────────────────────

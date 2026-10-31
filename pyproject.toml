@@ -97,8 +97,9 @@ dependencies = [
     # Public on PyPI, so the tokenless install survives fixing it in. It pulls torch +
     # lightning, which is not a new cost: the lightning step group (MIOFlow) and every training
     # path already needed them.
-    # 0.1.7 ships the MIOFlow/CFlows modules used by the bundled recipe paths.
-    "manylatents>=0.1.7",
+    # 0.1.7 ships the MIOFlow/CFlows modules used by the bundled recipe paths; 0.1.9 is the first
+    # release in which `aa` fits (the archetypes recipe), and it adds the Reeb cell cap.
+    "manylatents>=0.1.9",
     # Biology needs the singlecell extra: bare omics supplies the module, but normalize
     # imports scanpy lazily inside the operation. This declaration travels to consumers;
     # tool.uv.sources and our lock do not. 0.1.3 first ships singlecell/preprocessing.py.

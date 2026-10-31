@@ -124,7 +124,8 @@ def test_the_sweep_prices_the_gene_demand_and_every_pruned_cell_is_named():
     "qc is pruned on pbmc3k" (the bug this whole fact exists to prevent).
 
     Measured 2026-08-16, this checkout: 11 recipes x 14 datasets = 154 cells (was 140 — the
-    recipe count went 10 -> 11 when `preprocess` was declared), 53 pruned (was 40).
+    recipe count went 10 -> 11 when `preprocess` was declared), 53 pruned (was 40). 12 x 14 =
+    168 since `branches` (2026-10-30), which is legal on every shape and prunes no cell.
     The 13 new prunings are ALL `preprocess` on the 13 synthetics: `filter_genes` and
     `filter_mito` read gene names, so the scRNA preamble is legal on `pbmc3k` and on nothing
     else we ship. The recipe adds no cell to any other row — it is the third recipe refused for
@@ -141,7 +142,7 @@ def test_the_sweep_prices_the_gene_demand_and_every_pruned_cell_is_named():
                 pruned[(r["name"], tuple(sorted(missing)))] = 1 + pruned.get(
                     (r["name"], tuple(sorted(missing))), 0)
 
-    assert len(recipes) * len(datasets) == 154
+    assert len(recipes) * len(datasets) == 168
     assert pruned == {
         ("contrast", ("conditions",)): 14,  # no bundled dataset declares `case-control`
         ("markers", ("genes",)): 13,        # every dataset but pbmc3k: 13 synthetic clouds

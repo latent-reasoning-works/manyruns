@@ -71,6 +71,33 @@ During the open beta, the CLI and record schema can still change.
   `outputs.done` marker. `COMPLETE` keeps its meaning.
 - Section 8 of the environment contract documents the run folder layout and names `run_id` as
   the join key.
+- The `branches` recipe (`sc.branch.reeb`, `claims: multi-branching`): the preamble, `pca`,
+  `phate`, `reeb_graph` and the `branch_points` readout. It closes rung 3 of the ladder.
+- The `branch_points` analysis step copies the Reeb summary's `n_branch_points` and
+  `n_endpoints` to `branch_points.*`; an absent summary is recorded as `None` with a note.
+- The `graph` fact. `reeb_graph` is a graph-valued latent step: it keeps the embedding, its
+  node-membership matrix goes to the artifact channel as `reeb_graph.membership`, and the
+  metric suite is not sent to it. It provides only `graph`, so a readout that needs
+  coordinates is illegal after a lone Reeb step.
+- `vocab.rung_support(recipe, evidence, admitted)`, the rung-support gate: it refuses a
+  `clusters`, `multi-branching` or `single-trajectory` claim that the measured g-vector does
+  not support, with one of the nine fixed reasons in `vocab.SUPPORT_REASONS`. An unavailable
+  value refuses. `narrate.offer` and `tui.state.ledger` take `evidence` and `admitted`;
+  `manyruns actions` applies the gate when `--gate on`, from the probe run, and fills
+  `detail.<recipe>.support`. `vocab.LID_1D_BAND` is a placeholder until calibrated, and
+  `vocab.ADMITTED_READOUTS` is empty. `configs/recipe/README.md` states the rule table.
+- `score.unroutable_rungs(offer)` returns the rungs that no offered and runnable recipe claims.
+- `manyruns check` prints a ladder line: the rungs that the offered recipes leave unroutable.
+  A gap fails the check on the bundled catalogue and warns in a `$MANYRUNS_RECIPE_DIR`.
+
+### Changed
+
+- The `archetypes` recipe is runnable: its `blocked:` field is removed, and its `aa` step
+  declares `n_components: 3`.
+- The `manylatents` lower bound is `>=0.1.9`, the first release in which `aa` fits.
+- `score.unroutable_rungs` takes `config_dir` by keyword only.
+- `manyruns actions`, with its gate on (the default), refuses a recipe whose claim the probe
+  run does not support. With no probe run, every claim that has a rule is refused.
 
 ### Removed
 

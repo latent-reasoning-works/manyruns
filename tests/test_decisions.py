@@ -437,7 +437,7 @@ def test_every_recipe_that_asserts_a_structure_now_declares_it():
     # nothing about which. `check_claims` makes absence legal precisely so a recipe can say so
     # rather than pick the nearest word.
     assert set(discover_recipes()) - set(claimed) == {"qc", "sandbox", "preprocess"}
-    assert claimed == {"archetypes": 4, "cflows": 2, "cluster": 1, "contrast": 1,
+    assert claimed == {"archetypes": 4, "branches": 3, "cflows": 2, "cluster": 1, "contrast": 1,
                        "embed": 0, "markers": 1, "pseudotime": 2,
                        # `traced` is `cflows` plus a probe, and claims the same structure: the
                        # probe REPORTS on the trajectory rather than asserting a second one, so
@@ -446,13 +446,12 @@ def test_every_recipe_that_asserts_a_structure_now_declares_it():
 
 
 def test_the_unreachable_rung_is_reported_rather_than_hidden():
-    """`unroutable_rungs()` went [3, 4] → [3]: `archetypes` now claims rung 4. It reads what
-    recipes CLAIM, not what they can RUN, and `archetypes` is `blocked:` upstream — so rung 4 is
-    closed on paper and unreachable in fact. Pinned so the distinction is not lost: a perfect
-    selector is still capped by both, and `multi-branching` has no recipe at all while
-    `tree_narrow`/`tree_wide` ship as datasets whose correct answer nothing can give."""
+    """`unroutable_rungs()` went [3, 4] → [3] → []: `archetypes` claimed rung 4 while it was
+    `blocked:` upstream, and `branches` now claims rung 3. With manylatents 0.1.9 `archetypes`
+    runs, so the catalogue answer and the offer answer agree: rung 4 is closed in fact, not only
+    on paper. Pinned so a regression on either rung is reported rather than hidden."""
     from manyruns import narrate, score
     from manyruns.catalog import load_recipe
 
-    assert score.unroutable_rungs() == [3]
-    assert narrate.unavailable(load_recipe("archetypes")), "rung 4's only claimant is blocked"
+    assert score.unroutable_rungs() == []
+    assert narrate.unavailable(load_recipe("archetypes")) == []

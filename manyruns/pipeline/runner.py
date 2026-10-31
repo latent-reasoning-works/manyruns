@@ -1639,6 +1639,15 @@ def _label_valued(name: str) -> bool:
     return "clusters" in STEP_PRODUCES.get(name, ())
 
 
+def _graph_valued(name: str) -> bool:
+    """Whether a latent step hands back a GRAPH and leaves the coordinates where they are.
+
+    Read off `vocab.STEP_PRODUCES`, as `_label_valued` is. Today that is `reeb_graph`, whose
+    engine `embeddings` are an (N, M) 0/1 node-membership matrix: not coordinates, so it must
+    not replace `state["emb"]`, and the geometry suite has nothing to measure in it."""
+    return "graph" in STEP_PRODUCES.get(name, ())
+
+
 class RunStepLogger:
     """The manylatents `StepLogger` protocol, addressed by the run folder.
 
@@ -1740,7 +1749,11 @@ def _ml_latent(name, params, state, g, ctx):
     # rather than implied by a missing `leiden.lid` key (`suite.py`, "declared, not
     # conditional"). One metric declining is the metric's absence, never the step's error —
     # the rule `suite.measure` already applies to the final suite.
-    if ctx.get("metrics") and not _label_valued(name):
+    #
+    # NOR FOR A GRAPH-VALUED STEP (`_graph_valued`), for the same reason: its output is a
+    # node-membership matrix, not coordinates.
+    graph = _graph_valued(name)
+    if ctx.get("metrics") and not _label_valued(name) and not graph:
         kwargs["metrics"] = list(ctx["metrics"])
     # "first" is derived from the state, not a flag: a flag that only cleared on full
     # success meant a step failing *after* producing an embedding sent the next step back
@@ -1771,6 +1784,18 @@ def _ml_latent(name, params, state, g, ctx):
         # A fresh fit starts on the selected source axis, even after an unverified
         # resume. Check its output anew; chained coordinates retain their uncertainty.
         ctx["metadata_aligned"] = True
+    if graph:
+        # The coordinates stay; the graph goes beside them. The final suite then measures the
+        # embedding this step was built over, and a readout after it reads the summary that
+        # `_collect_extras` flattens into the g-vector.
+        if ctx.get("metrics"):
+            g[f"{name}.suite_note"] = ("geometry suite not measured: this step produces a "
+                                       "graph (node membership), not coordinates")
+        state.setdefault("extras", {})[f"{name}.membership"] = emb
+        for k, v in (out.get("scores") or {}).items():
+            g[f"{name}.{k}"] = v
+        _collect_extras(name, out, state, g)
+        return
     _check_metadata_alignment(emb, state, ctx, out.get("obs_names", out.get("sample_ids")))
     state["emb"] = emb
     if ctx.get("metrics") and _label_valued(name):
