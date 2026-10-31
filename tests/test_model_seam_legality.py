@@ -54,13 +54,9 @@ def test_manifest_replaces_name_table(monkeypatch):
     steps = [{"name": "mioflow", "group": "lightning", "tool": "mioflow"},
              {"name": "sample_trajectories", "group": "probe"}]
     given = {"embedding", "time"}
-    # The manifest says the tool step produces `trajectories`, which the probe reads.
-    assert vocab.unmet({"steps": steps}, "manifold", provided=given) == frozenset()
-    # Without `tool:`, the name table no longer supplies anything: an untooled `mioflow` needs
-    # the missing-tool fact and provides nothing (MIOFlow runs only as a tool step).
+    assert vocab.unmet({"steps": steps}, "manifold", provided=given) == frozenset({"model"})
     untooled = [{k: v for k, v in s.items() if k != "tool"} for s in steps]
-    assert vocab.unmet({"steps": untooled}, "manifold", provided=given) == frozenset(
-        {"tool:mioflow", "trajectories"})
+    assert vocab.unmet({"steps": untooled}, "manifold", provided=given) == frozenset()
 
 
 @pytest.mark.source_checkout

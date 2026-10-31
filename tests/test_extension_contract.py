@@ -71,22 +71,12 @@ def test_no_vocabulary_row_names_a_step_that_does_not_exist():
 def test_every_demanded_fact_can_be_supplied_by_something():
     """THE CALCULUS GATE — see the module docstring. A fact demanded and unsuppliable prunes
     its step on every dataset, and the recipe just stops appearing."""
-    from manyruns.pipeline import stubs
-
-    # `TOOL_OUTPUT_FACTS` are supplied by a tool step's MANIFEST rather than a name table:
-    # `sample_trajectories` needs `trajectories`, which the MIOFlow tool step returns.
     suppliable = (
         {f for v in vocab.SHAPE_PROVIDES.values() for f in v}
         | {f for v in vocab.GROUP_PROVIDES.values() for f in v}
         | {f for v in vocab.STEP_PRODUCES.values() for f in v}
-        | set(vocab.DATASET_FACTS)
-        | set(vocab.TOOL_OUTPUT_FACTS))
-    # A declared-but-unimplemented stub may demand a fact nothing supplies YET: `granger`,
-    # `growth_rate` and `decode_to_gene_space` need `model`, and since MIOFlow moved to the
-    # tool route no step leaves a model in this process. Stubs decline anyway; every REAL
-    # step is still held to the gate.
-    unsuppliable = {f for name, v in vocab.STEP_NEEDS.items() if name not in stubs.names()
-                    for f in v} - suppliable
+        | set(vocab.DATASET_FACTS))
+    unsuppliable = {f for v in vocab.STEP_NEEDS.values() for f in v} - suppliable
     assert not unsuppliable, (
         f"{sorted(unsuppliable)} is demanded by a step and produced by NOTHING — no shape, no "
         f"group, no step and no dataset declaration supplies it, so every recipe naming that "

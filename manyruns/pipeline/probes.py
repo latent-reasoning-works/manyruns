@@ -1,21 +1,31 @@
-"""The `probe` group — questions put to what a model step returned.
+"""The `probe` group — questions put to a trained model.
 
-**A probe is a step, not a new axis.** It consumes a fact another step produced, it writes to
-the g-vector, and it transforms no data and moves no selection. `CLAUDE.md`'s extension path
-for a new capability is a group plus one executor in the dispatch table, and that is exactly
-what this is — not a fourth axis beside capability / substrate / fidelity, and not a new
-`--engine` value.
+The trained flow, *"the simulatable object, the model"*, was discarded at
+`_run_mioflow_experiment`'s return statement and only its coordinates kept. It was discarded by
+MANYRUNS's line, not by anything upstream — `manylatents.experiment.run_experiment` takes the
+algorithm as an argument and the caller owns it throughout. This module is what the model is
+kept FOR.
 
-**Most probes read a state slot, not a model.** manyruns never imports MIOFlow: a `mioflow` step
-runs only as a tool step, and the fitted flow stays in the tool's interpreter. What crosses the
-model seam is `trajectories`, which fills `state["trajectories"]`. `PROBE_READS` names the slot
-each such probe reads; `runner._run_probe_step` passes that slot, and declines when it is empty.
-A probe absent from `PROBE_READS` reads `state["model"]` (the declared stubs, `growth_rate` and
-`decode_to_gene_space`, which still need a fitted model).
+**A probe is a step, not a new axis.** It consumes a fact another step produced (`model`), it
+writes to the g-vector, and it transforms no data and moves no selection. `CLAUDE.md`'s
+extension path for a new capability is a group plus one executor in the dispatch table, and
+that is exactly what this is — not a fourth axis beside capability / substrate / fidelity, and
+not a new `--engine` value.
 
-**Duck-typed against a model, on purpose.** A model probe asks for a method by name (`_ask`) and
-declines when it has none. It must NOT import a model class or test `isinstance`: manyruns does
-not implement the compute and must not hold an opinion about the class.
+**Duck-typed against the engine, on purpose.** A probe asks the model for a method by name and
+declines when it has none. It must NOT import `MIOFlow` or test `isinstance`: manyruns does
+not implement the compute and must not hold an opinion about the class, and a probe written
+against one algorithm's type is a product-side copy of the engine's catalogue by another route
+(`vocab.py` refuses that shape twice). What a probe knows is the QUESTION; the engine knows how
+to answer it.
+
+**What is answerable today, measured against the installed manylatents.** `MIOFlow` exposes
+`trajectories` (a property, populated by `_generate_trajectories` at train end) and `encode`
+(integrate an arbitrary tensor from t=0 to t=1). It does NOT expose `decode_to_gene_space` or
+`growth_rate` — those are upstream work, and `decode_to_gene_space` in particular cannot arrive
+through `extra_outputs()`, which takes no arguments and so cannot accept a gene set chosen
+after the run (`Cflows` fixes its own at construction time via `grn_gene_names`). So this module
+ships the probe that needs nothing upstream, and the others land when their methods do.
 """
 from __future__ import annotations
 
@@ -44,23 +54,27 @@ def _ask(model: Any, *names: str) -> Any:
         f"{sorted(n for n in dir(model) if not n.startswith('_'))[:12]}…")
 
 
-def _probe_sample_trajectories(traj: Any, params: dict) -> dict:
-    """The paths a model step returned, `(T, n, d)`: T time bins, n trajectories, d dims.
+def _probe_sample_trajectories(model: Any, params: dict) -> dict:
+    """The paths the trained flow integrates — `(T, n, d)`: T timesteps, n cells, d dims.
 
-    `traj` is `state["trajectories"]` (`PROBE_READS`), the array the model seam checked and
-    merged. Reported as SHAPE plus a displacement summary, never as the array. A probe's answer
-    lands in the g-vector, which `store.py` writes to `index.jsonl` one line per run; putting the
-    array there would put the scientist's coordinates in a shared corpus, which the federated
-    line of the decision record rules out — *"No data, no coordinates, no counts."*
+    Reported as SHAPE plus a displacement summary, never as the array. A probe's answer lands
+    in the g-vector, which `store.py` writes to `index.jsonl` one line per run; putting an
+    `(n_bins, n_cells, dim)` tensor there would put the scientist's coordinates in a shared
+    corpus, which `the-decision-record.md`'s federated line rules out — *"No data, no
+    coordinates, no counts."* The array stays in memory for a caller that wants it.
     """
     import numpy as np
 
-    traj = np.asarray(traj)
+    traj = np.asarray(_ask(model, "trajectories"))
     if traj.ndim != 3:
         raise _NoAnswer(f"trajectories has shape {traj.shape}; expected (steps, cells, dims)")
-    # AXIS 0 IS TIME, axis 1 is trajectories: the seam's `trajectories` fact is
-    # (bins, trajectories, coordinates), which `external.check_result` checks before the merge.
-    # Naming them the other way round reads perfectly and reports the bin count as a population.
+    # AXIS 0 IS TIME, axis 1 is cells, and this is MEASURED rather than inferred.
+    # `MIOFlow._generate_trajectories` builds `t_bins = linspace(min(times), max(times),
+    # self.n_bins)` and `X_0_sample = X_0[idx]` where `idx` selects `n_trajectories` cells, then
+    # `odeint(self.network, X_0_sample, t_bins)` — and torchdiffeq returns `(len(t), *y0.shape)`.
+    # Constructed directly with `n_bins=7, n_trajectories=25` to check, because BOTH default to
+    # 100 and a run on the bundled defaults cannot tell the two axes apart. Naming them the
+    # other way round reads perfectly and reports the bin count as a population size.
     n_steps, n_trajectories, dims = (int(x) for x in traj.shape)
     # Net displacement per cell, start to end: one number per cell reduced to two, so the
     # record says whether the flow MOVED anything without carrying where anything went.
@@ -72,11 +86,6 @@ def _probe_sample_trajectories(traj: Any, params: dict) -> dict:
         "median_displacement": float(np.median(travel)),
         "max_displacement": float(np.max(travel)),
     }
-
-
-#: `probe name -> the state slot it reads`. A probe listed here takes that slot's value instead
-#: of `state["model"]`; `runner._run_probe_step` declines when the slot is empty.
-PROBE_READS: dict[str, str] = {"sample_trajectories": "trajectories"}
 
 
 #: `name -> probe`, the table `runner._NAME_TABLES` reads so `dispatchable` can answer "could

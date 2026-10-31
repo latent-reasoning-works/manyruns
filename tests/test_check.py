@@ -18,17 +18,6 @@ def _check(dataset_dir=None):
     return app.cmd_check(SimpleNamespace(dataset_dir=dataset_dir), argparse.ArgumentParser())
 
 
-#: The bundled recipes with a `mioflow` tool step. On a plain install no tool folder declares
-#: MIOFlow, so each is unexercisable on any dataset, with the missing-tool reason.
-MIOFLOW_RECIPES = ("cflows", "traced", "sandbox")
-
-
-@pytest.fixture(autouse=True)
-def _plain_install(monkeypatch):
-    monkeypatch.delenv("MANYRUNS_TOOL_DIR", raising=False)
-    monkeypatch.delenv("MANYRUNS_TOOL_PATH", raising=False)
-
-
 def test_coverage_warns_when_a_recipe_has_no_legal_dataset(tmp_path, capsys):
     # only a manifold dataset present → contrast (needs conditions) is unexercisable
     (tmp_path / "swiss.yaml").write_text(
@@ -49,13 +38,7 @@ def test_coverage_warns_when_a_recipe_has_no_legal_dataset(tmp_path, capsys):
     # to run, and it cannot — `filter_genes` and `filter_mito` read gene names.
     assert "WARN  qc" in out and "WARN  markers" in out and "WARN  preprocess" in out
     assert "comes from the data itself and not from any shape" in out
-    # The three MIOFlow recipes joined at the move to the tool route: on a plain install no
-    # tool folder declares MIOFlow, and their WARN names the fix.
-    for name in MIOFLOW_RECIPES:
-        [line] = [ln for ln in out.splitlines() if ln.strip().startswith(f"WARN  {name} ")]
-        assert "mioflow" in line and "MANYRUNS_TOOL_PATH" in line
-    # was 4 — contrast, the three that read gene names, and now the three MIOFlow recipes
-    assert "7 unexercisable" in out
+    assert "4 unexercisable" in out   # was 1 — contrast, plus the three that read gene names
     assert rc == 0, "an unexercisable recipe is a WARN, not a FAIL — exit stays 0"
 
 
@@ -66,12 +49,7 @@ def test_coverage_clears_when_a_case_control_dataset_exists(tmp_path, capsys):
     out = capsys.readouterr().out
 
     assert "ok    contrast" in out and "runs on case-control" in out
-    # Only the MIOFlow recipes stay unexercisable, and only for the missing tool: a plain
-    # install declares no MIOFlow (`tool:mioflow`).
-    warned = [ln.split()[1] for ln in out.splitlines() if ln.strip().startswith("WARN  ")
-              and "unroutable" not in ln]
-    assert sorted(warned) == sorted(MIOFLOW_RECIPES)
-    assert f"{len(MIOFLOW_RECIPES)} unexercisable" in out
+    assert "unexercisable" not in out
 
 
 def test_an_invalid_file_is_a_FAIL_and_flips_the_exit_code(tmp_path, capsys):

@@ -1,7 +1,7 @@
 """The precondition calculus must see step ORDER, and must not have changed anything else.
 
 `vocab.unmet` used to be `union(STEP_NEEDS over steps) - dataset_provides(shape)`. A union
-cannot see position, so the recipe `[mioflow, phate]` (today `[dpt, phate]`) came back `frozenset()` — LEGAL — on
+cannot see position, so the recipe `[mioflow, phate]` came back `frozenset()` — LEGAL — on
 every one of the six shapes (measured against `git show HEAD:manyruns/vocab.py` before the
 change). Commit df478cc had closed the same hole imperatively, inside the engines; until
 this, nothing refused the recipe at PLAN time, which is where a legality function has to
@@ -42,17 +42,13 @@ from manyruns.vocab import (
 from public_safety import forbidden_count
 
 PHATE = {"name": "phate", "group": "latent", "params": {"n_components": 3}}
-#: The step that needs an embedding. It was `mioflow` until MIOFlow moved to the tool route
-#: (`tool: mioflow`, whose manifest also needs `time`, and which a plain install does not
-#: declare); `dpt` declares exactly `("embedding",)`, so the order tests below still isolate the
-#: one fact they are about.
-DPT = {"name": "dpt", "group": "analysis", "params": {}}
+MIOFLOW = {"name": "mioflow", "group": "lightning", "params": {}}
 
-#: The recipe from commit df478cc's finding (then `[mioflow, phate]`). On the in-process loop it reported `outcome=ok` for
+#: The recipe from commit df478cc's finding. On the in-process loop it reported `outcome=ok` for
 #: every step, `ok=True` for the run, and `pseudotime_range = [0.0, 1.0]` over data no
 #: embedding had touched. `unmet` called it legal.
-BACKWARDS = {"name": "backwards", "steps": [DPT, PHATE]}
-FORWARD = {"name": "forward", "steps": [PHATE, DPT]}
+BACKWARDS = {"name": "backwards", "steps": [MIOFLOW, PHATE]}
+FORWARD = {"name": "forward", "steps": [PHATE, MIOFLOW]}
 
 #: Measured with `git show HEAD:manyruns/vocab.py` loaded side by side with the new module,
 #: over all three bundled recipes × all six shapes: 18 of 18 cells identical. Written out
@@ -112,17 +108,12 @@ BUNDLED_LEGALITY = {
     ('qc', 'single'): {'genes'},
     ('qc', 'unknown'): {'genes'},
 
-    # `cflows`, `traced` and `sandbox` MOVED when MIOFlow left the process: their `mioflow` step
-    # is a tool step (`tool: mioflow`), and a plain install declares no MIOFlow tool, so every
-    # shape refuses them for `tool:mioflow` — a fact about the install, not the data. With the
-    # tool declared, `cflows` and `traced` need `time` (the manifest's need), and `sandbox`
-    # still needs the `model` its stubs ask for (see `test_mioflow_tool_recipes.py`).
-    ("cflows", "manifold"): {"tool:mioflow"},
-    ("cflows", "clusters"): {"tool:mioflow"},
-    ("cflows", "time-course"): {"tool:mioflow"},
-    ("cflows", "case-control"): {"tool:mioflow"},
-    ("cflows", "single"): {"tool:mioflow"},
-    ("cflows", "unknown"): {"tool:mioflow"},
+    ("cflows", "manifold"): set(),
+    ("cflows", "clusters"): set(),
+    ("cflows", "time-course"): set(),
+    ("cflows", "case-control"): set(),
+    ("cflows", "single"): set(),
+    ("cflows", "unknown"): set(),
     ("contrast", "manifold"): {"conditions"},
     ("contrast", "clusters"): {"conditions"},
     ("contrast", "time-course"): {"conditions"},
@@ -136,26 +127,28 @@ BUNDLED_LEGALITY = {
     ("embed", "single"): set(),
     ("embed", "unknown"): set(),
 
-    # `traced` — `cflows` plus a `probe` step. On a plain install the missing tool provides
-    # nothing, so the probe's `trajectories` need is unmet too: `sample_trajectories` declares
-    # `STEP_NEEDS = ("trajectories",)`, and only the MIOFlow tool step returns them.
-    ("traced", "manifold"): {"tool:mioflow", "trajectories"},
-    ("traced", "clusters"): {"tool:mioflow", "trajectories"},
-    ("traced", "time-course"): {"tool:mioflow", "trajectories"},
-    ("traced", "case-control"): {"tool:mioflow", "trajectories"},
-    ("traced", "single"): {"tool:mioflow", "trajectories"},
-    ("traced", "unknown"): {"tool:mioflow", "trajectories"},
+    # `traced` — `cflows` plus a `probe` step. MEASURED on this checkout, legal on all six, and
+    # the reason is the one the probe was designed around: `sample_trajectories` declares
+    # `STEP_NEEDS = ("model",)`, `mioflow` declares `STEP_PRODUCES = ("model",)`, and the fold
+    # sees the second before the first. Identical to `cflows`'s row, which is the point — adding
+    # a readout OF a trajectory must not change whether the trajectory is legal.
+    ("traced", "manifold"): set(),
+    ("traced", "clusters"): set(),
+    ("traced", "time-course"): set(),
+    ("traced", "case-control"): set(),
+    ("traced", "single"): set(),
+    ("traced", "unknown"): set(),
 
-    # `sandbox` — the declared-but-unimplemented fixture (`pipeline/stubs.py`). It WAS legal on
-    # all six, because the in-process `mioflow` produced the `model` its stubs need. That route
-    # is removed: the tool step returns `trajectories` and keeps the model in the tool's
-    # interpreter, so the stubs' `model` stays unmet on every install.
-    ("sandbox", "manifold"): {"model", "tool:mioflow"},
-    ("sandbox", "clusters"): {"model", "tool:mioflow"},
-    ("sandbox", "time-course"): {"model", "tool:mioflow"},
-    ("sandbox", "case-control"): {"model", "tool:mioflow"},
-    ("sandbox", "single"): {"model", "tool:mioflow"},
-    ("sandbox", "unknown"): {"model", "tool:mioflow"},
+    # `sandbox` — the declared-but-unimplemented fixture (`pipeline/stubs.py`). Legal on all six,
+    # and that is the property it is built for: a recipe REFUSED at plan time never reaches the
+    # step pane, which is the surface it exists to drive. Its two real steps produce the `model`
+    # its stubs need, which is why the stubs are not first.
+    ("sandbox", "manifold"): set(),
+    ("sandbox", "clusters"): set(),
+    ("sandbox", "time-course"): set(),
+    ("sandbox", "case-control"): set(),
+    ("sandbox", "single"): set(),
+    ("sandbox", "unknown"): set(),
 
     # `preprocess` — the scRNA preamble as a recipe. `{'genes'}` on all six, MEASURED
     # 2026-08-16, and unlike `markers`/`qc` above these rows did not MOVE: the recipe was born
@@ -179,7 +172,7 @@ def test_the_backwards_recipe_is_illegal_on_every_shape():
     """THE regression. `[mioflow, phate]` returned `frozenset()` for all six shapes."""
     for shape in SHAPES:
         assert unmet(BACKWARDS, shape) == {"embedding"}, (
-            f"[dpt, phate] is legal on {shape!r} — an ordering step with no preceding "
+            f"[mioflow, phate] is legal on {shape!r} — a trajectory step with no preceding "
             "embedding, which is how a pseudotime over raw input gets published"
         )
 
@@ -192,30 +185,28 @@ def test_the_unmet_fact_is_NAMED_not_merely_counted():
 
 def test_the_forward_recipe_is_legal_on_every_shape():
     """The other direction, and the one that makes the test above mean something: the rule
-    must key on ORDER, not on the mere presence of `dpt` in the recipe."""
+    must key on ORDER, not on the mere presence of `mioflow` in the recipe."""
     for shape in SHAPES:
-        assert unmet(FORWARD, shape) == frozenset(), f"forward order wrongly pruned on {shape}"
+        assert unmet(FORWARD, shape) == frozenset(), f"cflows order wrongly pruned on {shape}"
 
 
 def test_a_step_cannot_satisfy_its_OWN_need():
     """A step's needs are checked BEFORE its own produces are folded in.
 
     Guards the off-by-one that makes the fold vacuous: fold produces first and the backwards
-    recipe becomes legal again, because `dpt` would hand itself the embedding. Written
-    with a mislabelled `dpt` (group `latent`, so it does produce) because that is the
+    recipe becomes legal again, because `mioflow` would hand itself the embedding. Written
+    with a mislabelled `mioflow` (group `latent`, so it does produce) because that is the
     only single-step recipe that can tell the two orderings apart."""
-    self_feeding = {"name": "x", "steps": [{"name": "dpt", "group": "latent"}]}
+    self_feeding = {"name": "x", "steps": [{"name": "mioflow", "group": "latent"}]}
     assert unmet(self_feeding, "manifold") == {"embedding"}
 
 
 # ── 2. nothing else moved ────────────────────────────────────────────────────
-def test_every_bundled_recipe_keeps_its_exact_legality_on_every_shape(monkeypatch):
+def test_every_bundled_recipe_keeps_its_exact_legality_on_every_shape():
     """The regression guard for the three production readers (`experiment.plan` and
     `experiment.skipped_cells`, `shell._explore`, `app`'s coverage table). Order-awareness
     is only safe if it prunes nothing that used to run; 18/18 cells were measured identical
-    before and after. Measured on a plain install: no tool folder is declared."""
-    monkeypatch.delenv("MANYRUNS_TOOL_DIR", raising=False)
-    monkeypatch.delenv("MANYRUNS_TOOL_PATH", raising=False)
+    before and after."""
     for name in catalog.discover_recipes():
         recipe = catalog.load_recipe(name)
         for shape in SHAPES:
@@ -243,14 +234,14 @@ def test_any_latent_step_satisfies_the_embedding_need_not_just_phate():
     leaves its `name` OPEN, and `runner._ml_latent` assigns `state["emb"]` for any latent
     step — so a manylatents recipe may legitimately name another embedder. Keying producers
     by name would have made this recipe illegal: a currently-runnable recipe newly pruned."""
-    other_embedder = {"name": "x", "steps": [{"name": "umap", "group": "latent"}, DPT]}
+    other_embedder = {"name": "x", "steps": [{"name": "umap", "group": "latent"}, MIOFLOW]}
     assert unmet(other_embedder, "manifold") == frozenset()
 
 
 def test_a_step_with_no_group_produces_nothing():
     """`check_recipe` rejects a groupless step and the runner skips it ("never guessed at"),
     so it must not silently satisfy a downstream need either. Three vocabularies agreeing."""
-    groupless = {"name": "x", "steps": [{"name": "phate"}, DPT]}
+    groupless = {"name": "x", "steps": [{"name": "phate"}, MIOFLOW]}
     assert unmet(groupless, "manifold") == {"embedding"}
 
 
@@ -278,20 +269,7 @@ def test_every_declared_need_is_providable_by_something():
     # it comes from the dataset's `handle` (`vocab.dataset_provides`). Reading the fourth table
     # rather than special-casing that one fact is what keeps this able to fire.
     providable |= set(DATASET_FACTS)
-    # FIVE. `TOOL_OUTPUT_FACTS` are supplied by a tool step's MANIFEST, not by a name table:
-    # `sample_trajectories` needs `trajectories`, which only a model step (the MIOFlow tool)
-    # returns.
-    from manyruns.pipeline import stubs
-    from manyruns.vocab import TOOL_OUTPUT_FACTS
-
-    providable |= set(TOOL_OUTPUT_FACTS)
     for step, needs in STEP_NEEDS.items():
-        # A declared-but-unimplemented stub (`pipeline/stubs.py`) may need a fact nothing
-        # supplies YET: `granger`, `growth_rate` and `decode_to_gene_space` need `model`, and
-        # no step leaves one in this process since MIOFlow moved to the tool route. Stubs
-        # decline anyway; a REAL step is still held to the rule.
-        if step in stubs.names():
-            continue
         for fact in needs:
             assert fact in providable, (
                 f"{step!r} needs {fact!r}, which no dataset shape, no step group and no named "

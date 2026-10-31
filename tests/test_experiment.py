@@ -238,7 +238,7 @@ def test_the_bundled_set_plans_a_real_cross_product():
     assert len(raw) - len(runs) == len(ex.skipped_cells(recipes, datasets))
 
 
-def test_the_bundled_set_cannot_yet_exercise_contrast(monkeypatch):
+def test_the_bundled_set_cannot_yet_exercise_contrast():
     """KNOWN GAP, pinned so it is not forgotten: no bundled dataset is case-control, so
     `contrast` has no legal cell. Brian's first real task is a case-control dataset.
 
@@ -254,15 +254,7 @@ def test_the_bundled_set_cannot_yet_exercise_contrast(monkeypatch):
 
     Measured 2026-08-16: 14 datasets x 11 recipes = 154 cells, 53 of them pruned —
     contrast 14, qc 13, markers 13, preprocess 13.
-
-    THE MIOFLOW RECIPES JOINED THE LEDGER when MIOFlow moved to the tool route. On a plain
-    install no folder declares the MIOFlow tool, so `cflows`, `traced` and `sandbox` are pruned
-    on all 14 for `tool:mioflow` — an install gap, not a data gap, and the reason names the fix.
-    `traced` also misses the `trajectories` its probe reads, and `sandbox` the `model` its stubs
-    ask for, because the missing tool provides nothing.
     """
-    monkeypatch.delenv("MANYRUNS_TOOL_DIR", raising=False)
-    monkeypatch.delenv("MANYRUNS_TOOL_PATH", raising=False)
     recipes, datasets = catalog.load_recipes(), catalog.load_datasets()
     names = {d["name"] for d in datasets}
     skipped = ex.skipped_cells(recipes, datasets)
@@ -273,11 +265,7 @@ def test_the_bundled_set_cannot_yet_exercise_contrast(monkeypatch):
 
     # was `{"contrast"}` — `qc`/`markers` joined the ledger when they declared `("genes",)`,
     # and `preprocess` was born in it for the same reason
-    assert set(pruned) == {"contrast", "qc", "markers", "preprocess",
-                           "cflows", "traced", "sandbox"}
-    assert pruned["cflows"] == {name: ["tool:mioflow"] for name in names}
-    assert pruned["traced"] == {name: ["tool:mioflow", "trajectories"] for name in names}
-    assert pruned["sandbox"] == {name: ["model", "tool:mioflow"] for name in names}
+    assert set(pruned) == {"contrast", "qc", "markers", "preprocess"}
 
     # contrast is still pruned on EVERY bundled dataset; pbmc3k is the 14th and is
     # `clusters`/`design: single`, so it does not close this gap either
@@ -301,24 +289,15 @@ def test_a_contrast_recipe_is_illegal_on_data_with_no_conditions():
     assert unmet(contrast, "case-control") == frozenset()   # legal
 
 
-def test_cflows_needs_a_real_time_axis_and_embed_needs_nothing(monkeypatch):
-    """`cflows` USED to be legal everywhere, because the in-process MIOFlow invented a time axis
-    (a diffusion pseudotime, binned) on data that had none. That fallback is removed: the MIOFlow
-    tool's manifest needs `time`, so with the tool declared `cflows` is legal on `time-course`
-    only, and a recipe on unordered data declares how it orders the cells (`discretize_time`).
-    `embed` still needs nothing a shape must carry."""
-    from pathlib import Path
-
+def test_recipes_that_fall_back_are_not_over_pruned():
+    """mioflow computes a diffusion pseudotime when there is no time axis, and the
+    orders by row index — so cflows is legal everywhere. the learner's own PRECONDITIONS
+    require a `time` coord for mioflow; copying that table would have dropped these cells."""
     from manyruns.vocab import unmet
 
-    stub = Path(__file__).resolve().parent / "fixtures" / "mioflow_tool"
-    assert stub.is_dir()
-    monkeypatch.delenv("MANYRUNS_TOOL_DIR", raising=False)
-    monkeypatch.setenv("MANYRUNS_TOOL_PATH", str(stub))
     cflows = catalog.load_recipe("cflows")
-    assert unmet(cflows, "time-course") == frozenset()
-    for shape in ("manifold", "clusters", "single"):
-        assert unmet(cflows, shape) == frozenset({"time"}), f"cflows on {shape}"
+    for shape in ("manifold", "clusters", "single", "time-course"):
+        assert unmet(cflows, shape) == frozenset(), f"cflows wrongly pruned on {shape}"
     assert unmet(catalog.load_recipe("embed"), "unknown") == frozenset()
 
 

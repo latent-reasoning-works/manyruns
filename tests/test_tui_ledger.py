@@ -282,12 +282,9 @@ async def test_the_mark_and_the_selectability_are_both_narrates_verdict():
     # `filter_mito` want the same axis. The count is spelled out rather than derived because the
     # point of the line is that the fixture CONTAINS refusals — a screen with none would satisfy
     # the two assertions above vacuously. 5 -> 4 when manylatents 0.1.9 fixed `aa` and
-    # `archetypes` lost its `blocked:` field. 4 -> 6 when MIOFlow moved to the tool route:
-    # `cflows` and `traced` need the MIOFlow tool (`tool:mioflow`), which a plain install does
-    # not declare.
-    assert rows.count(HOLLOW) == 6, ("measured on `single`: `contrast` wants a condition column, "
-                                     "`qc`, `markers` and `preprocess` want a gene axis, and "
-                                     "`cflows` and `traced` want the MIOFlow tool")
+    # `archetypes` lost its `blocked:` field.
+    assert rows.count(HOLLOW) == 4, ("measured on `single`: `contrast` wants a condition column, "
+                                     "and `qc`, `markers` and `preprocess` want a gene axis")
 
 
 @astest
@@ -311,9 +308,8 @@ async def test_the_same_analysis_fills_in_once_the_data_carries_the_fact():
 
     assert "contrast" not in disabled, "the data now carries the fact it wanted"
     # The three rows are refused for `genes`, which `case-control` does not supply and this
-    # hand-built row has no `n_vars` for. `cflows` and `traced` are refused for the MIOFlow tool,
-    # which a plain install does not declare (and, declared, they would still want `time`).
-    assert disabled == {"qc", "markers", "preprocess", "cflows", "traced"}, (
+    # hand-built row has no `n_vars` for.
+    assert disabled == {"qc", "markers", "preprocess"}, (
         "the rows missing a different fact are all that is left")
     assert narrate.MISSING_FACT["conditions"] not in text
     # The pane names the METHOD now — the prose gloss it used to print is the thing this

@@ -208,9 +208,10 @@ def _save_scatter(emb, color, out_dir: Path, fname: str, plots: list, title: str
     legend's right edge lands at x=580.6 of 600, nothing clipped, from `bbox_to_anchor` outside
     the axes plus the `tight_layout` that was already there.
 
-    `trajectories`, when given, is `(n_bins, n_trajectories, d)` — the sample paths a model
-    step returned through the model seam (`state["trajectories"]`, for example from the
-    MIOFlow tool) — drawn as arrows over the scatter by `figspec.figure`. Every other caller passes nothing and gets the plain scatter, unchanged.
+    `trajectories`, when given, is `(n_bins, n_trajectories, d)` — MIOFlow's own sample paths
+    (`mioflow._run_mioflow_experiment`, sourced from `MIOFlow.trajectories`, which
+    `on_train_end` computes unconditionally on every fit) — drawn as arrows over the scatter by
+    `figspec.figure`. Every other caller passes nothing and gets the plain scatter, unchanged.
 
     ``skipped_channels``, when supplied, collects ``(color_by, reason)`` alongside each
     logged all-missing/nonfinite skip. The display wrapper returns these to its callers.

@@ -550,38 +550,27 @@ def test_synthetic_timecourse_is_inspectable(runtime, tmp_path, display_recipe):
 
 
 def test_analysis_axes_and_coordinates_do_not_change_with_display(runtime, source, monkeypatch, tmp_path):
-    """The time axis the MIOFlow tool step is handed, the condition axis `separation` reads,
-    and the plotted coordinates do not move when the display colour changes. MIOFlow runs as a
-    tool step (the stub MIOFlow folder), so what it was told is "time" is the `time.npy` its
-    request carried."""
     obj, path = source
-    stub = Path(__file__).resolve().parent / 'fixtures' / 'mioflow_tool'
-    assert stub.is_dir()
-    monkeypatch.delenv('MANYRUNS_TOOL_DIR', raising=False)
-    monkeypatch.setenv('MANYRUNS_TOOL_PATH', str(stub))
-    monkeypatch.setenv('MANYRUNS_TOOL_MIOFLOW_PYTHON', sys.executable)
     times, conditions, coordinates = [], [], []
+    def flow(X, seed, fast_dev_run, params, labels=None, device='cpu'):
+        times.append(labels.copy())
+        return X.copy(), {}, {}, object()
     def contrast(state, g, params, out_dir, plots, target_dim):
         conditions.append(state['labels'].copy())
+    monkeypatch.setattr(runner._mioflow, '_run_mioflow_experiment', flow)
     monkeypatch.setitem(runner._steps._ANALYSIS_STEPS, 'separation', contrast)
-    for n, keys in enumerate([[], ['cell_type'], ['score']]):
+    for keys in [[], ['cell_type'], ['score']]:
         loaded = app._load_inputs('manylatents', path, None, None, color_by=keys)
         for kind, labels in [('time', loaded['labels']), ('condition', obj.obs.condition.to_numpy())]:
-            out = tmp_path / f'{n}-{kind}'
-            step = ({'name': 'mioflow', 'group': 'lightning', 'tool': 'mioflow'} if kind == 'time'
-                    else {'name': 'separation', 'group': 'analysis'})
             result = runner.run_manylatents(
-                {'steps': pca_recipe()['steps'] + [step]},
+                {'steps': pca_recipe()['steps'] + [{'name': 'mioflow' if kind == 'time' else 'separation',
+                                                   'group': 'lightning' if kind == 'time' else 'analysis'}]},
                 array=loaded['array'], labels=labels, label_kind=kind,
-                color=loaded['color'], sample_ids=loaded['obs_names'], label_key=loaded['label_key'], out_dir=out)
+                color=loaded['color'], sample_ids=loaded['obs_names'], label_key=loaded['label_key'], out_dir=tmp_path)
             assert result['ok']
             assert len(result['steps']) == 2
             assert all(step['outcome'] in ('ok', 'reported') for step in result['steps'])
             coordinates.append(figspec.load(result['plots'][0])['coords'])
-            if kind == 'time':
-                assert out.is_dir()
-                [sent] = list(out.rglob('time.npy'))
-                times.append(np.load(sent, allow_pickle=False))
     assert len(times) == 3
     assert len(conditions) == 3
     assert len(coordinates) == 6
@@ -772,6 +761,29 @@ def test_reported_engine_reordering_does_not_stamp_source_metadata(runtime, sour
     folder = artifacts.root(tmp_path, session.run_id)
     manifest = json.loads((folder / 'COMPLETE').read_text())
     assert 'row_identity' not in str(manifest)
+
+
+def test_mioflow_receives_the_actual_time_tensor_for_each_display(runtime, source, monkeypatch, tmp_path):
+    """Preservation: the installed adapter supplies time through its datamodule's labels."""
+    experiment = pytest.importorskip('manylatents.experiment',
+                                     reason='verifies the installed engine datamodule adapter')
+    obj, path = source
+    tensors = []
+    def run_experiment(*, datamodule, algorithm, trainer, seed):
+        batch = next(iter(datamodule.train_dataloader()))
+        tensors.append(batch['label'].numpy().copy())
+        return {'embeddings': batch['data'].numpy(), 'scores': {}}
+    monkeypatch.setattr(experiment, 'run_experiment', run_experiment)
+    for keys in [[], ['cell_type'], ['score']]:
+        loaded = app._load_inputs('manylatents', path, None, None, color_by=keys)
+        result = runner.run_manylatents(
+            {'steps': pca_recipe()['steps'] + [{'name': 'mioflow', 'group': 'lightning'}]},
+            array=loaded['array'], labels=loaded['labels'], label_kind=loaded['kind'],
+            color=loaded['color'], sample_ids=loaded['obs_names'], out_dir=tmp_path)
+        assert result['ok'], result['status']
+    assert len(tensors) == 3
+    for tensor in tensors:
+        np.testing.assert_array_equal(tensor, obj.obs.timepoint)
 
 
 def test_raw_matrix_has_no_invented_column_key(runtime, tmp_path):

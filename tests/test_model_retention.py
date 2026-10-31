@@ -1,21 +1,26 @@
-"""What a model step leaves behind is KEPT, and can be asked questions — `probe` steps.
+"""The trained model is KEPT, and can be asked questions — `probe` steps over `state["model"]`.
 
-The original failure was inside our own code: the in-process MIOFlow route returned the trained
-flow and manyruns kept only its coordinates. That route is removed. MIOFlow now runs only as a
-tool step, through the model seam, and the fitted model stays in the tool's interpreter; what
-crosses the seam is `trajectories`, which fills `state["trajectories"]`. So the probe that reads
-paths, `sample_trajectories`, reads that slot (`probes.PROBE_READS`). The machinery that keeps a
-`state["model"]` (a narrowing clears it; it never reaches disk) stays for any executor that
-leaves one.
+The original failure was inside our own code:
 
-WHY A PROBE IS A STEP AND NOT A NEW AXIS. A probe reads a fact another step produced and writes
-to the g-vector; it transforms no data and advances no selection. That is a step group plus an
-executor, which is exactly the extension path `CLAUDE.md` prescribes for a new capability — not a
-fourth axis beside capability / substrate / fidelity.
+    emb, scores = _mioflow._run_mioflow_experiment(...)
+    state["emb"] = emb
+
+> **The trained flow — the simulatable object, the model — is discarded at the return
+> statement, and only its coordinates are kept.** The one step in the product capable of
+> producing a world model throws it away and stores the coordinate system.
+
+It is discarded by MANYRUNS's own return line, not by anything upstream: `run_experiment`
+takes the algorithm as an argument and the caller owns it throughout. So retaining it is a
+return value, and what it buys is the difference between a transcript and a model — a
+transcript answers "what did the embedding look like", a model answers "what happens to THESE
+cells under the flow".
+
+WHY A PROBE IS A STEP AND NOT A NEW AXIS. A probe reads a fact a `lightning` step produced and
+writes to the g-vector; it transforms no data and advances no selection. That is a step group
+plus an executor, which is exactly the extension path `CLAUDE.md` prescribes for a new
+capability — not a fourth axis beside capability / substrate / fidelity.
 """
 from __future__ import annotations
-
-from pathlib import Path
 
 import pytest
 
@@ -63,71 +68,59 @@ def _apply(state, step, dispatch, tmp_path):
 
 
 # ── the fact ─────────────────────────────────────────────────────────────────
-STUB = Path(__file__).resolve().parent / "fixtures" / "mioflow_tool"
-TOOL_MIOFLOW = {"name": "mioflow", "group": "lightning", "params": {}, "tool": "mioflow"}
-
-
-@pytest.fixture()
-def mioflow_declared(monkeypatch):
-    """The stub MIOFlow folder on the tool search path, so the manifest's facts are read."""
-    assert STUB.is_dir()
-    monkeypatch.delenv("MANYRUNS_TOOL_DIR", raising=False)
-    monkeypatch.setenv("MANYRUNS_TOOL_PATH", str(STUB))
-
-
-def test_the_mioflow_step_produces_trajectories_not_a_model(mioflow_declared):
-    """A tool step's facts are its manifest's. The MIOFlow manifest produces `trajectories`, and
-    the fitted model stays in the tool's interpreter, so `model` would be a false claim. The name
-    table no longer says `mioflow` produces `model` (requirement "MIOFlow readouts read the
-    trajectories slot")."""
-    assert "mioflow" not in vocab.STEP_PRODUCES
-    assert vocab.step_provides(TOOL_MIOFLOW) == frozenset({"trajectories"})
+def test_model_is_a_fact_a_named_step_produces():
+    """Keyed by NAME, not by group, and the distinction is the same one `STEP_PRODUCES`'
+    commentary draws for `clusters`. `GROUP_PROVIDES` says a fact is true of every executor in
+    the group; the in-process `lightning` executor (`steps._step_mioflow`) computes a diffusion
+    pseudotime and trains nothing, so "a lightning step produces a model" is true of one engine
+    and a lie about another — the exact test that keeps `lightning` out of `GROUP_PROVIDES`
+    today."""
+    assert vocab.STEP_PRODUCES["mioflow"] == ("model",)
     assert "model" not in vocab.GROUP_PROVIDES.get("lightning", ())
 
 
 def test_a_probe_before_a_fit_is_refused_at_plan_time():
-    """The ordering the fact exists to enforce. A probe with no trajectories anywhere is the
+    """The ordering the fact exists to enforce. A probe with no trained model anywhere is the
     composition that cannot compose, and plan time is where a search over recipes has to get
     its answer — it cannot afford to run each one to find out."""
     recipe = {"name": "t", "steps": [
         {"name": "sample_trajectories", "group": "probe", "params": {}}]}
 
-    assert vocab.unmet(recipe, "time-course") == frozenset({"trajectories"})
+    assert vocab.unmet(recipe, "time-course") == frozenset({"model"})
 
 
-def test_a_probe_after_a_fit_is_legal(mioflow_declared):
+def test_a_probe_after_a_fit_is_legal():
     """The other half, and the one that makes the refusal mean something."""
     recipe = {"name": "t", "steps": [
         {"name": "phate", "group": "latent", "params": {}},
-        TOOL_MIOFLOW,
+        {"name": "mioflow", "group": "lightning", "params": {}},
         {"name": "sample_trajectories", "group": "probe", "params": {}}]}
 
     assert vocab.unmet(recipe, "time-course") == frozenset()
 
 
-def test_a_filter_between_the_fit_and_the_probe_is_refused(mioflow_declared):
-    """Trajectories fitted over cells a filter has since dropped do not describe the ones that
-    remain — the same argument that clears `embedding`, and it comes for free because
-    `trajectories` is step-produced and `frame_facts` therefore excludes it from `keep`."""
+def test_a_filter_between_the_fit_and_the_probe_is_refused():
+    """A flow fitted over cells a filter has since dropped is not a model of the ones that
+    remain — the same argument that clears `embedding`, and it comes for free because `model`
+    is step-produced and `frame_facts` therefore excludes it from `keep`."""
     recipe = {"name": "t", "steps": [
         {"name": "phate", "group": "latent", "params": {}},
-        TOOL_MIOFLOW,
+        {"name": "mioflow", "group": "lightning", "params": {}},
         {"name": "filter_cells", "group": "prep", "params": {"min_genes": 200}},
         {"name": "sample_trajectories", "group": "probe", "params": {}}]}
 
-    assert vocab.unmet(recipe, "time-course") == frozenset({"trajectories"})
-    assert vocab.invalidated(recipe, "time-course") == frozenset({"trajectories"}), (
+    assert vocab.unmet(recipe, "time-course") == frozenset({"model"})
+    assert vocab.invalidated(recipe, "time-course") == frozenset({"model"}), (
         "and it is reported as CLEARED, not as never-produced — different fixes")
 
 
-def test_trajectories_and_model_are_never_frame_facts():
-    """The disjointness the invalidation rests on. If `trajectories` were ever in `frame_facts`
-    a narrowing would silently stop clearing it, and a probe would answer about cells that are
-    gone. `model` is no longer step-produced by any table (no bundled step leaves one), and it
-    is still not a frame fact."""
-    assert "trajectories" not in vocab.frame_facts()
-    assert "trajectories" in vocab.step_facts()
+def test_model_is_never_a_frame_fact():
+    """The disjointness the invalidation rests on. If `model` were ever in `frame_facts` a
+    narrowing would silently stop clearing it, and a probe would run against a flow fitted over
+    cells that are gone — a plausible-looking answer, which is the failure mode this repo
+    refuses everywhere else."""
     assert "model" not in vocab.frame_facts()
+    assert "model" in vocab.step_facts()
 
 
 # ── the state slot ───────────────────────────────────────────────────────────
@@ -146,7 +139,7 @@ def test_the_trained_model_reaches_the_state(tmp_path):
 def test_a_narrowing_clears_the_model_and_says_so(tmp_path):
     """The run-time half of the plan-time refusal above. Both have to hold: `unmet` refusing a
     recipe whose model is still in `state` would be a plan-time/run-time disagreement, which is
-    what `STEP_NEEDS`' embedding note exists to prevent."""
+    what `STEP_NEEDS`' mioflow note exists to prevent."""
     state = _framed()
     state["emb"] = np.zeros((6, 2), dtype=np.float32)
     state["model"] = _FakeFlow()
@@ -194,21 +187,19 @@ def test_probe_is_a_declared_step_group():
     assert "probe" in vocab.STEP_GROUPS
 
 
-def test_sample_trajectories_reads_the_slot_and_writes_to_the_g_vector(tmp_path):
-    """What a probe IS: it asks a question of what a model step returned and records the answer.
-    It transforms no data, moves no selection, and produces no embedding. `sample_trajectories`
-    reads `state["trajectories"]` (`probes.PROBE_READS`), never a model object."""
+def test_sample_trajectories_reads_the_model_and_writes_to_the_g_vector(tmp_path):
+    """What a probe IS: it asks the model a question and records the answer. It transforms no
+    data, moves no selection, and produces no embedding."""
     state = _framed()
-    state["trajectories"] = np.zeros((4, 6, 2), dtype=np.float32)
-    state["model"] = object()        # not read: a model without `trajectories` would decline
+    state["model"] = _FakeFlow()
     g: dict = {}
     ctx = _ctx(tmp_path)
 
     out = _runner._run_probe_step("sample_trajectories", {}, state, g, ctx)
 
     assert out is None
-    # (T, n, d) = (4, 6, 2): four time bins over six paths. Asserted in this direction because
-    # the seam's array is time FIRST, so reading shape[0] as a population size is the natural
+    # (T, n, d) = (4, 6, 2): four time bins over six cells. Asserted in this direction because
+    # torchdiffeq returns time FIRST, so reading shape[0] as a population size is the natural
     # mistake — and it reads perfectly in a g-vector.
     assert g["sample_trajectories.n_steps"] == 4
     assert g["sample_trajectories.n_trajectories"] == 6
@@ -216,15 +207,15 @@ def test_sample_trajectories_reads_the_slot_and_writes_to_the_g_vector(tmp_path)
     assert state["emb"] is None, "a probe answers a question; it does not re-embed"
 
 
-def test_a_probe_with_no_trajectories_declines_with_a_reason(tmp_path):
-    """A run-time decline with a reason, for a state where no step returned the slot. A model
-    in `state["model"]` does not stand in for it."""
+def test_a_probe_with_no_model_declines_with_a_reason(tmp_path):
+    """The engine-specific half the calculus cannot express. `unmet` takes no engine argument
+    on purpose — its answer has to hold for every engine — so "this engine's lightning step is
+    a stand-in that trains nothing" is a RUN-time fact. `_StepSkipped` is how a step declines,
+    and the record carries the reason."""
     from manyruns.pipeline.steps import _StepSkipped
 
-    state = _framed()
-    state["model"] = _FakeFlow()
-    with pytest.raises(_StepSkipped, match="no trajectories"):
-        _runner._run_probe_step("sample_trajectories", {}, state, {}, _ctx(tmp_path))
+    with pytest.raises(_StepSkipped, match="no trained model"):
+        _runner._run_probe_step("sample_trajectories", {}, _framed(), {}, _ctx(tmp_path))
 
 
 def test_an_unknown_probe_declines_rather_than_inventing_an_answer(tmp_path):
@@ -238,11 +229,10 @@ def test_an_unknown_probe_declines_rather_than_inventing_an_answer(tmp_path):
         _runner._run_probe_step("read_its_mind", {}, state, {}, _ctx(tmp_path))
 
 
-def test_a_probe_is_dispatchable_where_a_tool_step_can_fill_its_slot():
-    """A probe reads what a model step returned, and a tool step runs the same way on
-    manylatents and on the in-process loop, so both offer the probe. `mock` never launches a
-    tool, so nothing fills the slot there; offering a probe would put a step in the menu that
-    can only ever decline — which is the honesty `dispatchable` exists for."""
+def test_a_probe_is_dispatchable_only_where_a_model_can_exist():
+    """`mock` invents numbers and trains nothing; the in-process loop computes a pseudotime and
+    trains nothing. Offering a probe on either would put a step in the menu that can only ever
+    decline — which is the honesty `dispatchable` exists for."""
     assert _runner.dispatchable("manylatents", "sample_trajectories", "probe") is True
-    assert _runner.dispatchable(vocab.INPROC, "sample_trajectories", "probe") is True
+    assert _runner.dispatchable(vocab.INPROC, "sample_trajectories", "probe") is False
     assert _runner.dispatchable("mock", "sample_trajectories", "probe") is False

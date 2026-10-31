@@ -707,8 +707,7 @@ def _adapter_path(cfg: dict) -> "Path | None":
 
     That order is what makes a third-party tool possible without forking the wheel. A user
     declaring their own tool puts `mytool.yaml` and `mytool_adapter.py` together in
-    `$MANYRUNS_TOOL_DIR` or in a folder of `$MANYRUNS_TOOL_PATH` (`toolchain.manifest_dir`),
-    exactly the way `$MANYRUNS_RECIPE_DIR` already works for recipes
+    `$MANYRUNS_TOOL_DIR`, exactly the way `$MANYRUNS_RECIPE_DIR` already works for recipes
     (`catalog.py` header: "the DIRECTORY is the registry — adding one is adding a file").
     Without this, adding a tool would mean editing an installed package, which is the one thing
     the config layer exists to avoid.
@@ -727,7 +726,7 @@ def _adapter_path(cfg: dict) -> "Path | None":
         return path if path.is_file() else None
     entry = str(cfg["entrypoint"])
     candidates = [Path(entry)] if Path(entry).is_absolute() else [
-        _tc._home(str(cfg["name"])) / entry,   # manifest_dir, or the base folder if undeclared
+        _tc.tool_dir() / entry,
         Path(str(resources.files("manyruns") / "adapters" / entry)),
     ]
     return next((c for c in candidates if c.is_file()), None)

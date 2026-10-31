@@ -11,8 +11,8 @@ So the unit of reproducibility is not a version. It is the **fully-pinned, hashe
 closure** — 211 packages and 3070 hashes for that one tool (measured) — plus the interpreter it
 was resolved for. This module is the layer that declares, locates, verifies and RECORDS that.
 
-  declared   `<manifest folder>/<name>.yaml`   the constraints, with the reason for each
-  locked     `<manifest folder>/locks/<name>-<version>-<platform>.lock`   `uv pip compile --generate-hashes`
+  declared   `configs/tool/<name>.yaml`      the constraints, with the reason for each
+  locked     `configs/tool/locks/<name>-<version>-<platform>.lock`   `uv pip compile --generate-hashes`
   realized   `$MANYRUNS_TOOL_HOME/<name>/<digest>/`                 `uv pip sync --require-hashes`
   recorded   `<step>.tool_*` keys in the g-vector                    what actually ran
 
@@ -32,10 +32,6 @@ early, say what is wrong, never improvise.
 **Identity is the lock digest, not the version string.** Two runs are comparable when they name
 the same digest. A tool re-locked for a security patch is a DIFFERENT tool as far as the record
 is concerned, which is the honest answer — that is what re-locking means.
-
-The manifest folder is the bundled `configs/tool/` (or `$MANYRUNS_TOOL_DIR`), or a folder of
-`$MANYRUNS_TOOL_PATH` (`tool_search_path`). A tool's adapter and lock are read beside its
-manifest, wherever that is.
 """
 from __future__ import annotations
 
@@ -106,9 +102,7 @@ INPUT_KINDS = ("state_matrix", "state_frame", "source_file")
 
 
 def tool_dir(config_dir: Optional[Path | str] = None) -> Path:
-    """The base tool folder — `$MANYRUNS_TOOL_DIR`, else the bundled set.
-
-    `tool_search_path()` adds the folders of `$MANYRUNS_TOOL_PATH` after it."""
+    """Where tool manifests live — `$MANYRUNS_TOOL_DIR`, else the bundled set."""
     if config_dir:
         return Path(config_dir)
     if _env.is_set("TOOL_DIR"):
@@ -118,70 +112,9 @@ def tool_dir(config_dir: Optional[Path | str] = None) -> Path:
     return Path(str(resources.files("manyruns") / "configs" / "tool"))
 
 
-def tool_search_path(config_dir: Optional[Path | str] = None) -> list[Path]:
-    """The folders searched for tool manifests: the base tool folder, then `$MANYRUNS_TOOL_PATH`.
-
-    `$MANYRUNS_TOOL_PATH` holds folders separated by `os.pathsep`, and it ADDS them: the bundled
-    tools stay visible, so a user adds a tool folder, such as the MIOFlow example, without
-    hiding `pyrovelocity`. `$MANYRUNS_TOOL_DIR` keeps its meaning (it REPLACES the base folder).
-    An empty entry is ignored, so a leading or trailing separator adds nothing.
-    """
-    path = [tool_dir(config_dir)]
-    raw = _env.get("TOOL_PATH") or ""
-    path.extend(Path(entry) for entry in raw.split(os.pathsep) if entry.strip())
-    return path
-
-
-def _manifest_dirs(name: str, config_dir: Optional[Path | str] = None) -> list[Path]:
-    """Every searched folder that holds `<name>.yaml`; one folder listed twice counts once."""
-    found: list[Path] = []
-    seen: set = set()
-    for folder in tool_search_path(config_dir):
-        if not (folder / f"{name}.yaml").is_file():
-            continue
-        key = folder.resolve()
-        if key not in seen:
-            seen.add(key)
-            found.append(folder)
-    return found
-
-
-def manifest_dir(name: str, config_dir: Optional[Path | str] = None) -> Path:
-    """The ONE folder that holds `<name>.yaml`. The tool's adapter and its `locks/` are there.
-
-    Raises `ValueError` when no searched folder declares the tool, and when two do. Two
-    manifests with one name are refused, never resolved by order: a silent shadow of one tool
-    by another would change results with no record of which one ran.
-    """
-    found = _manifest_dirs(name, config_dir)
-    if not found:
-        raise ValueError(f"no tool named {name!r} in {[str(d) for d in tool_search_path(config_dir)]}. "
-                         f"Known: {discover_tools(config_dir) or '(none)'}")
-    if len(found) > 1:
-        raise ValueError(f"tool {name!r} is declared in {len(found)} folders: "
-                         f"{', '.join(str(d) for d in found)} — remove all but one from "
-                         f"$MANYRUNS_TOOL_DIR / $MANYRUNS_TOOL_PATH; manyruns does not pick one "
-                         f"by order")
-    return found[0]
-
-
-def _home(name: str, config_dir: Optional[Path | str] = None) -> Path:
-    """`manifest_dir(name)`, or the base tool folder when no folder declares the tool yet.
-
-    The fallback serves a name with no manifest only (a lock path printed in a refusal); two
-    manifests with one name still raise."""
-    if not _manifest_dirs(name, config_dir):
-        return tool_dir(config_dir)
-    return manifest_dir(name, config_dir)
-
-
 def discover_tools(config_dir: Optional[Path | str] = None) -> list[str]:
-    """The sorted union of manifest names over `tool_search_path()`."""
-    names: set = set()
-    for folder in tool_search_path(config_dir):
-        if folder.is_dir():
-            names.update(p.stem for p in folder.glob("*.yaml"))
-    return sorted(names)
+    d = tool_dir(config_dir)
+    return sorted(p.stem for p in d.glob("*.yaml")) if d.is_dir() else []
 
 
 def platform_tag() -> str:
@@ -203,8 +136,7 @@ def lock_name(cfg: dict, tag: Optional[str] = None) -> str:
 
 def lock_path(cfg: dict, config_dir: Optional[Path | str] = None,
               tag: Optional[str] = None) -> Path:
-    """`<manifest folder>/locks/<lock name>`: the lock lives beside the manifest it pins."""
-    return _home(cfg["name"], config_dir) / "locks" / lock_name(cfg, tag)
+    return tool_dir(config_dir) / "locks" / lock_name(cfg, tag)
 
 
 def lock_digest(path: Path) -> Optional[str]:
@@ -352,7 +284,7 @@ def manifest_facts(name: str, config_dir: Optional[Path | str] = None) -> tuple:
 def precomputed_root(cfg: dict, config_dir: Optional[Path | str] = None) -> Path:
     """The folder of a precomputed manifest's results; relative to the manifest's folder."""
     root = Path(str((cfg.get("output") or {}).get("root") or ""))
-    return root if root.is_absolute() else _home(cfg["name"], config_dir) / root
+    return root if root.is_absolute() else tool_dir(config_dir) / root
 
 
 def _requirement_name(item: str) -> str:
@@ -583,11 +515,13 @@ def check_tool(cfg: Any, name: Optional[str] = None) -> list[str]:
 
 
 def load_tool(name: str, config_dir: Optional[Path | str] = None) -> dict:
-    """Load a tool manifest by name from `manifest_dir(name)`. Strict — an invalid manifest
-    never reaches a run, and a name declared in two searched folders raises `ValueError`."""
+    """Load a tool manifest by name. Strict — an invalid manifest never reaches a run."""
     from omegaconf import OmegaConf
 
-    path = manifest_dir(name, config_dir) / f"{name}.yaml"
+    path = tool_dir(config_dir) / f"{name}.yaml"
+    if not path.is_file():
+        raise ValueError(f"no tool named {name!r} at {path}. "
+                         f"Known: {discover_tools(config_dir) or '(none)'}")
     cfg = OmegaConf.to_container(OmegaConf.load(path), resolve=True)
     problems = check_tool(cfg, name)
     if problems:

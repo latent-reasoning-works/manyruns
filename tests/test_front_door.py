@@ -432,21 +432,11 @@ def test_a_recipe_carries_its_own_question_so_the_menu_needs_no_table():
         assert load_recipe(name).get("question"), f"{name} declares no question"
 
 
-def test_suitability_orders_the_menu_and_never_prunes_it(monkeypatch):
+def test_suitability_orders_the_menu_and_never_prunes_it():
     """`suits:` marks the ★ recommendation only. Legality is structural, suitability is advice
     — the same split as `unmet` vs `noncanonical`. Collapsing them is how a menu comes to hide
-    a runnable analysis.
-
-    `cflows` needs the MIOFlow tool, so the stub MIOFlow folder is declared first: without it
-    `cflows` is blocked and never recommended, which is a different property."""
-    from pathlib import Path
-
+    a runnable analysis."""
     from manyruns import narrate
-
-    stub = Path(__file__).resolve().parent / "fixtures" / "mioflow_tool"
-    assert stub.is_dir()
-    monkeypatch.delenv("MANYRUNS_TOOL_DIR", raising=False)
-    monkeypatch.setenv("MANYRUNS_TOOL_PATH", str(stub))
 
     offered = narrate.offer(_obs("time-course"), available=["cflows", "embed"])
 

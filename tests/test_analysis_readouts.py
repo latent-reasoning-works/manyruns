@@ -684,7 +684,7 @@ def test_the_gene_axis_is_a_declared_need_with_a_declared_provider():
     assert carriers == ["pbmc3k"], f"exactly one bundled dataset carries a gene axis: {carriers}"
 
 
-def test_the_bundled_recipes_keep_their_legality(monkeypatch):
+def test_the_bundled_recipes_keep_their_legality():
     """`STEP_PRODUCES` is additive — a name absent from it contributes nothing — so no recipe
     that was legal before it existed may have been pruned by it. The golden table in
     `test_order_calculus.py` covers the same ground recipe by recipe; this is the cheap
@@ -696,32 +696,13 @@ def test_the_bundled_recipes_keep_their_legality(monkeypatch):
     Every one of them is legal again on a dataset that declares the axis, which the second
     subtraction asserts — a refusal that survived the supply landing would be the
     precondition-fires-on-correct-data failure, not the calculus working."""
-    from pathlib import Path
-
     from manyruns import catalog
     from manyruns.vocab import SHAPES, unmet
 
-    # THE MIOFLOW TOOL IS DECLARED FIRST (the stub folder). `cflows`, `traced` and `sandbox` run
-    # MIOFlow as a tool step; on a plain install all three are refused for `tool:mioflow`, a fact
-    # about the install that `test_order_calculus.py` pins. With the tool declared, the manifest
-    # needs `time`, so `cflows` and `traced` are legal on `time-course` only; `sandbox` also needs
-    # the `model` its stubs ask for, which no step supplies since MIOFlow left the process.
-    stub = Path(__file__).resolve().parent / "fixtures" / "mioflow_tool"
-    assert stub.is_dir()
-    monkeypatch.delenv("MANYRUNS_TOOL_DIR", raising=False)
-    monkeypatch.setenv("MANYRUNS_TOOL_PATH", str(stub))
     carries_genes = {"provides": ["genes"]}         # what configs/dataset/pbmc3k.yaml declares
     for name in catalog.discover_recipes():
         recipe = catalog.load_recipe(name)
         for shape in SHAPES:
-            no_time = frozenset() if shape == "time-course" else frozenset({"time"})
-            if name in ("cflows", "traced"):
-                assert unmet(recipe, shape) == no_time, (name, shape)
-                assert unmet(recipe, shape, handle=carries_genes) == no_time, (name, shape)
-                continue
-            if name == "sandbox":
-                assert unmet(recipe, shape) == frozenset({"model"}) | no_time, (name, shape)
-                continue
             no_conditions = name == "contrast" and shape != "case-control"
             # WAS frozenset() for `markers` and `qc` on every shape: they used to declare no
             # `genes` need because nothing could supply one. Measured now: `{genes}` on all six.

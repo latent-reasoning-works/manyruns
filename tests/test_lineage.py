@@ -1,6 +1,6 @@
 """`run_id` names one STATE LINEAGE — the record's answer to "one run or many".
 
-"phate, then an ordering, then a different ordering" is two different experiments and the record
+"phate, then mioflow, then a different mioflow" is two different experiments and the record
 has to be able to tell them apart:
 
   chained  — the third step consumes the second's output (`state["emb"]` is mutated in
@@ -15,9 +15,7 @@ a branch written into the same folder needs it to become a graph node, and the f
 STEP destroys the person's unit of meaning and pays the full metric suite per step.
 
 Everything below was measured with `engine=real` (no private stack) before that engine was
-removed; the loop it named is now `run_inproc`, and the measurements stand as taken (the
-ordering step was then the in-process `mioflow` stand-in, since removed; the tests below use
-`dpt`, which writes the same `pseudotime` slot and leaves the embedding alone). And
+removed; the loop it named is now `run_inproc`, and the measurements stand as taken. And
 each assertion was checked by breaking the thing it names. Measured, the rewind case:
 
     parent  run_id 0a6d07fdad7c  steps [0, 1]  state/0a6d07fdad7c/
@@ -40,9 +38,9 @@ from manyruns.session import Session
 np = pytest.importorskip("numpy")
 
 
-CHAIN = {"name": "trace", "steps": [
+CHAIN = {"name": "cflows", "steps": [
     {"name": "phate", "group": "latent", "params": {"n_components": 3}},
-    {"name": "dpt", "group": "analysis", "params": {}},
+    {"name": "mioflow", "group": "lightning", "params": {}},
 ]}
 #: two LATENT steps, so the lineage's current embedding is not the one step 0 wrote — which
 #: is what makes "the branch starts from the step it names" a testable claim at all.
@@ -83,7 +81,7 @@ def test_a_chain_is_one_lineage_with_one_id_and_a_monotonic_index(tmp_path):
     assert [r["index"] for r in res["steps"]] == [0, 1]
     assert res["parent"] is None
     assert _names(artifacts.root(tmp_path, s.run_id)) == [
-        "00-phate_emb.npy", "01-dpt_pseudotime.npy", "COMPLETE"]
+        "00-phate_emb.npy", "01-mioflow_pseudotime.npy", "COMPLETE"]
     # one lineage, one folder — no second `state/` directory was minted along the way
     assert [p.name for p in (tmp_path / "state").iterdir()] == [s.run_id]
 
@@ -113,14 +111,14 @@ def test_a_rewind_is_a_second_lineage_that_names_the_state_it_started_from(tmp_p
     before = _names(artifacts.root(tmp_path, s.run_id))
 
     b = s.branch(0)
-    b.step("dpt")
+    b.step("mioflow")
     res = b.close()
 
     assert b.run_id != s.run_id
     assert res["parent"] == {"run_id": s.run_id, "index": 0}
     # its own folder, its own positions, starting at 00 again
     assert _names(artifacts.root(tmp_path, b.run_id)) == [
-        "00-dpt_pseudotime.npy", "COMPLETE"]
+        "00-mioflow_pseudotime.npy", "COMPLETE"]
     assert _names(artifacts.root(tmp_path, s.run_id)) == before
     assert artifacts.load_array(s.steps[0]["artifacts"]["emb"]).shape == (150, 3)
 
@@ -151,7 +149,7 @@ def test_a_branch_inherits_the_data_so_the_two_lineages_stay_comparable(tmp_path
     s = _real(tmp_path)
     s.run_recipe()
     b = s.branch(0)
-    b.step("dpt")
+    b.step("mioflow")
     res = b.close()
 
     assert res["g_vector"]["n_samples"] == 150 and res["g_vector"]["n_features"] == 12
@@ -160,15 +158,15 @@ def test_a_branch_inherits_the_data_so_the_two_lineages_stay_comparable(tmp_path
 
 
 def test_a_branch_does_not_claim_the_recipe_its_parent_ran(tmp_path):
-    """The branch did not run `trace`; it inherited one step's output and went its own way.
+    """The branch did not run `cflows`; it inherited one step's output and went its own way.
     Claiming the name would make `recipe` and `spec_id` describe different analyses, and
     `None` already renders as "(adaptive)" at both readers."""
     s = _real(tmp_path)
     s.run_recipe()
     b = s.branch(0)
-    b.step("dpt")
+    b.step("mioflow")
 
-    assert s.close()["recipe"] == "trace"
+    assert s.close()["recipe"] == "cflows"
     assert b.close()["recipe"] is None
 
 
@@ -181,7 +179,7 @@ def test_branching_does_not_seal_the_parent(tmp_path):
     root = artifacts.root(tmp_path, s.run_id)
 
     b = s.branch(0)
-    b.step("dpt")
+    b.step("mioflow")
     b.close()
     assert artifacts.complete(root) is False       # the branch closed; the parent did not
 
@@ -191,7 +189,7 @@ def test_branching_does_not_seal_the_parent(tmp_path):
 
 
 def test_a_step_that_wrote_no_embedding_cannot_be_rewound_to(tmp_path):
-    """A refusal, not a fallback. `dpt` sets `pseudotime` and leaves the
+    """A refusal, not a fallback. `mioflow` on the in-process loop sets `pseudotime` and leaves the
     embedding object alone, so `_persist` writes no `emb` slot for it — there is nothing at
     that address to start from. Falling back to the live `state["emb"]` would branch from
     coordinates the person did not name, and the two branches would be indistinguishable in
@@ -222,7 +220,7 @@ def test_same_spec_and_same_starting_state_are_two_separate_questions(tmp_path):
     """`spec_id` is "was this the same analysis"; `parent` is "was it the same input". Neither
     implies the other, which is why `parent` is NOT hashed into `spec_id`.
 
-    Two branches of two different lineages, each issuing `dpt`, are the same analysis on
+    Two branches of two different lineages, each issuing `mioflow`, are the same analysis on
     different coordinates: equal `spec_id`, different `parent`. A reader that could only see
     `spec_id` would read them as re-runs of one another."""
     a, b = _real(tmp_path / "a"), _real(tmp_path / "b")
@@ -231,8 +229,8 @@ def test_same_spec_and_same_starting_state_are_two_separate_questions(tmp_path):
     assert a.close()["spec_id"] == b.close()["spec_id"]        # same recipe, seed, dataset
 
     ba, bb = a.branch(0), b.branch(0)
-    ba.step("dpt")
-    bb.step("dpt")
+    ba.step("mioflow")
+    bb.step("mioflow")
     ra, rb = ba.close(), bb.close()
 
     assert ra["spec_id"] == rb["spec_id"]                      # the same question asked
@@ -247,7 +245,7 @@ def test_the_branch_is_not_a_rerun_of_the_lineage_it_came_from(tmp_path):
     s = _real(tmp_path)
     s.run_recipe()
     b = s.branch(0)
-    b.step("dpt")
+    b.step("mioflow")
 
     assert b.close()["spec_id"] != s.close()["spec_id"]
 
@@ -259,7 +257,7 @@ def test_the_store_row_carries_the_edge(tmp_path):
     s = _real(tmp_path)
     s.run_recipe()
     b = s.branch(0)
-    b.step("dpt")
+    b.step("mioflow")
     store.append(b.close(), out_dir=tmp_path)
     store.append(s.close(), out_dir=tmp_path)
 
@@ -280,7 +278,7 @@ def test_one_form_reaches_the_record_whichever_form_the_caller_used(tmp_path):
     assert runner.as_parent(None) is None
 
     res = runner.run_inproc(_data(), {"name": "m", "steps": [
-        {"name": "dpt", "group": "analysis", "params": {}}]}, tmp_path, seed=0,
+        {"name": "mioflow", "group": "lightning", "params": {}}]}, tmp_path, seed=0,
         embedding=_data(d=3), parent=("abc", 0))
     assert res["parent"] == {"run_id": "abc", "index": 0}
     assert json.loads(json.dumps(res["parent"])) == res["parent"]

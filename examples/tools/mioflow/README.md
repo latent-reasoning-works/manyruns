@@ -20,22 +20,16 @@ the row field `non_commercial_steps`.
 - `mioflow_adapter.py` is the pinned adapter. It builds the AnnData that MIOFlow expects, calls
   `MIOFlow(...).fit()` without GAGA, and writes a version 1 `result.json`. It contains no
   MIOFlow code.
-- `recipes/cflows_inferred.yaml` is a recipe that infers and declares a time axis (`dpt`, then
-  `discretize_time`) before it runs this tool, for data with no time axis.
 
 ## Use
 
-The bundled recipes `cflows`, `traced` and `sandbox` name this tool (`tool: mioflow`). Until a
-tool folder declares it, they are blocked at plan time with the fact `tool:mioflow`.
+`$MANYRUNS_TOOL_DIR` replaces the bundled tool folder (`toolchain.tool_dir`). While it is set,
+the bundled tools, such as `pyrovelocity`, are not visible.
 
-`$MANYRUNS_TOOL_PATH` adds tool folders after the base tool folder (`toolchain.tool_search_path`).
-The bundled tools, such as `pyrovelocity`, stay visible. The folders are separated by `:` on
-macOS and Linux. `$MANYRUNS_TOOL_DIR` is different: it replaces the bundled tool folder.
-
-In a manyruns checkout, add this folder to the tool search path for the current shell:
+In a manyruns checkout, point manyruns at this folder for the current shell:
 
 ```sh
-export MANYRUNS_TOOL_PATH="$PWD/examples/tools/mioflow"
+export MANYRUNS_TOOL_DIR="$PWD/examples/tools/mioflow"
 ```
 
 Then show the state of the tool:
@@ -47,17 +41,6 @@ manyruns tools list
 Without a lock for your platform, the status is `no-lock`. The lock pulls torch, so a person
 compiles it with `uv pip compile --generate-hashes` into `locks/` and builds the environment
 with `manyruns tools install mioflow`.
-
-The lock and the adapter are read in this folder, beside the manifest.
-
-The tool needs a time axis. On data with no time axis, `cflows` is blocked (`time` unmet), and
-nothing invents one. `recipes/cflows_inferred.yaml` declares the axis instead: it orders the
-cells with `dpt`, bins the ordering with `discretize_time`, and then runs this tool. Add the
-folder to the recipe path to use it:
-
-```sh
-export MANYRUNS_RECIPE_DIR="$PWD/examples/tools/mioflow/recipes"
-```
 
 A recipe step uses the tool with `tool: mioflow`, for example
 `{name: mioflow, group: lightning, tool: mioflow, params: {n_epochs: 50}}`. The step params

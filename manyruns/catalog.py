@@ -143,7 +143,7 @@ def load_datasets(
 
 
 def known_steps(config_dir: Optional[Path | str] = None) -> dict[str, dict]:
-    """Every step the catalog declares: ``name -> {"name", "group", "params"[, "via"][, "tool"]}``.
+    """Every step the catalog declares: ``name -> {"name", "group", "params"[, "via"]}``.
 
     DERIVED, because there were three hand-kept copies of this list — `session._ACTIONS`
     (5 aliases → 4 steps), `session.available_actions()` (the same 4 as a second literal) and
@@ -172,9 +172,7 @@ def known_steps(config_dir: Optional[Path | str] = None) -> dict[str, dict]:
     differently about one run. Without it, `vocab.standins` on the session path could say only
     "not mioflow itself" where the recipe path says "not the manylatents mioflow the recipe
     names". Included ONLY when declared — an unconditional ``"via": None`` would make every
-    step dict claim a field it does not have. `tool` rides along for the same reason: a
-    `mioflow` step issued alone must reach the tool route, as the recipe's step does, and not be
-    refused for lacking `tool:`.
+    step dict claim a field it does not have.
 
     Never raises: a broken file in `$MANYRUNS_RECIPE_DIR` drops out of the menu instead of
     taking the menu down with it. `load_recipe` stays strict — a recipe that is actually being
@@ -194,8 +192,6 @@ def known_steps(config_dir: Optional[Path | str] = None) -> dict[str, dict]:
                          "params": dict(step.get("params") or {})}
             if step.get("via"):
                 out[name]["via"] = step["via"]
-            if step.get("tool"):
-                out[name]["tool"] = step["tool"]
     return out
 
 
@@ -289,15 +285,19 @@ def check_recipe(cfg: Mapping[str, Any], name: Optional[str] = None) -> list[str
         # unreachable rather than loudly wrong. Not in §3.4's four; added because the field is
         # only useful if it is a name.
         # `tool:` — the step's implementation lives in another interpreter
-        # (`pipeline/external.py`). Validated for its TYPE only. Whether a manifest exists is
-        # not a property of the recipe: a recipe is a declaration and must stay loadable on a
-        # machine where the tool is not declared or not built. A missing manifest is the
-        # plan-time fact `tool:<name>` (`vocab.step_needs`), so the recipe shows as blocked
-        # with a reason; an unbuilt environment is a RUN-time question, answered by
-        # `toolchain.resolve` with the command that fixes it.
+        # (`pipeline/external.py`). Validated for EXISTENCE of the manifest and never for
+        # whether the environment is built: a recipe is a declaration and must stay loadable on
+        # a machine where the tool has not been installed. Availability is a RUN-time question,
+        # answered by `toolchain.resolve` with the command that fixes it.
         tool = s.get("tool")
-        if tool is not None and (not isinstance(tool, str) or not tool.strip()):
-            bad.append(f"step {s.get('name', i)!r}: `tool` must be a tool name, got {tool!r}")
+        if tool is not None:
+            from manyruns import toolchain as _toolchain
+
+            if not isinstance(tool, str) or not tool.strip():
+                bad.append(f"step {s.get('name', i)!r}: `tool` must be a tool name, got {tool!r}")
+            elif tool not in _toolchain.discover_tools():
+                bad.append(f"step {s.get('name', i)!r}: no tool manifest named {tool!r} "
+                           f"(known: {_toolchain.discover_tools() or '(none)'})")
         # `layers:` — which second matrices this step reads (`app.declared_layers` unions them,
         # `loading.layers_of` supplies exactly those). A string here would be iterated as
         # characters and load nothing, silently.

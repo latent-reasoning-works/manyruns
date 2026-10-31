@@ -1,8 +1,8 @@
 # MIOFlow — manifold-interpolating optimal-transport flows, run OUT OF PROCESS and UNMODIFIED.
 #
-# An example tool folder: outside the manyruns wheel and sdist. Add this folder to
-# $MANYRUNS_TOOL_PATH to use it (see README.md). The pinned adapter beside this file runs the
-# upstream PyPI package as published; manyruns adapts to the tool, never the reverse.
+# An example tool folder: outside the manyruns wheel and sdist. Point $MANYRUNS_TOOL_DIR at this
+# folder to use it (see README.md). The pinned adapter beside this file runs the upstream PyPI
+# package as published; manyruns adapts to the tool, never the reverse.
 name: mioflow
 mode: run
 version: "0.1.14"

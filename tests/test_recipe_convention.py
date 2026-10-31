@@ -11,11 +11,9 @@ fixed rather than a feature that seemed nice:
     the catalog) while `predicted_rung` scored it **0 — silently**, because "absent from the
     dict" and "claims rung 0" were the same value. `test_a_new_recipe_reaches_the_rung_table`
     is that drift, made to fail.
-  * **`via:` surfaces a STAND-IN.** The in-process loop ran a diffusion pseudotime under the
-    step name `mioflow`, and nothing said so in the record; the note now rides the `caveats`
-    channel that already existed. That stand-in is gone (MIOFlow runs only as a tool step), so
-    `vocab.STAND_INS` is empty and the mechanics are tested here against a substitution the
-    test declares itself (`_declared_stand_in`).
+  * **`via:` surfaces a STAND-IN.** the in-process loop runs a diffusion pseudotime under the step
+    name `mioflow` (`steps._step_mioflow`, whose own docstring says so). Nothing said so in
+    the record. It now rides the `caveats` channel that already existed.
   * **`source:` is a mapping and its identifier is not resolved at load.** A loader that needs
     the internet fails on a plane.
   * **Absent is legal.** All four fields are additive; making any mandatory would refuse every
@@ -238,24 +236,17 @@ def test_a_broken_recipe_file_drops_out_instead_of_taking_the_scorer_down(tmp_pa
 
 
 # ── §6 stage 9: `via:` surfaces a stand-in through the caveat channel ────────
-#: A substitution the TEST declares, so the `standins` mechanics stay pinned while the bundled
-#: table is empty. `dpt` is a step whose one need is `embedding`, which the caveat test below
-#: needs; "pretend-ordering" is not a real executor.
-FAKE = ("_inproc", "dpt")
-
-
-@pytest.fixture()
-def _declared_stand_in(monkeypatch):
-    monkeypatch.setitem(vocab.STAND_INS, FAKE, "pretend-ordering")
-
-
-def test_nothing_stands_in_for_mioflow_any_more():
-    """The in-process `mioflow` stand-in (a diffusion pseudotime under MIOFlow's name) is
-    removed: a `mioflow` step runs only as a tool step, so no engine substitutes for it and the
-    bundled table of substitutions is empty."""
-    assert vocab.STAND_INS == {}
-    for engine in ("_inproc", "manylatents", "mock"):
-        assert vocab.standins(catalog.load_recipe("cflows"), engine) == []
+def test_the_in_process_loop_announces_that_mioflow_is_a_stand_in():
+    """§2.4's rule: a recipe does not count as running until it runs with the algorithm its
+    cited source specifies. The in-process `mioflow` is a diffusion pseudotime on a kNN graph
+    (`steps._step_mioflow`), not the neural-ODE flow the recipe's source cites — and until now
+    it announced that nowhere, while still emitting `pseudotime_range` into the g-vector."""
+    cflows = catalog.load_recipe("cflows")
+    notes = vocab.standins(cflows, "_inproc")
+    assert len(notes) == 1
+    assert notes[0].startswith("mioflow: ran on engine=_inproc's diffusion-pseudotime stand-in")
+    assert "not the manylatents mioflow the recipe names" in notes[0]
+    assert "running anyway" in notes[0]          # a caveat, not a refusal
 
 
 def test_the_engine_that_runs_the_cited_method_says_nothing():
@@ -275,34 +266,30 @@ def test_phate_on_engine_real_is_not_reported_as_a_stand_in():
         assert vocab.standins(catalog.load_recipe(name), "manylatents") == []
 
 
-def test_via_can_suppress_the_note_by_asking_for_that_engine(_declared_stand_in):
+def test_via_can_suppress_the_note_by_asking_for_that_engine():
     """The other half of the rule. A recipe that declares the stand-in as its canonical
     implementation got what it asked for, and that is not a substitution."""
-    asked_for_it = {"name": "r", "steps": [{"name": "dpt", "group": "analysis",
+    asked_for_it = {"name": "r", "steps": [{"name": "mioflow", "group": "lightning",
                                             "via": "_inproc"}]}
     assert vocab.standins(asked_for_it, "_inproc") == []
-    told = {"name": "r", "steps": [{"name": "dpt", "group": "analysis", "via": "manyruns"}]}
-    assert len(vocab.standins(told, "_inproc")) == 1
 
 
-def test_a_recipe_with_no_via_is_still_told_about_the_stand_in(_declared_stand_in):
+def test_a_recipe_with_no_via_is_still_told_about_the_stand_in():
     """`via` cannot say "this is a stand-in" — it says which implementation is canonical. So
-    an undeclared step still gets the note: running another algorithm under a step's name is a
-    substitution whether or not anyone wrote it down."""
-    silent = {"name": "r", "steps": [{"name": "dpt", "group": "analysis"}]}
+    an undeclared step still gets the note: running a diffusion pseudotime under the name
+    `mioflow` is a substitution whether or not anyone wrote it down."""
+    silent = {"name": "r", "steps": [{"name": "mioflow", "group": "lightning"}]}
     notes = vocab.standins(silent, "_inproc")
-    assert len(notes) == 1 and "not dpt itself" in notes[0]
-    assert notes[0].startswith("dpt: ran on engine=_inproc's pretend-ordering stand-in")
-    assert "running anyway" in notes[0]          # a caveat, not a refusal
+    assert len(notes) == 1 and "not mioflow itself" in notes[0]
 
 
-def test_stand_ins_ride_the_existing_caveat_channel_not_a_new_one(_declared_stand_in):
+def test_stand_ins_ride_the_existing_caveat_channel_not_a_new_one():
     """§3.3: "that mismatch should go through the caveat channel that already exists, not a
     new one." Both kinds of note come out of one call, in one list — a second list would be
     two vocabularies for one question, which is how two answers drift apart."""
-    # `dpt` ALONE on a supplied embedding: both notes are live at once — the embedding came
-    # from the caller, and the (declared) stand-in ran.
-    reuse = {"name": "reuse", "steps": [{"name": "dpt", "group": "analysis",
+    # mioflow ALONE on a supplied embedding: both notes are live at once. In `cflows` the
+    # `phate` step supplies the embedding canonically, so only the stand-in note fires.
+    reuse = {"name": "reuse", "steps": [{"name": "mioflow", "group": "lightning",
                                          "via": "manylatents"}]}
     both = vocab.noncanonical(reuse, "manifold", provided={"embedding"}, engine="_inproc")
     assert len(both) == 2
@@ -318,7 +305,7 @@ def test_omitting_the_engine_leaves_every_existing_caller_unchanged():
     assert vocab.noncanonical(cflows, "manifold", provided={"embedding"}) == []
 
 
-def test_the_stand_in_note_reaches_a_finished_record(tmp_path, _declared_stand_in):
+def test_the_stand_in_note_reaches_a_finished_record(tmp_path):
     """End to end through `runner._finalize`, on the session path (`Session.results`), which
     is where the engine is in scope. The embedding is SUPPLIED rather than fitted, so this
     test needs scipy/sklearn and not PHATE."""
@@ -328,9 +315,9 @@ def test_the_stand_in_note_reaches_a_finished_record(tmp_path, _declared_stand_i
     emb = rng.normal(size=(60, 3))
     s = Session("standin", engine="_inproc", out_dir=tmp_path, seed=0, embedding=emb,
                 recipe=catalog.load_recipe("cflows"))
-    s.apply({"name": "dpt", "group": "analysis", "params": {}, "via": "manylatents"})
+    s.apply({"name": "mioflow", "group": "lightning", "params": {}, "via": "manylatents"})
     res = s.results()
-    assert res["g_vector"].get("dpt_range") is not None   # it really did compute
+    assert res["g_vector"].get("pseudotime_range") is not None   # it really did compute
     assert any("stand-in" in c for c in res["caveats"]), res["caveats"]
 
 
@@ -339,36 +326,31 @@ def test_the_stand_in_note_reaches_a_finished_record(tmp_path, _declared_stand_i
            "`vocab.noncanonical(recipe, 'unknown', provided=supplied)` at two sites "
            "(run_manylatents and run_inproc) without `engine=`, and `manyruns/pipeline/` "
            "is owned by another change this round. Measured on this checkout: "
-           "run_inproc returns caveats=[] for a declared stand-in step. "
-           "Adding engine='_inproc' / "
+           "run_inproc(cflows) returns caveats=[] with "
+           "pseudotime_range=[0.0, 1.0] in the g-vector. Adding engine='_inproc' / "
            "engine='manylatents' at those two calls is the whole fix — everything else it "
            "needs is here and green.",
     strict=False,
 )
-def test_the_stand_in_note_reaches_a_recipe_run(tmp_path, _declared_stand_in):
+def test_the_stand_in_note_reaches_a_recipe_run(tmp_path):
     """The same guarantee as `test_the_stand_in_note_reaches_a_finished_record`, for the path
     a whole-recipe run takes through the step loop. XPASSes the moment the runner passes its
     engine; kept live rather than written in prose so the gap is visible in the test output and
     not only in a report."""
     from manyruns.pipeline import runner
 
-    recipe = {"name": "r", "steps": [{"name": "phate", "group": "latent", "params": {}},
-                                     {"name": "dpt", "group": "analysis", "via": "manylatents"}]}
-    res = runner.run_inproc(np.random.default_rng(0).normal(size=(60, 5)), recipe, tmp_path,
-                            seed=0)
-    assert res["g_vector"].get("dpt_range") is not None
+    res = runner.run_inproc(np.random.default_rng(0).normal(size=(60, 5)),
+                              catalog.load_recipe("cflows"), tmp_path, seed=0)
+    assert res["g_vector"].get("pseudotime_range") is not None
     assert any("stand-in" in c for c in res["caveats"]), res["caveats"]
 
 
 def test_known_steps_carries_via_only_when_declared(tmp_path):
     """A step issued one-at-a-time in a session has to be the step dict the recipe would have
     issued, or the two paths report differently about one run. An unconditional `"via": None`
-    would make every step claim a field it does not have. `tool` rides along by the same rule:
-    a `mioflow` issued alone must reach the tool route, as the recipe's step does."""
+    would make every step claim a field it does not have."""
     steps = catalog.known_steps()
-    assert steps["phate"]["via"] == "manylatents"
+    assert steps["mioflow"]["via"] == "manylatents"
     assert steps["separation"]["via"] == "manyruns"
-    assert steps["mioflow"]["tool"] == "mioflow" and "via" not in steps["mioflow"]
     _write(tmp_path, "plain", "name: plain\nsteps: [{name: pca, group: latent}]\n")
-    plain = catalog.known_steps(tmp_path)["pca"]
-    assert "via" not in plain and "tool" not in plain
+    assert "via" not in catalog.known_steps(tmp_path)["pca"]

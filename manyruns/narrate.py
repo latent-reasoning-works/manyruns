@@ -420,12 +420,12 @@ def offer(obs: Observation, available: "list | None" = None, *,
 #: have worked too, and the deciding argument is the rule the TUI is built under: no screen may
 #: compute a fact `narrate` does not expose. The screens need this sentence, so it is here.
 #:
-#: `time` was UNREACHABLE through `unmet` while MIOFlow ran in process and treated a real clock
-#: as a preference. It is reachable now: the MIOFlow tool's manifest needs `time`, so `cflows`
-#: on data with no time axis reads "needs timepoints" once the tool is declared.
-#:
-#: A missing-tool fact (`tool:<name>`) is not a key here: it is one fact per tool name, phrased
-#: by `tool_phrase`, which `blocked` consults first.
+#: `time` is in the table and is currently UNREACHABLE through `unmet` — measured across all 8
+#: bundled recipes × all 6 shapes, `unmet` returns only `conditions` (and only for `contrast`),
+#: because no step declares a `time` need. It is phrased anyway because it is one of `vocab`'s
+#: four fact words and the exhaustiveness check covers the vocabulary, not today's reachable
+#: subset. Stated rather than discovered later: a ledger row reading "needs timepoints" cannot
+#: appear until some step declares `time` in `vocab.STEP_NEEDS`.
 MISSING_FACT: dict[str, str] = {
     "conditions": "needs a healthy/disease column",
     "time":       "needs timepoints",
@@ -480,6 +480,10 @@ CLEARED_FACT: dict[str, str] = {
                  "fitted over",
     "clusters":  "needs groups again — a filter after them dropped the cells they were "
                  "grouped from",
+    # The costliest of the three to re-earn, and the most dangerous to leave stale: a stale
+    # embedding is coordinates you might mistrust, a stale model ANSWERS QUESTIONS — confidently,
+    # in the right shape, about cells that are gone.
+    "model":     "needs fitting again — a filter after it dropped the cells it was trained on",
     # A field is fitted over a NEIGHBOURHOOD, so a filter invalidates the rows that remain —
     # the same argument as the embedding above, and the reason `velocity` is step-produced
     # rather than a frame fact like the LAYERS it was computed from.
@@ -524,31 +528,8 @@ def blocked(recipe: dict, shape: str,
 
     cleared = invalidated(recipe, shape, provided)
     return [CLEARED_FACT.get(f, f"needs {f} again") if f in cleared
-            else tool_phrase(f) or MISSING_FACT.get(f, f"needs {f}")
+            else MISSING_FACT.get(f, f"needs {f}")
             for f in sorted(unmet(recipe, shape, provided))]
-
-
-#: Where a tool that manyruns does not bundle is found, by tool name. The folder is relative to
-#: a manyruns checkout; the phrase names it so the reader knows what to add to the search path.
-TOOL_FOLDERS: dict[str, str] = {"mioflow": "examples/tools/mioflow"}
-
-
-def tool_phrase(fact: str) -> Optional[str]:
-    """The sentence for a missing-tool fact (`tool:<name>`), or None for any other fact.
-
-    ONE rule for every tool, because the fact name carries the tool name: the fix is always to
-    declare the tool, by adding the folder that holds its manifest to `$MANYRUNS_TOOL_PATH`. A
-    tool with a known example folder (`TOOL_FOLDERS`) names that folder too.
-    """
-    from manyruns.vocab import TOOL_FACT_PREFIX
-
-    if not fact.startswith(TOOL_FACT_PREFIX):
-        return None
-    name = fact[len(TOOL_FACT_PREFIX):]
-    where = TOOL_FOLDERS.get(name)
-    folder = f"`{where}`" if where else "the folder that holds its manifest"
-    return (f"needs the tool {name}, which no tool folder declares — add {folder} to "
-            f"MANYRUNS_TOOL_PATH (then `manyruns tools list`)")
 
 
 def unavailable(recipe: dict) -> list[str]:

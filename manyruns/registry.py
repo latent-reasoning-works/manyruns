@@ -6,8 +6,8 @@ A *version* pins how a served model runs:
 
 Versions are immutable JSON under ``experiments/manifests/<model>/<version>.json``, so infer
 can **pull** a version by name and one model can serve concurrent versions (v0 fixed, v1
-trained). Dep-free to register/resolve. Weight *application* (`apply_weights`) is refused:
-manyruns never imports MIOFlow, which runs only as a tool step through the model seam.
+trained). Dep-free
+to register/resolve; weight *application* (`apply_weights`) is stack-gated (torch + manylatents).
 """
 from __future__ import annotations
 
@@ -83,13 +83,20 @@ def list_versions(model: str, *, root: Path | str | None = None) -> list[Version
 
 
 def apply_weights(version: Version, X: Any):
-    """Inference through a trained-weights version — refused: manyruns never imports MIOFlow.
+    """Inference through a trained-weights version: load the MIOFlow ODE net + flow ``X`` (t: 0→1).
 
-    This loaded a MIOFlow ODE network from manylatents and integrated ``X`` in this process.
-    MIOFlow runs only through the model seam, in a tool's own interpreter, so a weights-kind
-    version cannot be applied here. Registering and resolving versions stays dep-free and
-    unchanged."""
-    raise NotImplementedError(
-        f"{version.model}@{version.version} is a weights version, and manyruns does not apply "
-        "trained MIOFlow weights in process; run MIOFlow as a tool step (`tool: mioflow`, "
-        "examples/tools/mioflow) instead")
+    Stack-gated (torch + torchdiffeq + manylatents). This is what "pulling" a trained version
+    means at inference — the trained transport applied to new data. Mirrors the routing demo."""
+    import numpy as np
+    import torch
+    from torchdiffeq import odeint
+
+    from manylatents.algorithms.lightning.networks.mioflow_net import MIOFlowODEFunc
+
+    ckpt = torch.load(version.spec["weights"])
+    net = MIOFlowODEFunc(input_dim=ckpt["input_dim"], hidden_dim=ckpt["hidden_dim"])
+    net.load_state_dict(ckpt["state_dict"])
+    net.eval()
+    x0 = torch.tensor(np.asarray(X), dtype=torch.float32)
+    with torch.no_grad():
+        return odeint(net, x0, torch.tensor([0.0, 1.0]))[-1].numpy()

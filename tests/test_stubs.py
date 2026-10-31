@@ -107,24 +107,15 @@ def test_nothing_that_already_exists_is_stubbed():
 
 
 # ── the sandbox recipe ───────────────────────────────────────────────────────
-def test_the_sandbox_recipe_is_valid_and_refused_only_for_the_model_its_stubs_need(monkeypatch):
-    """It WAS legal on every shape, because the in-process `mioflow` left the `model` its stubs
-    need. MIOFlow now runs only as a tool step, which returns `trajectories` and keeps the
-    fitted model in the tool's interpreter, so the stubs' `model` is unmet on every shape even
-    with the tool declared: the recipe stays valid and stays blocked. `decode_to_gene_space` is
-    still absent from it, because it needs `genes` too."""
-    from pathlib import Path
-
-    stub = Path(__file__).resolve().parent / "fixtures" / "mioflow_tool"
-    assert stub.is_dir()
-    monkeypatch.delenv("MANYRUNS_TOOL_DIR", raising=False)
-    monkeypatch.setenv("MANYRUNS_TOOL_PATH", str(stub))
+def test_the_sandbox_recipe_is_legal_on_every_shape():
+    """A recipe refused at plan time never reaches the step pane, which is the surface it exists
+    to drive. `decode_to_gene_space` is deliberately absent from it for exactly this reason — it
+    needs `genes`, which no bundled dataset carries."""
     recipe = catalog.load_recipe("sandbox")
 
     assert catalog.check_recipe(recipe, "sandbox") == []
     for shape in vocab.SHAPES:
-        expected = {"model"} if shape == "time-course" else {"model", "time"}
-        assert vocab.unmet(recipe, shape) == frozenset(expected), shape
+        assert vocab.unmet(recipe, shape) == frozenset(), shape
 
 
 def test_the_sandbox_recommends_nothing():

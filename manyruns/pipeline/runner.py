@@ -26,12 +26,10 @@ from manyruns import artifacts as _artifacts
 from manyruns.measurements import annotate
 from manyruns.pipeline import bounds as _bounds
 from manyruns.pipeline import io as _io
+from manyruns.pipeline import mioflow as _mioflow
 from manyruns.pipeline import prep as _prep
 from manyruns.pipeline import probes as _probes
 from manyruns.pipeline import steps as _steps
-# The manylatents CLI route for lightning names other than `mioflow`. The module keeps its
-# name; it holds no MIOFlow code and imports none.
-from manyruns.pipeline.mioflow import _run_lightning_cli
 from manyruns.pipeline import stubs as _stubs
 from manyruns.pipeline import suite as _suite
 from manyruns.pipeline.io import _numeric_quiet
@@ -287,8 +285,8 @@ class ComputeProcess:
 def compute_step(step, state, g, *, dispatch, ctx, index, carry, steps, on_step):
     """The unchanged step loop, returning one coherent snapshot with aliases intact.
 
-    A model a step leaves in `state["model"]` may hold objects pickle cannot carry (a
-    trainer's local classes). Keep the intact model here; the parent's selected token
+    MIOFlow's model retains mioflow._run_mioflow_experiment's local _TimeDM class,
+    which pickle cannot carry. Keep the intact model here; the parent's selected token
     remains authoritative, including when tuning rolls back to an earlier model. Probes
     resolve that token only in this same worker. All models are released at run close.
     """
@@ -536,9 +534,9 @@ def _persist(rec: dict, state: dict, ctx: dict, index: int, name: str, written: 
     A slot is written only when this step actually REPLACED it — object identity, the same
     test `_attach_geometry` uses — so a step that reads the embedding without changing it does
     not write a second identical copy under a different name. Checked per SLOT rather than on
-    the embedding alone: an ordering step (`dpt`) sets `pseudotime` and leaves `emb`
-    untouched, and a tool step can return `trajectories` alone, so keying the whole write on
-    the embedding dropped every ordering this product computes.
+    the embedding alone: `mioflow` in-process sets `pseudotime` and leaves `emb`
+    untouched, so keying the whole write on the embedding dropped every ordering this product
+    computes.
 
     A size skip is RECORDED rather than silent: `artifacts.save_array` returns None both when
     an array is too large and when the disk refused it, and those are different facts to a
@@ -753,8 +751,8 @@ def open_gvector(state: dict) -> dict:
 #: `model` is here for the same reason `emb` is and it is the more important of the two: a flow
 #: fitted over cells a filter has since dropped is not a model of the ones that remain, and
 #: unlike a stale embedding it can be ASKED questions — so a probe would return a confident,
-#: well-formed, wrong answer. `vocab.invalidated` makes the same statement at plan time for every
-#: step-produced fact; both have to hold or the two disagree about one recipe.
+#: well-formed, wrong answer. `vocab.STEP_PRODUCES["mioflow"]` makes the same statement at plan
+#: time; both have to hold or the two disagree about one recipe.
 #: `clusters`, `graph` and `trajectories` arrive through the model seam and were fitted over
 #: the cells the run held then, so a narrowing clears them as `vocab.invalidated` does.
 DERIVED_SLOTS = ("emb", "pseudotime", "model", "velocity", "clusters", "graph", "trajectories")
@@ -867,8 +865,8 @@ def _apply_transition(out: dict, state: dict, rec: dict, ctx: dict) -> None:
     # AXIS-BLIND: it clears `embedding` on a column narrowing too, because the rule was decided
     # on FITTING rather than on length (a kNN graph over 32,738 genes is not the graph over the
     # 2,000 `hvg` kept). Clearing only on rows here would leave `unmet` refusing a recipe whose
-    # `emb` is still populated — the plan-time/run-time disagreement `STEP_NEEDS`' embedding
-    # note exists to prevent.
+    # `emb` is still populated — the plan-time/run-time disagreement `STEP_NEEDS`' mioflow note
+    # exists to prevent.
     #
     # AND NOTHING IS CLEARED WHEN NOTHING WAS REMOVED, which is the other half of the same
     # agreement: `NARROWING_STEPS` is a DICT keyed by the param that makes a step narrow, so
@@ -968,16 +966,7 @@ def apply_step(step: dict, state: dict, g: dict, *, dispatch: dict, ctx: dict,
     # decides — but its IMPLEMENTATION is in another interpreter, so the group's engine executor
     # is the wrong one. `pipeline/external.py` argues why this is the substrate axis rather than
     # a new group or a new engine.
-    #
-    # THE MOCK NEVER LAUNCHES A TOOL. The mock reads no data (`serving.MOCK_CAVEAT`), so on a
-    # dispatch table whose executor for this group is a mock executor, a tool step runs that
-    # mock executor instead, and the record says so. Without this a mock run of `cflows` would
-    # start MIOFlow on real data, or need it built.
-    stand_in = None
-    if step.get("tool") and dispatch.get(group) in (_mock_transform, _mock_measure):
-        fn = dispatch[group]
-        stand_in = f"mock stand-in for tool {step['tool']}"
-    elif step.get("tool"):
+    if step.get("tool"):
         from manyruns.pipeline import external as _external
 
         fn = _external.run_external_step
@@ -1025,17 +1014,8 @@ def apply_step(step: dict, state: dict, g: dict, *, dispatch: dict, ctx: dict,
         # The step's position, for an executor that addresses a file by it (`_ml_latent`'s
         # `RunStepLogger`). Through `ctx`, so no executor signature changes.
         ctx["step_index"] = index
-        before_traj = state.get("trajectories")
         try:
             override = fn(name, rec["params"], state, g, ctx)
-            # A TOOL STEP THAT RETURNED TRAJECTORIES draws them, over the embedding the step
-            # received (the frame the paths start in), as `<step>.png`. The model seam merges
-            # the array; the figure is a run concern, so it is drawn here.
-            traj = state.get("trajectories")
-            if (step.get("tool") and stand_in is None and traj is not None
-                    and traj is not before_traj):
-                base = before_obj if before_obj is not None else state.get("X")
-                _display_scatter(base, state, ctx, f"{name}.png", name, trajectories=traj)
         finally:
             # Derived labels no longer name the source column. Keep provenance in
             # state so tune rollback restores it together with the labels themselves.
@@ -1084,8 +1064,6 @@ def apply_step(step: dict, state: dict, g: dict, *, dispatch: dict, ctx: dict,
             rec["outcome"], rec["detail"] = "reported", str(override)
     finally:
         rec["seconds"] = round(time.perf_counter() - started, 6)
-        if stand_in is not None:
-            rec["detail"] = stand_in if rec["detail"] is None else f"{stand_in}: {rec['detail']}"
         # The OUTPUT half of the record, shared with `watch` so a wrapped tool and a
         # recipe step describe what they produced the same way. Until now a step could
         # report "ok" while contributing nothing — no embedding, no g-vector key — and
@@ -1511,15 +1489,15 @@ def _run_prep_step(name, params, state, g, ctx):
 
 
 def _run_probe_step(name, params, state, g, ctx):
-    """A `probe` step: ask a question of what a model step returned; record the answer.
+    """A `probe` step: ask the trained model a question, record the answer in the g-vector.
 
-    A probe in `probes.PROBE_READS` reads its declared state slot — `sample_trajectories` reads
-    `state["trajectories"]`, which the model seam fills — and every other probe reads
-    `state["model"]`. Declines rather than erroring when that slot is empty: no step of this
-    run returned it, and `vocab.unmet` refuses such a recipe at plan time already. A model that
-    lacks the method is the upstream half: `decode_to_gene_space` and `growth_rate` do not exist
-    yet, and a probe for one should say so rather than raise an AttributeError through three
-    frames.
+    Declines rather than erroring in two cases, and both are ordinary rather than exceptional.
+    A state with no `model` is every engine whose `lightning` executor trains nothing — the
+    in-process stand-in computes a diffusion pseudotime, the mock invents numbers — and
+    `vocab.unmet` cannot express that, because it takes no engine argument by design. A model
+    that lacks the method is the upstream half: `decode_to_gene_space` and `growth_rate` do not
+    exist on MIOFlow yet, and a probe for one should say so rather than raise an AttributeError
+    through three frames.
 
     Answers are prefixed with the probe's own name, the same convention `_ml_latent` uses for
     scores, so two probes cannot collide in the g-vector.
@@ -1527,21 +1505,13 @@ def _run_probe_step(name, params, state, g, ctx):
     fn = _probes._PROBE_STEPS.get(name)
     if fn is None:
         raise _StepUnsupported(f"no probe named {name!r}")
-    if _stubs.is_stub(fn):
-        # A declared-but-unimplemented probe refuses as UNSUPPORTED before any slot is read:
-        # an empty slot is a benign decline, and checking it first would let a probe that does
-        # not exist leave the run reporting `ok`.
-        fn(None, params or {})
-    slot = _probes.PROBE_READS.get(name)
-    value = state.get(slot) if slot else state.get("model")
-    if value is None:
+    model = state.get("model")
+    if model is None:
         raise _StepSkipped(
-            f"no {slot} in this state — {name} reads what a model step returned, and no step "
-            f"of this run returned it" if slot else
             "no trained model in this state — a probe asks a question of a fitted object, and "
-            "no step of this run left one")
+            "the lightning step on this engine trains nothing")
     try:
-        answer = fn(value, params or {})
+        answer = fn(model, params or {})
     except _probes._NoAnswer as e:
         raise _StepSkipped(str(e)) from None
     for key, value in (answer or {}).items():
@@ -1855,32 +1825,68 @@ def _ml_latent(name, params, state, g, ctx):
 
 
 def _ml_lightning(name, params, state, g, ctx):
-    """A lightning step on the manylatents engine: the manylatents CLI, never MIOFlow.
-
-    `mioflow` without `tool:` is refused with the fix (`steps.MIOFLOW_NEEDS_TOOL`): manyruns
-    never imports MIOFlow, and a `mioflow` step runs only as a tool step, through the model
-    seam. A tool step never reaches this executor (`apply_step` sends it to
-    `external.run_external_step`)."""
-    if name == "mioflow":
-        raise _StepUnsupported(_steps.MIOFLOW_NEEDS_TOOL)
-    # THE SAME DEFECT AS #55, one branch over: this route shells out to `manylatents.main`
-    # and `params` was simply never passed, so every param on a `cflows`/`latent_ode` step
-    # was dropped while the step recorded `reported`. Said out loud rather than closed,
-    # because closing it means synthesising `+algorithms/lightning.<k>=<v>` overrides, which
-    # needs the config-group path per algorithm — a product-side copy of the engine's config
-    # layout, which is the thing #55's fix exists to not do.
+    """A lightning step: MIOFlow in-process (chained on the embedding), else the CLI."""
+    if name != "mioflow":
+        # THE SAME DEFECT AS #55, one branch over: this route shells out to `manylatents.main`
+        # and `params` was simply never passed, so every param on a `cflows`/`latent_ode` step
+        # was dropped while the step recorded `reported`. Said out loud rather than closed,
+        # because closing it means synthesising `+algorithms/lightning.<k>=<v>` overrides, which
+        # needs the config-group path per algorithm — a product-side copy of the engine's config
+        # layout, which is the thing #55's fix exists to not do.
+        #
+        # `skipped`, not `error`: the params are not wrong, the ROUTE cannot carry them. That is
+        # the distinction the outcome vocabulary draws (runner.py's `_StepSkipped` handling),
+        # and it is the same shape as the `--dataset` refusal directly below.
+        if params:
+            raise _StepSkipped(
+                "the manylatents CLI path forwards no params, and this step declares "
+                f"{sorted(params)} — they would be silently dropped. Only `mioflow` has an "
+                "in-process route that carries them today")
+        if not ctx.get("data_ref"):
+            raise _StepSkipped("lightning step needs a named --dataset for the CLI")
+        return _mioflow._run_lightning_cli(name, ctx["data_ref"], ctx["fast_dev_run"])
+    # The SAME rule the real engine's `_step_mioflow` applies — one home, so the two engines
+    # cannot drift back apart. They did: this refusal existed only here.
+    _steps._require_embedding(state, "mioflow")
+    # AN ALLOWLIST, and the difference is not style. This read `None if … == "condition"` — a
+    # denylist of one — so any kind added upstream fell through and became a time axis. `group`
+    # (a cell type, a cluster, a branch) is as much a fabricated trajectory as treated -> healthy
+    # is, and it would have arrived silently. Only `time` is a time axis; everything else falls
+    # back to pseudotime, exactly as unlabelled manifold data does.
+    time_labels = state.get("labels") if state.get("label_kind") == "time" else None
+    # `_run_mioflow_experiment`'s returned "embeddings" is MIOFlow's own `encode()` output —
+    # every row integrated from t_min to t_max regardless of that row's own time bin, NOT the
+    # same coordinate frame as the embedding that was fed in. The trajectory arrows, by
+    # contrast, start at the TRUE input coordinates of the earliest time bin
+    # (`MIOFlow._generate_trajectories`). Plotting them over `emb` puts correct arrows on a
+    # background that has already moved — `base_emb` is what phate.png/dpt.png/
+    # discretize_time.png show, so it's the frame the arrows actually belong on.
     #
-    # `skipped`, not `error`: the params are not wrong, the ROUTE cannot carry them. That is
-    # the distinction the outcome vocabulary draws (runner.py's `_StepSkipped` handling),
-    # and it is the same shape as the `--dataset` refusal directly below.
-    if params:
-        raise _StepSkipped(
-            "the manylatents CLI path forwards no params, and this step declares "
-            f"{sorted(params)} — they would be silently dropped. A tool step "
-            "(`tool:`, through the model seam) carries them")
-    if not ctx.get("data_ref"):
-        raise _StepSkipped("lightning step needs a named --dataset for the CLI")
-    return _run_lightning_cli(name, ctx["data_ref"], ctx["fast_dev_run"])
+    # Read BEFORE the call, because `state["emb"]` is rebound to the flow's output below.
+    base_emb = state["emb"]
+    emb, scores, extras, model = _mioflow._run_mioflow_experiment(
+        state["emb"], ctx["seed"], ctx["fast_dev_run"], params,
+        labels=time_labels, device=ctx.get("device", "cpu"),
+    )
+    if time_labels is not None:
+        g["mioflow.n_timepoints"] = len(set(map(str, time_labels)))
+    # This used to read `state["emb"] = emb` and nothing else, so the trained flow — the simulatable
+    # object — was dropped one frame later while its coordinates were kept. It is kept now, and
+    # `probe` steps are what it is kept for.
+    state["model"] = model
+    _check_metadata_alignment(emb, state, ctx)
+    state["emb"] = emb
+    for k, v in scores.items():
+        g[f"{name}.{k}"] = v
+        if not k.endswith("_note"):
+            annotate(g, f"{name}.{k}", kind="measurement", stage=f"{name} engine evaluation")
+    _collect_extras(name, extras, state, g)
+    # `base_emb`, not `emb` — see above. The paths come off the RETAINED MODEL rather than a
+    # return value of their own: `state["model"]` is the object the flow left behind, and
+    # `trajectories_of` is the defensive read of the one property a figure needs from it.
+    _display_scatter(base_emb, state, ctx, f"{name}.png", name,
+                     trajectories=_mioflow.trajectories_of(model))
+    return None
 
 
 def run_manylatents(
@@ -2181,17 +2187,15 @@ def _mock_vec(state: dict, ctx: dict) -> list:
 # mock to invent, and the alternative is `mock` declining every recipe the migration gives a
 # prep block to, which is every bundled recipe but `qc`.
 _DISPATCH: dict[str, dict] = {
-    # `probe` is on every row that runs tool steps: a probe reads what a model step returned
-    # (`state["trajectories"]` through the model seam), and a tool step runs the same way on
-    # manylatents and on the in-process loop. NOT on `mock`: the mock never launches a tool, so
-    # nothing fills the slot, and offering a probe there would put a step in the menu that can
-    # only ever decline — which is precisely what `dispatchable` exists to prevent.
+    # `probe` is on manylatents ALONE, and that is the honest asymmetry: it is the only row
+    # whose `lightning` executor trains anything. The in-process stand-in computes a diffusion
+    # pseudotime and the mock invents numbers, so offering a probe there would put a step in the
+    # menu that can only ever decline — which is precisely what `dispatchable` exists to prevent.
     "manylatents": {"latent": _ml_latent, "lightning": _ml_lightning,
                     "analysis": _run_analysis_step, "prep": _run_prep_step,
                     "probe": _run_probe_step},
     INPROC: {"latent": _inproc_step, "lightning": _inproc_step,
-             "analysis": _run_analysis_step, "prep": _run_prep_step,
-             "probe": _run_probe_step},
+             "analysis": _run_analysis_step, "prep": _run_prep_step},
     "mock": {"latent": _mock_transform, "lightning": _mock_transform,
              "analysis": _mock_measure, "prep": _run_prep_step},
 }

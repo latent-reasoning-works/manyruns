@@ -401,10 +401,9 @@ def discretize_pseudotime(pt: Any, n_timepoints: int) -> Any:
     """Bin a normalized, finite `[0, 1]` pseudotime into `n_timepoints` equal-width integer
     groups — MIOFlow trains on discrete timepoints, never a continuous ordering.
 
-    The binning of the explicit `discretize_time` recipe step (an upstream ordering, e.g.
-    `dpt`, into time points). It was also the binning of MIOFlow's in-process no-real-time
-    fallback; that fallback is removed, and a time axis is now declared by a step, never
-    invented. `pt` must already be finite and
+    ONE home so MIOFlow's own no-real-time fallback (`mioflow._run_mioflow_experiment`) and an
+    explicit `discretize_time` recipe step (binning an upstream ordering, e.g. `dpt`) cannot
+    compute two different binnings of the same kind of value. `pt` must already be finite and
     scaled to `[0, 1]`; NaN/unreachable-cell handling is the caller's policy, not this
     function's — a bin boundary has nothing to say about a cell with no position at all."""
     import numpy as np
@@ -417,10 +416,9 @@ def discretize_pseudotime(pt: Any, n_timepoints: int) -> Any:
 # ── the precondition calculus ────────────────────────────────────────────────
 #
 # Which steps can legally run on which data, IN WHICH ORDER. Small on purpose: these are
-# DERIVED from what the steps actually do, not copied from another caller's precondition table.
-# `mioflow` requires a `time` axis here too now: it runs only as a tool step, its manifest
-# declares `needs: [embedding, time]`, and a recipe on unordered data declares how it orders
-# the cells (`dpt`, then `discretize_time`, which provides `time`).
+# DERIVED from what the steps actually do, not copied from the learner's `PRECONDITIONS`, which
+# would over-prune us — their `mioflow` requires a `time` coord, ours computes a diffusion
+# pseudotime when there is no time axis, so the cell is legal here and illegal there.
 #
 # This is the legal-move function. `plan()` uses it to prune cells that cannot produce a
 # result, and it is the same mask a search over recipe space would need: legality has to be
@@ -456,11 +454,12 @@ SHAPE_PROVIDES: dict[str, tuple[str, ...]] = {
 #: smaller vocabulary — one entry, rather than a product-side copy of the engine's algorithm
 #: catalogue that has to be maintained in step with it.
 #:
-#: `lightning` is absent: no `lightning` executor assigns `state["emb"]` on every engine
-#: (`runner._ml_lightning` shells out to the manylatents CLI, and `mioflow` is a tool step whose
-#: manifest says what it produces), and no step needs the fact anyway. A group lands here only
-#: when every engine agrees, because `unmet` takes no engine argument and its answer has to
-#: hold for every engine.
+#: `lightning` is absent although `runner._ml_lightning` also assigns `state["emb"] = emb`:
+#: `steps._step_mioflow` does NOT — it reads `state["emb"]` and writes only
+#: `state["pseudotime"]` (checked by source, not from memory). The engines disagree on that
+#: one group, so declaring it would be true of one and a lie about the other — and no step
+#: needs the fact anyway. A group lands here only when both engines agree, because `unmet`
+#: takes no engine argument and its answer has to hold for every engine.
 #:
 #: ONE EXCEPTION, by name: a GRAPH-VALUED step (one whose `STEP_PRODUCES` entry contains
 #: `graph`, today `reeb_graph`) is a `latent` step that does NOT replace `state["emb"]` —
@@ -493,10 +492,24 @@ GROUP_PROVIDES: dict[str, tuple[str, ...]] = {
 #: for a caller who holds a partition already.
 STEP_PRODUCES: dict[str, tuple[str, ...]] = {
     "leiden": ("clusters",),
-    # `mioflow` is NOT here. It runs only as a tool step, and a tool step's facts are its
-    # manifest's (`step_provides`): the MIOFlow example returns `trajectories`, and the fitted
-    # model stays in the tool's interpreter. The in-process route that left a model in
-    # `state["model"]` is removed.
+    # The trained flow — the SIMULATABLE object, not its coordinates. `model-not-pipeline.md`
+    # §3.1 names its discard as "the whole thesis, inside our own code"; this is the fact that
+    # makes keeping it addressable, so a `probe` step can declare that it needs one.
+    #
+    # BY NAME, and the reason is the one this table's header states. `GROUP_PROVIDES` means "true
+    # of every executor in this group", and it is not: `steps._step_mioflow` — the in-process
+    # `lightning` executor — computes a diffusion pseudotime on a kNN graph and trains NOTHING,
+    # so "a lightning step produces a model" is true on `manylatents` and a lie on `_inproc` and
+    # `mock`. That is exactly the test which keeps `lightning` out of `GROUP_PROVIDES` for
+    # `embedding` (see the note there), applied to a second fact.
+    #
+    # Keying by name does not make the remaining lie disappear, only smaller: `mioflow` on
+    # `_inproc` is the stand-in, so a recipe reading `[mioflow, sample_trajectories]` is legal
+    # here and declines at run time. `unmet` takes no engine argument BY DESIGN — its answer has
+    # to hold for every engine — so "this engine trains nothing" is a run-time fact, reported by
+    # `runner._run_probe_step` as a declined step with a reason, and pruned from the menu ahead
+    # of time by `runner.dispatchable`, which is the mechanism that DOES know the engine.
+    "mioflow": ("model",),
     # BY NAME, exactly as `mioflow` and `leiden` are: a velocity field is true of THIS
     # algorithm, not of its group. `pyrovelocity` is a `lightning` step — it fits a
     # probabilistic model by SVI — but the model stays in the TOOL's interpreter and only the
@@ -509,13 +522,6 @@ STEP_PRODUCES: dict[str, tuple[str, ...]] = {
     # step keeps the embedding (see the exception noted above `GROUP_PROVIDES`), and its
     # membership matrix goes to the artifact channel, not to `state["emb"]`.
     "reeb_graph": ("graph",),
-    # The time axis, DECLARED. `discretize_time` bins an upstream ordering (`dpt`'s pseudotime)
-    # into time points and writes them to the time channel (`state["labels"]` with
-    # `label_kind = "time"`). Declaring that it provides `time` makes the composition
-    # `dpt -> discretize_time -> mioflow` legal at plan time, and visible: a time axis that a
-    # recipe step made, never one invented behind it. On data with real time labels it declines
-    # and the real axis stays, so the fact holds either way.
-    "discretize_time": ("time",),
 }
 
 #: The facts a TOOL step can return across the process boundary — the model seam's six
@@ -529,11 +535,9 @@ TOOL_OUTPUT_FACTS = ("embedding", "clusters", "pseudotime", "trajectories", "gra
 #: What a step needs BEFORE it can run — satisfiable from EITHER source above. One needs
 #: table; which source supplies a fact is `unmet`'s business, not a second table's.
 #: Deliberately not "everything a step wants":
-#:   - `mioflow` is not here any more. It runs only as a tool step, and the MIOFlow manifest
-#:     declares `needs: [embedding, time]`: the time axis is required, never invented. The
-#:     in-process route that treated `time` as a preference, and fell back to a diffusion
-#:     pseudotime, is removed. The `embedding` half of the old entry was measured, on
-#:     `{steps: [mioflow, phate]}`:
+#:   - `mioflow` declares `embedding` but NOT `time`: it prefers a real time axis and falls
+#:     back to a diffusion pseudotime when there is none, so `time` is a preference. The
+#:     embedding is not. Measured before this entry existed, on `{steps: [mioflow, phate]}`:
 #:     `unmet` returned `frozenset()` — LEGAL — on ALL SIX shapes, because it unioned
 #:     `STEP_NEEDS` over the steps and so could not see position. Commit
 #:     df478cc's engine-side `_require_embedding` was then the only thing standing between
@@ -549,6 +553,7 @@ TOOL_OUTPUT_FACTS = ("embedding", "clusters", "pseudotime", "trajectories", "gra
 #:     which for three of them is a partition and for two is coordinates. What they do NOT
 #:     declare is the gene axis, and that omission is deliberate — see the note below.
 STEP_NEEDS: dict[str, tuple[str, ...]] = {
+    "mioflow": ("embedding",),
     "separation": ("conditions",),
     "composition": ("conditions",),
     # The gene axis, declarable at last — see the note below this table for why it could not
@@ -566,12 +571,10 @@ STEP_NEEDS: dict[str, tuple[str, ...]] = {
     # it, never before.
     "filter_mito": ("genes",),
     "filter_genes": ("genes",),
-    # A question put to the trajectories a model step returned (`state["trajectories"]`, filled
-    # by the model seam; `probes.PROBE_READS`). Declaring the need is what refuses a probe placed
-    # before any such step, and — because `trajectories` is step-produced and so absent from
-    # `frame_facts` — what refuses one placed after a filter that dropped the cells the flow was
-    # fitted over.
-    "sample_trajectories": ("trajectories",),
+    # A question put to a trained flow. Declaring the need is what refuses a probe placed before
+    # any fit, and — because `model` is step-produced and so absent from `frame_facts` — what
+    # refuses one placed after a filter that dropped the cells the flow was fitted over.
+    "sample_trajectories": ("model",),
     # DECLARED-BUT-UNIMPLEMENTED (`pipeline/stubs.py`). Their needs are declared for the same
     # reason a real step's are: the ORDER is testable before the maths exists, so a recipe that
     # puts `granger` before the thing that produces its trajectory is refused at plan time today
@@ -692,11 +695,11 @@ def facts() -> frozenset:
 
     Measured before the seam: `{"clusters", "conditions", "embedding", "genes", "model", "time"}`. Note
     that these are not all reachable through :func:`unmet` — that returns only facts some step
-    NEEDS, which was `{"clusters", "conditions", "embedding", "genes", "model"}`. `time` is
-    provided by `time-course` data and by `discretize_time`, and needed by the MIOFlow tool
-    manifest, whose needs are not in these tables. Both halves are here because this answers
-    "what words does the calculus use", not "what can currently be missing". The missing-tool
-    facts (`tool:<name>`) are not words of this vocabulary (`TOOL_FACT_PREFIX`).
+    NEEDS, which is `{"clusters", "conditions", "embedding", "genes", "model"}`; `time` is
+    provided by `time-course` data and required by nothing, because `mioflow` treats a real
+    clock as a preference and falls back to a diffusion pseudotime (see `STEP_NEEDS`). Both
+    halves are here because this answers "what words does the calculus use", not "what can
+    currently be missing".
     """
     out: set = set(TOOL_OUTPUT_FACTS)
     for table in (SHAPE_PROVIDES, GROUP_PROVIDES, STEP_PRODUCES, STEP_NEEDS):
@@ -757,54 +760,30 @@ def dataset_provides(shape: str, handle: "dict | None" = None) -> frozenset:
     return frozenset(facts)
 
 
-#: The prefix of a missing-tool fact. `tool:<name>` is unmet when a step names a tool that no
-#: searched folder declares (`toolchain.tool_search_path`). No step provides it: only declaring
-#: the tool does. It is not in :func:`facts`, because it is one fact per tool name rather than a
-#: word of the closed vocabulary; `narrate.blocked` phrases every fact with this prefix.
-TOOL_FACT_PREFIX = "tool:"
-
-#: Step names whose only implementation is a tool. A step with one of these names and no
-#: `tool:` key cannot run on any engine (`runner` refuses it with `_StepUnsupported`), so plan
-#: time says the same thing: the step needs `tool:<name>`. manyruns never imports MIOFlow.
-TOOL_ONLY_STEPS: dict[str, str] = {"mioflow": "mioflow"}
-
-
-def tool_fact(name: str) -> str:
-    """The missing-tool fact of the tool `name`, for example `tool:mioflow`."""
-    return f"{TOOL_FACT_PREFIX}{name}"
-
-
 def _tool_facts(step: dict) -> "tuple[frozenset, frozenset] | None":
     """`(needs, produces)` from the manifest of a step that names a tool, else None.
 
     `toolchain` is imported HERE, never at module scope: importing `vocab` must not pull
-    anything beyond the standard library.
-
-    A step whose tool has no loadable manifest (none declared in any searched folder, two
-    declared under one name, or an invalid one) needs `tool:<name>` and provides nothing. So a
-    missing tool is a plan-time fact: `unmet`, `check`, the ledger and `actions` show the recipe
-    as blocked, with the reason from `narrate.blocked`. A step named in `TOOL_ONLY_STEPS` with no
-    `tool:` key gets the same answer for its tool, because no engine runs it in process.
+    anything beyond the standard library. A tool whose manifest cannot be loaded falls back to
+    the name tables, as before the seam; the runner refuses that step at run time with the fix.
     """
     tool = step.get("tool")
     if not tool:
-        only = TOOL_ONLY_STEPS.get(step.get("name"))
-        return (frozenset({tool_fact(only)}), frozenset()) if only else None
+        return None
     from manyruns import toolchain
 
     try:
         return toolchain.manifest_facts(str(tool))
     except (ValueError, FileNotFoundError):
-        return frozenset({tool_fact(str(tool))}), frozenset()
+        return None
 
 
 def step_needs(step: dict) -> frozenset:
     """The facts this step needs before it can run.
 
     For a step with `tool:`, the MANIFEST's `needs`: the declaration the runner enforces is the
-    declaration legality reads. A tool no searched folder declares is the missing-tool fact
-    `tool:<name>` (`_tool_facts`). Otherwise `STEP_NEEDS`, keyed by name. `_walk`,
-    `recipe_needs` and `noncanonical` all call this, so the three readers cannot disagree."""
+    declaration legality reads. Otherwise `STEP_NEEDS`, keyed by name. `_walk`, `recipe_needs`
+    and `noncanonical` all call this, so the three readers cannot disagree."""
     facts = _tool_facts(step)
     if facts is not None:
         return facts[0]
@@ -815,7 +794,7 @@ def step_provides(step: dict) -> frozenset:
     """The facts running this step makes available to the steps after it.
 
     For a step with `tool:`, exactly the MANIFEST's `produces`; `GROUP_PROVIDES` and
-    `STEP_PRODUCES` add nothing. A step whose tool is missing provides the empty set. A MIOFlow tool step returns `trajectories` and keeps its
+    `STEP_PRODUCES` add nothing. A MIOFlow tool step returns `trajectories` and keeps its
     model in the tool's interpreter, so the name table's `model` would be a false claim.
 
     The union of what its GROUP provides (true of every executor in that group) and what its
@@ -958,12 +937,10 @@ def frame_facts() -> frozenset:
 
     Derived from `SHAPE_PROVIDES` and `DATASET_FACTS`, never listed a second time — the drift
     this module exists to prevent. Everything a step produces (`GROUP_PROVIDES`,
-    `STEP_PRODUCES`) is absent from both, with one stated exception, so the rule needs no list
-    of what to clear: it keeps this and drops the rest. `tests/test_narrowing_calculus.py`
-    asserts the overlap is exactly that exception, because a fact appearing in both would
-    silently make the fold monotone again for that one word. The exception is `time`:
-    `discretize_time` produces it into the frame's own time channel, which a narrowing masks
-    with the rows, so keeping it across a narrowing is the true answer.
+    `STEP_PRODUCES`) is by construction absent from both, so the rule needs no list of what to
+    clear: it keeps this and drops the rest. `tests/test_narrowing_calculus.py` asserts the two
+    sets stay disjoint, because a fact appearing in both would silently make the fold monotone
+    again for that one word.
 
     Measured today: `{"conditions", "genes", "time"}` — the `SHAPE_PROVIDES` union
     (`conditions`, `time`) plus `DATASET_FACTS`' one member, `genes`.
@@ -990,17 +967,13 @@ def step_facts() -> frozenset:
     survives every narrowing by construction.
 
     Measured today: the producer tables plus `TOOL_OUTPUT_FACTS` — every fact a model can
-    return through the seam is fitted over the cells the run held, so a narrowing clears it —
-    MINUS the frame facts. One fact is in both: `time`, which `discretize_time` produces. It
-    writes the frame's own time channel (`state["labels"]`, `label_kind = "time"`), which a
-    narrowing masks with the rows rather than discarding, so `have &= keep` keeps it, and no
-    narrowing can clear it.
+    return through the seam is fitted over the cells the run held, so a narrowing clears it.
     """
     out: set = set(TOOL_OUTPUT_FACTS)
     for table in (GROUP_PROVIDES, STEP_PRODUCES):
         for values in table.values():
             out.update(values)
-    return frozenset(out) - frame_facts()
+    return frozenset(out)
 
 
 #: The in-process step loop's name in the engine-keyed tables (`runner._DISPATCH`,
@@ -1056,13 +1029,16 @@ CANONICAL_EXAMPLE: dict[str, str] = {
 #:               manylatents runs `algorithms/latent/phate.py`. Both are PHATE, so this is
 #:               NOT a stand-in and is deliberately absent: a caveat fired here would spend
 #:               the channel on a non-event, and a channel that cries wolf stops being read.
-#:   `mioflow` — `_step_mioflow` WAS a diffusion pseudotime under MIOFlow's name, and was this
-#:               table's one entry. It now refuses (MIOFlow runs only as a tool step), so
-#:               nothing stands in for it and the entry is gone.
+#:   `mioflow` — `_step_mioflow` (`steps.py:137-149`) computes a diffusion pseudotime on a kNN
+#:               graph (`_diffusion_pseudotime`, `steps.py:106-134`); its own docstring calls
+#:               itself "a real MIOFlow stand-in for the in-process loop", while the manylatents
+#:               engine runs the trained neural-ODE flow. Different algorithm, same step name.
 #:
-#: Empty, because no substitution exists today. Rows for substitutions nobody has written
+#: One entry, because one substitution exists. Rows for substitutions nobody has written
 #: would be the registry-ahead-of-the-second-tool mistake CLAUDE.md names.
-STAND_INS: dict[tuple, str] = {}
+STAND_INS: dict[tuple, str] = {
+    (INPROC, "mioflow"): "diffusion-pseudotime",
+}
 
 
 def standins(recipe: dict, engine: Optional[str]) -> list:
@@ -1117,8 +1093,9 @@ def noncanonical(recipe: dict, shape: str = "unknown",
     engine in hand keeps its current answer rather than being told to invent one.
 
     Returns `[]` for every bundled recipe on its declared shape when no engine is named, and
-    for every bundled recipe on every engine: `STAND_INS` is empty since `mioflow` left the
-    in-process loop. This is quiet until something genuinely unusual happens."""
+    for every bundled recipe on `engine=manylatents`. On `vocab.INPROC` exactly the three
+    recipes that name `mioflow` — `cflows`, `traced`, `sandbox` — return one line each, the
+    stand-in, which is the point: this is quiet until something genuinely unusual happens."""
     have: dict = {f: "the dataset" for f in dataset_provides(shape, handle)}
     have.update({f: "the caller" for f in (provided or ())})
     keep: frozenset = frame_facts() | frozenset(provided or ())
