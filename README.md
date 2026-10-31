@@ -404,6 +404,31 @@ boundary between this application and its callers.
 Source comments keep their reasoning self-contained; cited documentation paths are checked
 for existence by the test suite.
 
+## commercial use
+
+Some steps run code under a non-commercial licence: the manylatents port of MIOFlow, and the
+other Yale-derived manylatents modules that `cflows`, `traced` and `sandbox` reach through their
+`mioflow` step. Someone who builds a proprietary application on the free components sets one
+variable in the process that runs manyruns:
+
+```sh
+export MANYRUNS_COMMERCIAL=1
+```
+
+With the flag on:
+
+- every recipe with a non-commercial step is a hollow row with one reason, in the app,
+  `manyruns actions` and `manyruns check`, and it is never recommended;
+- `manyruns run` refuses such a recipe with exit 2 before any step, and writes nothing;
+- a step that a session adds, a trained-weights inference, and a tool whose manifest says
+  `commercial_use: false` are refused too;
+- manyruns imports none of the seven Yale-derived manylatents modules.
+
+Unset, empty and `0` leave the flag off; any other value is an error, so a typo never turns it
+off. Without the flag everything runs, and the run row lists the non-commercial steps that ran
+in `non_commercial_steps`. The flag covers manyruns' own imports only: a host application that
+imports one of those modules itself still has it in its process.
+
 ## licensing and sample data
 
 manyruns is licensed under [Apache-2.0](LICENSE); see [NOTICE](NOTICE) for the MIT notice of
