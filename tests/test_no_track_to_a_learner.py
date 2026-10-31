@@ -57,3 +57,28 @@ def test_theme_colour_comment_names_no_file():
     # Compare first so a failure never echoes the line under test.
     matches = theme.read_text(encoding='utf-8').splitlines()[30] == THEME_COMMENT
     assert matches, 'theme.py line 31 is not the spec comment'
+
+
+EXPECTED_HASHES = frozenset({
+    "98b1c9e8888c2fe13853a8ef691b7b2a9cc3257b6923f79eaec10cb762fdb074",
+    "9dfe5c985dbba48aeef7b1af1cf2f5f3564b304d1aac0b91159efe060adcc808",
+    "b32cbd7a08dbe442fe0c07ce5d82f609b2e5f94dcf8acdd1917e8f9038b10824",
+})
+
+
+def test_learner_hashes_hold_three_digests():
+    from learners import LEARNER_HASHES
+
+    assert LEARNER_HASHES == EXPECTED_HASHES
+
+
+def test_no_stray_digest_is_stored():
+    import re
+    from pathlib import Path
+
+    from learners import LEARNER_HASHES
+
+    tests_dir = Path(__file__).resolve().parent
+    assert tests_dir.is_dir(), 'tests folder moved'
+    text = (tests_dir / 'learners.py').read_text(encoding='utf-8')
+    assert set(re.findall(r"[0-9a-f]{64}", text)) == LEARNER_HASHES
