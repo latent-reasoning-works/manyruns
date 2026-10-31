@@ -1,0 +1,20 @@
+# Call mode with a class: a constructor, a method, an instance selector and a parameter that
+# a recipe step may override. `call_target.py` must be importable in the tool's interpreter.
+name: golden_call_class
+version: "1"
+summary: a toy partition, through call mode on a class
+mode: call
+licence: MIT
+commercial_use: true
+distribution: numpy
+requires: ["numpy==2.2.6"]
+input: {kind: state_matrix}
+produces: [clusters]
+output: {schema: result-v1}
+call:
+  target: "call_target:Toy"
+  method: fit
+  options: {k: 3}
+  params: [k]
+  args: [matrix]
+  outputs: {clusters: "instance.labels_"}

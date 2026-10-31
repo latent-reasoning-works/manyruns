@@ -18,13 +18,14 @@ _RESULTS = {"run_id": "r1", "dataset_name": "pbmc3k", "dataset": "dataset:pbmc3k
 _EXTRA = {"source": "pbmc3k"}
 
 #: What the UNMODIFIED `store.append` wrote for `_RESULTS` and `_EXTRA`, captured before
-#: blinding was added. Off must stay byte-identical to it.
+#: blinding was added. Off must stay byte-identical to it. The model seam later added the core
+#: field `non_commercial_steps` after `caveats`, which every row now carries.
 _GOLDEN = (
     '{"schema_version":1,"run_id":"r1","spec_id":null,"parent":null,'
     '"dataset":"dataset:pbmc3k","dataset_name":"pbmc3k",'
     '"data_kwargs":{"path":"/data/pbmc3k.h5ad"},"at":null,"recipe":null,"engine":null,'
-    '"seed":null,"tool_version":null,"ok":null,"complete":null,"caveats":[],"steps":[],'
-    '"g_vector":{},"source":"pbmc3k"}\n'
+    '"seed":null,"tool_version":null,"ok":null,"complete":null,"caveats":[],'
+    '"non_commercial_steps":[],"steps":[],"g_vector":{},"source":"pbmc3k"}\n'
 )
 
 

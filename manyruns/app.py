@@ -267,10 +267,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "tools", help="external tools: what is declared, what is built, and how to build it"
     )
     p_tools.add_argument("action", nargs="?", default="list",
-                         choices=("list", "install", "check"),
+                         choices=("list", "install", "check", "verify"),
                          help="list: what is declared and its state · install: build a locked "
-                              "environment · check: run each built tool's selftest")
-    p_tools.add_argument("name", nargs="?", help="the tool (required for install)")
+                              "environment · check: run each built tool's selftest · verify: "
+                              "run one tool on a built-in fixture of 12 cells and check its "
+                              "result against the model seam (run it after every pin change)")
+    p_tools.add_argument("name", nargs="?", help="the tool (required for install and verify)")
     p_tools.set_defaults(func=cmd_tools)
 
     p_shell = sub.add_parser(
@@ -2538,6 +2540,11 @@ def cmd_tools(args: Any, parser: Any = None) -> int:
 
     action = getattr(args, "action", "list") or "list"
     names = _tc.discover_tools()
+    if action == "verify":
+        if not args.name:
+            print("which tool? " + (", ".join(names) or "(none declared)"))
+            return 2
+        return _verify_tool(args.name)
     if not names:
         print("no tools declared. A tool is a YAML in $MANYRUNS_TOOL_DIR or the bundled set.")
         return 0
@@ -2545,6 +2552,9 @@ def cmd_tools(args: Any, parser: Any = None) -> int:
     if action == "install":
         if not args.name:
             print("which tool? " + ", ".join(names))
+            return 2
+        if _tc.resolve(args.name)["status"] == "precomputed":
+            print(f"{args.name}: precomputed, nothing to build")
             return 2
         try:
             out = _tc.build(args.name)
@@ -2567,6 +2577,68 @@ def cmd_tools(args: Any, parser: Any = None) -> int:
         if r.get("fix"):
             print(f"      -> {r['fix']}")
     return rc
+
+
+def _verify_tool(name: str) -> int:
+    """`manyruns tools verify <name>`: run ONE tool step on a built-in fixture and check it.
+
+    The fixture is 12 cells x 3 columns with three time points and seed 0, in a temporary
+    folder that is removed afterwards. The tool is resolved as a run would resolve it, no lock
+    is built, and no row is written to `outputs/index.jsonl`. The step's version 1 result goes
+    through `check_result` with the manifest's `produces`, exactly as in a run.
+
+    Exit codes: 0 the result passes; 1 the tool declined, failed, or its result has a problem;
+    2 no such manifest, or it is precomputed; 3 its `input.kind` is not `state_matrix`, so the
+    fixture cannot serve it; 4 the tool is not ready, and the fix is printed.
+    """
+    import tempfile
+
+    import numpy as np
+
+    from manyruns import toolchain as _tc
+    from manyruns.pipeline import external as _external
+    from manyruns.pipeline import runner as _runner
+    from manyruns.pipeline.steps import _StepSkipped
+
+    resolved = _tc.resolve(name)
+    status = resolved["status"]
+    if status == "no-manifest":
+        print(f"  manifest      FAILED: {resolved['reason']}")
+        return 2
+    if status == "precomputed":
+        print(f"  manifest      {name} is precomputed: nothing runs, so there is nothing to verify")
+        return 2
+    cfg = resolved["cfg"]
+    print(f"  manifest      ok: {name} {cfg.get('version')} (mode {_tc.tool_mode(cfg)})")
+    kind = (cfg.get("input") or {}).get("kind")
+    if kind != "state_matrix":
+        print(f"  input         FAILED: input.kind is {kind!r}; the built-in fixture is a "
+              f"state_matrix of 12 cells")
+        return 3
+    print("  input         ok: state_matrix")
+    if status not in ("ready", "overridden"):
+        print(f"  environment   FAILED: {status}: {resolved.get('reason')}")
+        if resolved.get("fix"):
+            print(f"      -> {resolved['fix']}")
+        return 4
+    print(f"  environment   ok: {status}: {resolved.get('reason')}")
+
+    X = np.arange(36, dtype=float).reshape(12, 3)
+    ids = np.array([f"c{i:02d}" for i in range(12)])
+    time = np.repeat([0.0, 1.0, 2.0], 4)
+    state, g = _runner._new_state(X=X, labels=time, seed=0), {}
+    state["label_kind"] = "time"
+    with tempfile.TemporaryDirectory(prefix="manyruns-verify-") as tmp:
+        ctx = {"out_dir": Path(tmp), "seed": 0, "sample_ids": ids, "caveats": []}
+        try:
+            _external.run_external_step(name, {}, state, g, ctx)
+        except _StepSkipped as e:
+            print(f"  result        FAILED: {e}")
+            return 1
+    model = (cfg.get("output") or {}).get("schema") == _tc.RESULT_SCHEMA
+    print("  result        ok: " + ("check_result accepts it" if model
+                                    else "the .h5ad output matches the manifest"))
+    return 0
 
 
 def _load_inputs(engine: str, data_folder: Optional[Path], dataset: Optional[str],

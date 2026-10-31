@@ -50,6 +50,8 @@ if __name__ == "__main__":
 MANIFEST = textwrap.dedent("""
     name: stub
     version: "1.0"
+    licence: MIT
+    commercial_use: true
     produces: [stubfield]
     python: "3.12"
     requires: [stub==1.0]
@@ -202,6 +204,7 @@ def test_the_bundled_manifests_are_valid_and_declare_a_licence():
         cfg = toolchain.load_tool(name)
         assert cfg.get("licence"), f"{name} declares no licence"
         assert cfg.get("source"), f"{name} cites no source"
+        assert isinstance(cfg["commercial_use"], bool), f"{name} declares no commercial_use"
 
 
 def test_a_state_frame_tool_sees_the_NARROWED_run_not_the_file(tmp_path):

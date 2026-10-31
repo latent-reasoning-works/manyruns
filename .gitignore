@@ -73,6 +73,8 @@ data/
 # ...but always keep committed test fixtures (dep-free placeholders, e.g. the EB
 # acceptance run) — they must survive the data-suffix ignores above.
 !tests/fixtures/**
+# ...except the bytecode Python writes beside a fixture module it imports.
+tests/fixtures/**/__pycache__/
 
 # OS
 .DS_Store

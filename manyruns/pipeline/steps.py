@@ -365,10 +365,11 @@ def _partition(state) -> tuple:
     TWO sources, in this order, and the order is the design:
 
     1. ``state["clusters"]`` — the slot canonical-recipes.md §5.1 argues for (*"leiden writes
-       state['clusters'] rather than overwriting state['emb'] — the cleaner fix"*). **Nothing
-       writes it today**: it is absent from `runner._STATE_KEYS`, and `runner._ml_latent`
-       assigns `state["emb"] = emb` for every latent step whatever that step computed. It is
-       read FIRST so that the day a producer lands, every readout here follows with no edit.
+       state['clusters'] rather than overwriting state['emb'] — the cleaner fix"*). The model
+       seam (`pipeline/external.py`) is its one producer: a model returns `clusters`, and the
+       seam writes this slot. `runner._ml_latent` still assigns `state["emb"] = emb` for every
+       latent step whatever that step computed. It is read FIRST so that every readout here
+       follows a model's partition with no edit.
     2. ``state["emb"]`` when it is a single column of integral values — what manylatents'
        leiden actually leaves behind. Measured in this checkout on two gaussian blobs at
        120×8, `api.run(algorithms={'latent': 'leiden'}, seed=0)`: `embeddings` is
@@ -992,8 +993,26 @@ def _step_branch_points(state, g, params, out_dir, plots, target_dim) -> None:
     count is necessary evidence for branching, not a significance test.
 
     An absent count is recorded as `None` with a note, never as `0`: "no summary" and "a graph
-    with no branch point" are different findings."""
+    with no branch point" are different findings.
+
+    A MODEL's graph counts too. When the source holds no count and a model returned a `graph`
+    through the model seam (`state["graph"]`), the counts come from its `edges` over its
+    `node_ids`, with the degree rule of manylatents `reeb_graph.py`'s `structural_summary`.
+    Without this, `branch_points` would be legal after a model step and decline at run time."""
     source = str(_param(params, "source", "reeb_graph"))
+    graph = state.get("graph")
+    if g.get(f"{source}.structural_summary.n_branch_points") is None and graph is not None:
+        import numpy as np
+
+        nodes = np.asarray(graph["node_ids"]).ravel()
+        edges = np.asarray(graph["edges"]).reshape(-1, 2)
+        degree = {int(n): 0 for n in nodes}
+        for a, b in edges.tolist():
+            degree[int(a)] = degree.get(int(a), 0) + 1
+            degree[int(b)] = degree.get(int(b), 0) + 1
+        g["branch_points.n_branch_points"] = sum(1 for d in degree.values() if d >= 3)
+        g["branch_points.n_endpoints"] = sum(1 for d in degree.values() if d == 1)
+        return
     for count in ("n_branch_points", "n_endpoints"):
         key = f"{source}.structural_summary.{count}"
         value = g.get(key)

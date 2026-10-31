@@ -1,0 +1,15 @@
+# The golden tool: a test-only model that needs numpy and nothing else. It returns all six
+# seam facts for any state matrix, so CI tests the model seam without a model.
+name: golden
+version: "1"
+summary: fixed small outputs for every seam fact, for the model seam tests
+licence: MIT
+commercial_use: true
+# The tool is not a PyPI distribution, so the pin names the one it runs on.
+distribution: numpy
+requires: ["numpy==2.2.6"]
+selftest: "import numpy"
+entrypoint: golden_adapter.py
+input: {kind: state_matrix}
+output: {schema: result-v1}
+produces: [embedding, clusters, pseudotime, trajectories, graph, class_probabilities]
