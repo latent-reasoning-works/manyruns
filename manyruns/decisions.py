@@ -38,6 +38,13 @@ which tier enforced the legal set, and which task space the choice was over) are
 from the environment contract §2, not downstream fields, so the ``extra.<caller>`` rule below
 does not apply to them. They were added without a version bump; a row written before them
 simply lacks them, and ``read`` does not fill them in.
+Two more core keys are optional, and only ``run --choice`` writes them, after ``chosen``:
+``gate`` (whether the action document the choice was judged on had the geometry gate on) and
+then ``proposed`` (the filler's choice that a person reviewed: ``chooser``, ``bound``,
+``chosen``, ``offer_sha256``, and ``scores`` and ``meta`` when present). A row without
+``gate`` reads as missing, not as ``false``. A row without ``proposed`` reads as missing, not
+as an accept. No row stores whether the person overrode the filler; a reader compares
+``proposed.chosen`` with ``chosen``.
 Missing versions mean 1; readers preserve unknown keys and explicit versions for ordinary
 JSON read/write round trips. Future downstream fields reserve ``extra.<caller>`` only;
 no existing core field moves there. This writer creates new decisions, not row rewrites.
@@ -79,6 +86,7 @@ def append(*, offered: Sequence[dict], chosen: Optional[str],
            topology: Any = None, surface: str = "ledger",
            run_id: Optional[str] = None,
            chooser: str = "human", bound: str = "none",
+           gate: Optional[bool] = None, proposed: Optional[dict] = None,
            out_dir: Path | str = "outputs") -> Optional[str]:
     """Write one decision. Returns its `decision_id`, or `None` if nothing was written.
 
@@ -111,11 +119,20 @@ def append(*, offered: Sequence[dict], chosen: Optional[str],
     instead of returning `None`: a bad value is a caller bug, not an I/O failure, and a wrong
     `bound` is a silent lie in the corpus. `legal_id` is computed here and cannot be passed in,
     so every row's id is made the same way (see `_legal_set`).
+
+    `gate` and `proposed` are written only when they are not `None`, after `chosen`, in that
+    order; `proposed` is stored as a JSON copy and its keys are not checked here
+    (`action_space.check_choice` checks them). A `gate` that is not a `bool`, or a `proposed`
+    that is not a dict, raises `ValueError` with the other caller-bug checks.
     """
     if not isinstance(chooser, str) or not chooser:
         raise ValueError(f"chooser must be a non-empty string, got {chooser!r}")
     if bound not in BOUNDS:
         raise ValueError(f"bound must be one of {BOUNDS}, got {bound!r}")
+    if gate is not None and not isinstance(gate, bool):
+        raise ValueError(f"gate must be True, False or None, got {gate!r}")
+    if proposed is not None and not isinstance(proposed, dict):
+        raise ValueError(f"proposed must be a dict or None, got {type(proposed).__name__}")
     if not offered:
         # A choice from an empty offer set is not a decision anyone can learn from, and writing
         # it would put rows in the corpus whose label has no alternatives to be a label against.
@@ -137,6 +154,10 @@ def append(*, offered: Sequence[dict], chosen: Optional[str],
         "offered": [dict(o) for o in offered],
         "chosen": chosen,
     }
+    if gate is not None:
+        row["gate"] = gate
+    if proposed is not None:
+        row["proposed"] = json.loads(json.dumps(proposed))
     try:
         path = index_path(out_dir)
         path.parent.mkdir(parents=True, exist_ok=True)

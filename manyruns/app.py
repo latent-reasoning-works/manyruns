@@ -151,6 +151,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "(never a model), and a request the data cannot support is declined with nothing run. "
         "Not with --recipe.",
     )
+    p_run.add_argument(
+        "--choice", metavar="FILE",
+        help="run the choice in a choice document (JSON): it is checked against the action "
+        "document it names, recorded as a decision, then run. Not with DATA, --dataset, --data, "
+        "--recipe, --modality, --transform, --data-set, --time-key, --color-by or --ask.",
+    )
     p_run.set_defaults(func=cmd_run)
 
     p_open = sub.add_parser(
@@ -980,6 +986,8 @@ def cmd_run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         from manyruns import shell
 
         return shell.run_shell(args)
+    if getattr(args, "choice", None) is not None:
+        return _cmd_run_choice(args, parser)
     try:
         proj = _setup_project(args, parser)
     except _AskDeclined as declined:
@@ -991,6 +999,96 @@ def cmd_run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         fast_dev_run=_smoke(args), data_kwargs=_parse_kwargs(args.data_kwargs),
         time_key=args.time_key, device=args.device, color_by=getattr(args, "color_by", None),
     )
+
+
+#: The flags a choice document replaces: each names or changes what runs. Pairs of the
+#: namespace attribute and the name the refusal prints.
+_CHOICE_REPLACES = (
+    ("data_folder", "DATA"), ("dataset", "--dataset"), ("data_arg", "--data"),
+    ("recipe", "--recipe"), ("modality", "--modality"), ("transform", "--transform"),
+    ("data_kwargs", "--data-set"), ("time_key", "--time-key"), ("color_by", "--color-by"),
+    ("ask", "--ask"),
+)
+
+
+def _cmd_run_choice(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    """`run --choice FILE`: every refusal goes through `parser.error` before the first write."""
+    import json
+
+    from manyruns import action_space
+
+    given = [flag for name, flag in _CHOICE_REPLACES if getattr(args, name, None)]
+    if given:
+        parser.error(f"--choice names what runs; it takes no {', '.join(given)}")
+    path = Path(args.choice)
+    try:
+        choice = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        parser.error(f"cannot read the choice file {args.choice}: {exc.strerror or exc}")
+    except ValueError as exc:
+        parser.error(f"the choice file {args.choice} is not JSON: {exc}")
+    if not isinstance(choice, dict):
+        parser.error(f"the choice file {args.choice} does not hold a JSON object")
+    try:
+        result = _run_choice(choice, engine=args.engine, seed=args.seed, device=args.device,
+                             project=args.project, parser=parser,
+                             fast_dev_run=_smoke(args))
+    except action_space.Refused as refused:
+        if refused.exit_code == 2:
+            parser.error(refused.message)
+        print(f"error: {refused.message}", file=sys.stderr)
+        return refused.exit_code
+    return result["exit_code"]
+
+
+def _run_choice(choice: dict, *, engine: Optional[str], seed: int, device: Optional[str],
+                project: Optional[str], parser: argparse.ArgumentParser,
+                fast_dev_run: bool = False) -> dict:
+    """Run one checked choice and return the result document.
+
+    The order is the contract: check (nothing written on a refusal), set up the project, write
+    the decision row, print its line, run, and write the run row joined by `decision_id`.
+    Raises `action_space.Refused` when the choice is refused. Writes no record itself: the
+    rows come from `decisions.append` and `store.append`, as on every other path.
+    """
+    from manyruns import action_space, decisions
+
+    doc = action_space.check_choice(choice, store=".", seed=seed)
+    chosen = choice["chosen"]
+    dataset = choice["dataset"]
+    surface = choice["surface"]
+    setup = argparse.Namespace(
+        engine=engine, dataset=dataset, data_folder=None, data_arg=None,
+        project=project or _project_name_for(dataset), recipe=chosen["recipe"], ask=None,
+        transform=None, data_kwargs=None, time_key=None, color_by=None, modality=None)
+    step_params = (chosen["step"], chosen["params"]) if surface == "tune" else None
+    proj = _setup_project(setup, parser, step_params=step_params)
+
+    proposed = None
+    if "proposed" in choice:
+        filler = choice["proposed"]
+        proposed = {"chooser": filler["chooser"], "bound": filler["bound"],
+                    "chosen": action_space.label(choice, filler["chosen"], doc),
+                    "offer_sha256": filler["offer_sha256"]}
+        proposed.update({k: filler[k] for k in ("scores", "meta") if k in filler})
+    decision_id = decisions.append(
+        offered=doc["offered"], chosen=action_space.label(choice, chosen, doc),
+        dataset=doc["dataset"]["name"], shape=doc["dataset"]["shape"],
+        topology=doc["dataset"]["topology"], surface=surface,
+        chooser=choice["chooser"], bound=choice["bound"], gate=doc["gate"], proposed=proposed)
+    result = {"schema_version": 1, "decision_id": decision_id, "run_id": None, "exit_code": 1}
+    if decision_id is None:
+        # A harness exists to produce the record. With no person waiting, a choice whose
+        # decision could not be written does not run.
+        print("error: decision not recorded; nothing was run", file=sys.stderr)
+        return result
+    print(f"decision {decision_id} recorded in {decisions.index_path('outputs')}")
+    record: dict = {}
+    result["exit_code"] = _explore_project(
+        proj, seed=seed, fast_dev_run=fast_dev_run, device=device,
+        decision_id=decision_id, record=record, run_extra=choice.get("extra"))
+    result["run_id"] = record.get("run_id")
+    return result
 
 
 def cmd_open(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
@@ -1592,7 +1690,8 @@ def _ask(prompt: str, default: str) -> str:
 
 
 #: Args that mean "I already know what I want" — any of them keeps `run` a one-shot.
-_RUN_INTENT_ARGS = ("data_folder", "data_arg", "dataset", "recipe", "engine", "project", "ask")
+_RUN_INTENT_ARGS = ("data_folder", "data_arg", "dataset", "recipe", "engine", "project", "ask",
+                    "choice")
 
 
 def _wants_the_console(args: argparse.Namespace) -> bool:
@@ -1747,7 +1846,8 @@ def _route_ask(text: str, obs: Any) -> Optional[str]:
     return recipe
 
 
-def _setup_project(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict:
+def _setup_project(args: argparse.Namespace, parser: argparse.ArgumentParser, *,
+                   step_params: Optional[tuple[str, dict]] = None) -> dict:
     """Prompt for the minimum (#11), detect modality (#10), pick the recipe, persist it.
 
     One data source (the DATA arg or --dataset) that is EITHER a filesystem path OR a
@@ -1828,6 +1928,9 @@ def _setup_project(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
     # name preprocess one way today and another way tomorrow, with the file that exists to say
     # which asserting the one that did not happen.
     recipe = apply_transform_shim(recipe, getattr(args, "transform", None))
+    # A tune choice's step parameters, at the same place and for the same reason.
+    if step_params is not None:
+        recipe = apply_step_params(recipe, *step_params)
     # COMMERCIAL MODE refuses here: after the recipe is chosen, before `write_project` and
     # before any step, so a refused run leaves nothing under `outputs/`.
     from manyruns import commercial
@@ -1865,6 +1968,10 @@ def _explore_project(
     time_key: Optional[str] = None,
     device: Optional[str] = None,
     color_by: Optional[list[str]] = None,
+    *,
+    decision_id: Optional[str] = None,
+    record: Optional[dict] = None,
+    run_extra: Optional[dict] = None,
 ) -> int:
     data_folder = Path(proj["data_folder"]) if proj.get("data_folder") else None
     engine = proj.get("engine", "mock")
@@ -1946,7 +2053,15 @@ def _explore_project(
     # which is most of what "strict state of the data and the interventions" means.
     from manyruns import store as _store
 
-    index = _store.append(results, extra={"source": str(source), "modality": proj["modality"]})
+    row_extra: dict = {"source": str(source), "modality": proj["modality"]}
+    if decision_id is not None:
+        row_extra["decision_id"] = decision_id
+    if run_extra is not None:
+        # The caller's object, written as the row's `extra` key; manyruns reads none of its keys.
+        row_extra["extra"] = run_extra
+    index = _store.append(results, extra=row_extra)
+    if record is not None:
+        record["run_id"] = results.get("run_id")
 
     from manyruns import shell as _shell
 
@@ -2304,6 +2419,20 @@ def apply_transform_shim(recipe: dict, transform: Optional[str]) -> dict:
     out["steps"] = [
         {**s, "params": {**(s.get("params") or {}), "method": transform}}
         if s.get("name") == "transform" else s
+        for s in (recipe.get("steps") or [])
+    ]
+    return out
+
+
+def apply_step_params(recipe: dict, step: str, params: dict) -> dict:
+    """A copy of `recipe` in which the step named `step` has `params = {**declared, **params}`.
+
+    For a tune choice, before `write_project`, so `project.yaml` records the values that ran.
+    The tune document refuses two tunable steps with one name, so the step is unique.
+    """
+    out = dict(recipe)
+    out["steps"] = [
+        {**s, "params": {**(s.get("params") or {}), **params}} if s.get("name") == step else s
         for s in (recipe.get("steps") or [])
     ]
     return out
