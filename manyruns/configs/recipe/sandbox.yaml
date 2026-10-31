@@ -18,6 +18,11 @@
 # would be illegal rather than skipped, and would exercise the refusal path instead of the step
 # pane. Two real steps, then three that decline.
 #
+# `mioflow` needs a time axis (`vocab.STEP_NEEDS`), so this recipe is blocked at plan time on
+# data with no time axis; it never runs on an invented one. `mioflow` and `granger` are
+# non-commercial steps, so with the commercial flag on (`manyruns/commercial.py`) the
+# recipe is unavailable.
+#
 # NOT A RECOMMENDATION FOR ANYTHING — `suits: []`, like `qc`, so it never competes for the top
 # row of the menu. It is one keystroke away for whoever is working on a screen and invisible
 # otherwise. DELETE IT when the three steps below are implemented; `stubs.names()` is what says

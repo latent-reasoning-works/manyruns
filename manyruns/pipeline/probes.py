@@ -6,7 +6,8 @@ MANYRUNS's line, not by anything upstream — `manylatents.experiment.run_experi
 algorithm as an argument and the caller owns it throughout. This module is what the model is
 kept FOR.
 
-**A probe is a step, not a new axis.** It consumes a fact another step produced (`model`), it
+**A probe is a step, not a new axis.** It consumes a fact another step produced (`model`, or a
+slot named in `PROBE_READS` such as `trajectories`), it
 writes to the g-vector, and it transforms no data and moves no selection. `CLAUDE.md`'s
 extension path for a new capability is a group plus one executor in the dispatch table, and
 that is exactly what this is — not a fourth axis beside capability / substrate / fidelity, and
@@ -54,8 +55,12 @@ def _ask(model: Any, *names: str) -> Any:
         f"{sorted(n for n in dir(model) if not n.startswith('_'))[:12]}…")
 
 
-def _probe_sample_trajectories(model: Any, params: dict) -> dict:
+def _probe_sample_trajectories(traj: Any, params: dict) -> dict:
     """The paths the trained flow integrates — `(T, n, d)`: T timesteps, n cells, d dims.
+
+    `traj` is the array in `state["trajectories"]` (`PROBE_READS`), not the model: the
+    in-process route fills that slot from the trained model, and a tool step that returns
+    `trajectories` through the model seam fills the same slot, so one readout serves both.
 
     Reported as SHAPE plus a displacement summary, never as the array. A probe's answer lands
     in the g-vector, which `store.py` writes to `index.jsonl` one line per run; putting an
@@ -65,7 +70,7 @@ def _probe_sample_trajectories(model: Any, params: dict) -> dict:
     """
     import numpy as np
 
-    traj = np.asarray(_ask(model, "trajectories"))
+    traj = np.asarray(traj)
     if traj.ndim != 3:
         raise _NoAnswer(f"trajectories has shape {traj.shape}; expected (steps, cells, dims)")
     # AXIS 0 IS TIME, axis 1 is cells, and this is MEASURED rather than inferred.
@@ -86,6 +91,11 @@ def _probe_sample_trajectories(model: Any, params: dict) -> dict:
         "median_displacement": float(np.median(travel)),
         "max_displacement": float(np.max(travel)),
     }
+
+
+#: `probe name -> the state slot it reads`. A probe listed here is passed that slot's value
+#: instead of `state["model"]`; `runner._run_probe_step` declines when the slot is empty.
+PROBE_READS: dict[str, str] = {"sample_trajectories": "trajectories"}
 
 
 #: `name -> probe`, the table `runner._NAME_TABLES` reads so `dispatchable` can answer "could

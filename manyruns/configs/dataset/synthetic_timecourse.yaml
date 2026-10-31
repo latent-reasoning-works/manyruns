@@ -9,10 +9,9 @@
 # WHY IT HAD TO EXIST. Measured 2026-07-28 over `catalog.load_datasets()`: the 12 other
 # bundled datasets declare `shape: manifold` (9) or `shape: clusters` (3), and all 12 handle
 # to a manylatents datamodule. `vocab.SHAPE_PROVIDES` maps `time-course →
-# ("time",)` and nothing else provides it, so before this file no bundled dataset carried a
-# time axis at all — MIOFlow could only ever run on the pseudotime fallback in
-# `steps._step_mioflow`, which derives an ordering FROM the embedding and so returns a full
-# [0, 1] range on data with no time in it. There is also nothing upstream to point at:
+# ("time",)`, so before this file no bundled dataset carried a time axis at all. MIOFlow needs
+# one (`vocab.STEP_NEEDS["mioflow"]`): real time labels like these, or a recipe step that
+# declares an inferred axis (`discretize_time`). It never invents a time axis. There is also nothing upstream to point at:
 # `manylatents.data.list_datamodules()` returns 35 names, none time-labelled.
 #
 # TIME IS A GENERATIVE PARAMETER HERE. Each snapshot is `randn(n, d) + drift * t` with the

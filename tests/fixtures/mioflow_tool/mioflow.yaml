@@ -1,0 +1,37 @@
+# The stub MIOFlow folder: a COPY of examples/tools/mioflow/mioflow.yaml for the tests.
+# The adapter beside it is a numpy-only stub, so CI runs the tool route without MIOFlow,
+# torch or a network. `test_stub_manifest_matches_example` keeps the data of this file
+# equal to the example's; edit the example first, then copy it here.
+name: mioflow
+mode: run
+version: "0.1.14"
+summary: trajectories between time points, by an optimal-transport neural ODE
+
+source:
+  kind: paper
+  cite: "Huguet, Magruder, Tong et al., Manifold Interpolating Optimal-Transport Flows for
+    Trajectory Inference, NeurIPS 2022"
+  doi: "10.48550/arXiv.2206.14928"
+  url: "https://github.com/KrishnaswamyLab/MIOFlow"
+  # The DOI resolved and the PyPI metadata of mioflow==0.1.14 were read on this date.
+  verified: 2026-10-30
+
+# Research use only. The record marks every step of this tool as non-commercial
+# (`non_commercial_steps` in the run row).
+licence: LicenseRef-Yale-Non-Commercial
+commercial_use: false
+
+python: "3.12"
+# THE PIN IS THE CONTRACT. A new upstream release changes nothing until a person moves this pin
+# and runs `manyruns tools verify mioflow`.
+requires: ["mioflow==0.1.14"]
+entrypoint: mioflow_adapter.py
+selftest: "from mioflow import MIOFlow"
+
+# The coordinates the flow is fitted in, and the time point of each cell.
+needs: [embedding, time]
+# The (bins, trajectories, coordinates) array. The fitted model stays in the tool's interpreter.
+produces: [trajectories]
+
+input: {kind: state_matrix}
+output: {schema: result-v1}

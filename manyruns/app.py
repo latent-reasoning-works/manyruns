@@ -2419,8 +2419,8 @@ _FACT_FOR_LABEL_KIND = {"time": "time", "condition": "conditions"}
 _UNDELIVERED_FACT_COST = {
     "time": (
         "`vocab.unmet` reads the DECLARATION, not the run, so a trajectory recipe is still "
-        "called legal; the trajectory step then falls back to a pseudotime computed from the "
-        "embedding — a clock made of the geometry it is supposed to be independent of."
+        "called legal; the trajectory step then has no time labels and refuses to run, because "
+        "it never invents a clock from the geometry it is supposed to be independent of."
     ),
     "conditions": (
         "separation/composition would record `no condition labels` and return None, which the "
@@ -2445,9 +2445,10 @@ def _require_declared_facts(
     `shape: time-course` would have its time axis erased between the declaration the legality
     check reads and the run that consumes it — `unmet(cflows, "time-course")` is `frozenset()`,
     i.e. LEGAL, and `runner._ml_lightning` then computes `time_labels = state["labels"]` =
-    None and `mioflow._run_mioflow_experiment` falls back to a diffusion pseudotime.
+    None. `mioflow._run_mioflow_experiment` used to fall back to a diffusion pseudotime there;
+    it now refuses a run with no time labels, so the step is `skipped` rather than wrong.
 
-    What that produces, measured end to end (`--dataset swissroll --recipe cflows` on the
+    What that produced before the refusal, measured end to end (`--dataset swissroll --recipe cflows` on the
     in-process loop, seed 42, 5000×3): trace `latent:phate → lightning:mioflow`, status `phate: ok,
     mioflow: ok`, run `ok=True`, and `g_vector["pseudotime_range"] == [0.0, 1.0]` — a
     full-range trajectory whose clock came from the embedding, indistinguishable in the record
