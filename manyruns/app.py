@@ -2091,18 +2091,46 @@ def _choose_recipe(
     if override:
         return override, f"recipe forced to {override!r} (auto-selection skipped)"
 
+    from manyruns import catalog
+
     shape = narrate.shape_of(has_time_axis, conditions, modality)
-    recipe = narrate.offer(narrate.Observation(
-        shape=shape, modality=modality, conditions=conditions))[0]["recipe"]
+    menu = narrate.offer(narrate.Observation(shape=shape, modality=modality,
+                                             conditions=conditions))
+    # THE FIRST ENTRY THAT CAN RUN, never just the head: `offer` returns blocked and unavailable
+    # recipes too (unrecommended, so a screen can show the refusal), and a head that cannot run
+    # would be chosen and then refused. With the commercial flag on, `cflows` is unavailable on
+    # time-course data, and `pseudotime` is the first entry that runs.
+    #
+    # THE BEST MATCH, named in the rationale when it is skipped. `offer` sorts an unavailable
+    # recipe below the runnable ones, so it is the head the menu would have if availability did
+    # not demote a row: of the recipes that suit this shape and that this data does not block,
+    # the first by name (`offer`'s order).
+    recipe, suited = None, []
+    for entry in menu:
+        loaded = catalog.load_recipe(entry["recipe"])
+        data_reasons = narrate.blocked(loaded, shape)
+        reasons = data_reasons + narrate.unavailable(loaded)
+        if recipe is None and not reasons:
+            recipe = entry["recipe"]
+        if shape in (loaded.get("suits") or []) and not data_reasons:
+            suited.append((entry["recipe"], reasons))
+    if recipe is None:
+        recipe = menu[0]["recipe"]
+    best = min(suited) if suited else None
+    skipped = (best[0], best[1][0]) if best and best[0] != recipe and best[1] else None
 
     if shape == "time-course":
-        why = "detected a time / ordering axis → trajectory (CFlows: phate→mioflow)"
+        why = ("detected a time / ordering axis → trajectory (CFlows: phate→mioflow)"
+               if recipe == "cflows" else
+               f"detected a time / ordering axis → trajectory ({recipe})")
     elif shape == "case-control":
         why = (f"detected conditions {sorted(conditions or [])} with no time axis → case/control "
                "contrast (PHATE + condition separation), not a trajectory")
     else:
         why = ("no time axis or conditions detected → structure-only embedding; asserting a "
                "trajectory here would invent an ordering the data does not carry")
+    if skipped is not None:
+        why += f"; {skipped[0]} suits this data but is not chosen: {skipped[1]}"
     return recipe, why
 
 
