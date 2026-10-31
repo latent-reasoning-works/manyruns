@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from textual.theme import Theme
 
-#: Sourced from the deck's `:root` — see manifoldwerks/presentations/manyruns/manyruns-vsp_2.html
+#: Sourced from the brand deck's `:root` colour tokens.
 _SLIDE_BG = "#232E26"  # --slide-bg
 _BG_ALT = "#2E3D30"  # --bg-dark-alt
 _INK_DARK = "#1E2820"  # --ink-dark

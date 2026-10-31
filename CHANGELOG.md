@@ -117,6 +117,10 @@ During the open beta, the CLI and record schema can still change.
 ### Changed
 
 - Relicensed from MIT to Apache-2.0. Releases up to and including 0.1.0 stay under MIT; NOTICE keeps the MIT notice and lists the MIOFlow files it does not cover.
+- The public-safety gate now also stops two more forbidden names: `tests/learners.py` holds
+  two more SHA-256 digests. A new local name hook, `.githooks/forbidden_names.py`, blocks a
+  commit whose staged files or message hold a forbidden name and prints locations only. Turn
+  it on once per clone with `git config core.hooksPath .githooks`.
 - `non_commercial_steps` in the run row now also names an in-process MIOFlow step: every step
   whose name is in `commercial.NON_COMMERCIAL_STEPS`, whatever its outcome and engine. Runs of
   `cflows`, `traced` and `sandbox` record `["mioflow"]` (`sandbox` also `granger`).
