@@ -357,10 +357,16 @@ def test_compute_keeps_heartbeat_and_keys_live(monkeypatch, tmp_path, phase, act
             (tmp_path / 'release').touch()
             await asyncio.sleep(.1)
             if action in ('leave', 'stay'):
+                # The promise is Escape -> leave modal within 1 s. Stop the clock when
+                # the modal is the active screen, not when `pilot.press` returns: after
+                # delivering the key, press runs two `wait_for_idle` calls that each
+                # wait up to 1 s for this process to look idle, so on a busy runner
+                # press alone took >1 s while the modal was up within milliseconds.
                 started = time.monotonic()
-                await pilot.press('escape')
+                press = asyncio.ensure_future(pilot.press('escape'))
                 await until(lambda: isinstance(app.screen, LeaveRunScreen), timeout=1)
                 assert time.monotonic() - started < 1
+                await press
                 if action == 'stay':
                     await until(lambda: (tmp_path / 'completed').exists())
                     # The fit can finish while its leave modal is open. No later step
