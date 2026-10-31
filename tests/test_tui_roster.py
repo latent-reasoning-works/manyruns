@@ -403,6 +403,24 @@ async def test_the_cursor_survives_the_arrow_keys_at_both_ends():
 
 
 @pilot_test
+async def test_a_click_on_a_heading_keeps_the_cursor_on_data():
+    """The mouse obeys the rule the arrows obey: a heading never takes the cursor. A click that
+    parked it on "synthetic" left no `▸` anywhere and nothing for enter to act on."""
+    app = RosterApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+        assert _under_cursor(app) == "swissroll"
+        table = app.screen.query_one(RosterTable)
+        heading = next(i for i in range(table.row_count) if not app.screen.selectable(i))
+        await pilot.click(RosterTable, offset=(3, 1 + heading))   # +1: the column header
+        await pilot.pause()
+        assert _under_cursor(app) == "swissroll"
+        assert "▸" in _marks(app)
+
+
+@pilot_test
 async def test_the_default_seams_open_the_two_real_screens():
     """The real `ManyrunsApp` (not the test subclass): both hooks now push the screen they name.
 
@@ -1137,10 +1155,29 @@ async def test_user_selection_during_launch_survives_initial_drop_settling(
     async with app.run_test() as pilot:
         await pilot.pause()
         screen = app.screen
+        # The first poll runs after the first refresh, and on a slow runner that can be after
+        # one `pause`. Its footnote line then moves the table down a row, and `pilot.click`
+        # computes its coordinates before its own pause applies that layout: the click landed
+        # one row up, on a heading. Wait for the poll, then for the table to stop moving.
+        # The poll timer is paused the moment it exists, so its second tick cannot settle
+        # the drop while the layout catches up.
+        deadline = asyncio.get_running_loop().time() + 10
+        while screen._poll_timer is None:
+            assert asyncio.get_running_loop().time() < deadline, 'roster never polled'
+            await pilot.pause()
         screen._poll_timer.pause()
         assert not any(e.path == path for e in screen.entries)
+        table = screen.query_one(RosterTable)
+        region = None
+        while table.region != region:
+            assert asyncio.get_running_loop().time() < deadline, 'roster did not settle'
+            region = table.region
+            await pilot.pause()
         if key == 'click':
+            aimed = screen.get_style_at(table.region.x + 3, table.region.y + 2).meta['row']
+            assert isinstance(screen.on_screen[aimed], state.DataEntry)
             await pilot.click(RosterTable, offset=(3, 2))
+            assert screen.query_one(RosterTable).cursor_row == aimed
         else:
             await pilot.press(key)
         selected = _under_cursor(app)
