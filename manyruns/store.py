@@ -17,8 +17,10 @@ Version 1 row shape (core top-level keys): ``schema_version`` (written first),
 ``run_id``, ``spec_id``, ``parent``, ``dataset``, ``dataset_name``, ``data_kwargs``, ``at``,
 ``recipe``, ``engine``, ``seed``, ``tool_version``, ``ok``, ``complete``, ``caveats``,
 ``non_commercial_steps``, ``steps`` and ``g_vector``. ``non_commercial_steps`` is the sorted
-list of the run's steps whose tool manifest says ``commercial_use: false``; ``[]`` means none.
-A row written before that field existed has no such key, and a missing key means unknown. Product callers also supply the core top-level ``source``,
+list of the run's non-commercial steps, whatever their outcome and engine: a step whose name is
+in ``commercial.NON_COMMERCIAL_STEPS`` (an in-process ``mioflow`` step, for example), or whose
+tool manifest says ``commercial_use: false``; ``[]`` means none. A row written before that
+field existed has no such key, and a missing key means unknown. Product callers also supply the core top-level ``source``,
 ``modality`` and ``decision_id`` fields through the existing ``append(extra=...)`` merge.
 These stay at the top level; absent optional core fields retain their existing meaning.
 Missing ``schema_version`` means 1. Readers preserve unknown keys and explicit versions.

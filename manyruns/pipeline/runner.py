@@ -23,6 +23,7 @@ from typing import Any
 
 from manyruns import __version__
 from manyruns import artifacts as _artifacts
+from manyruns import commercial as _commercial
 from manyruns.measurements import annotate
 from manyruns.pipeline import bounds as _bounds
 from manyruns.pipeline import io as _io
@@ -961,6 +962,14 @@ def apply_step(step: dict, state: dict, g: dict, *, dispatch: dict, ctx: dict,
         _settle(rec)
         _report(on_step, rec, lineage)
         return rec
+    # COMMERCIAL MODE, before any executor and so before any import. A step a session adds to a
+    # run never passed `narrate.unavailable`, so the refusal has to be here too.
+    if _commercial.enabled() and _commercial.is_non_commercial(step):
+        rec["outcome"], rec["unsupported"] = "skipped", True
+        rec["detail"] = _commercial.REASON
+        _settle(rec)
+        _report(on_step, rec, lineage)
+        return rec
     # THE `tool:` SEAM, ahead of the group lookup and only ahead of it. A step naming a tool
     # keeps its honest `group` — the calculus reads that, and nothing here changes what `unmet`
     # decides — but its IMPLEMENTATION is in another interpreter, so the group's engine executor
@@ -1282,6 +1291,22 @@ def _finalize(state: dict, g: dict, *, engine: str, recipe: dict, steps: list,
               abandoned: bool = False, not_run=(), compute_error: str | None = None) -> dict:
     """THE g-vector assembler + result shape — identical for every engine.
 
+def _non_commercial_steps(recipe: dict, steps: list, g: dict) -> list:
+    """The sorted names of the run's non-commercial steps (see `_finalize`)."""
+    declared = {}
+    for step in (recipe or {}).get("steps") or []:
+        if isinstance(step, dict):
+            declared.setdefault(step.get("name"), []).append(step)
+    names = set()
+    for rec in steps:
+        name = rec.get("name")
+        if (_commercial.is_non_commercial(rec)
+                or any(_commercial.is_non_commercial(s) for s in declared.get(name, ()))
+                or g.get(f"{name}.tool_commercial_use") is False):
+            names.add(name)
+    return sorted(names)
+
+
     `trace` and `status` are derived from the step record rather than accumulated
     alongside it, so the three cannot drift. A repeated step name collapses in `status`
     (one key, last write wins — the pre-existing behaviour) while `steps` keeps both
@@ -1347,11 +1372,13 @@ def _finalize(state: dict, g: dict, *, engine: str, recipe: dict, steps: list,
         # recipe. A result reached off the beaten path is exactly the one whose provenance a
         # reader needs, so it rides in the record rather than being printed once and lost.
         "caveats": list(caveats or []),
-        # The steps whose tool manifest says `commercial_use: false`, so a reader can select
-        # research-only runs with one key instead of scanning every `*.tool_commercial_use`.
-        "non_commercial_steps": sorted(
-            {s["name"] for s in steps if s.get("outcome") not in DID_NOT_RUN
-             and g.get(f"{s['name']}.tool_commercial_use") is False}),
+        # Every non-commercial step of the run, so a reader can select research-only runs with
+        # one key instead of scanning every `*.tool_commercial_use`: a step whose name or tool
+        # manifest `commercial.is_non_commercial` names, or whose tool fields say
+        # `commercial_use: false`. Whatever its outcome and engine — a mock or refused step is
+        # counted too, which is the safe direction: a reader that refuses non-commercial rows
+        # refuses one row too many, never one too few.
+        "non_commercial_steps": _non_commercial_steps(recipe, steps, g),
         "recipe": recipe.get("name"),
         "num_steps": len(trace),
         "trace": trace,

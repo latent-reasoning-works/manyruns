@@ -553,14 +553,21 @@ def unavailable(recipe: dict) -> list[str]:
     0.1.9 fixed `aa`, and `archetypes.yaml` no longer declares `blocked:`; the field stays for
     the next recipe whose steps break upstream.)
 
+
+    COMMERCIAL MODE ADDS ONE REASON. With the commercial flag on, a recipe with a non-commercial
+    step cannot run in this process whatever the data, which is this function's question
+    exactly; `commercial.refusal` supplies the one sentence, after the recipe's own reasons.
     The reason is the recipe's own `blocked:` field, so the file that documents the breakage is
+    from manyruns import commercial
+
     the file that declares it. A `blocked:` with no reason is not a block: an unexplained
     hollow row is the interface defect §0 of the TUI spec names.
     """
     reason = recipe.get("blocked")
     if isinstance(reason, str):
         reason = [reason]
-    return [str(r) for r in (reason or []) if str(r).strip()]
+    return ([str(r) for r in (reason or []) if str(r).strip()]
+            + commercial.refusal(recipe))
 
 
 def split_question(question: str) -> tuple[str, str]:

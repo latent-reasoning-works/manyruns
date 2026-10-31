@@ -1828,6 +1828,13 @@ def _setup_project(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
     # name preprocess one way today and another way tomorrow, with the file that exists to say
     # which asserting the one that did not happen.
     recipe = apply_transform_shim(recipe, getattr(args, "transform", None))
+    # COMMERCIAL MODE refuses here: after the recipe is chosen, before `write_project` and
+    # before any step, so a refused run leaves nothing under `outputs/`.
+    from manyruns import commercial
+
+    for reason in commercial.refusal(recipe):
+        print(f"error: {recipe['name']}: {reason}", file=sys.stderr)
+        raise SystemExit(2)
     data_kwargs, shape = _dataset_contract(dataset_name, dataset,
                                            _parse_kwargs(getattr(args, "data_kwargs", None)))
     _require_source_shape(engine, recipe, dataset, None, shape)

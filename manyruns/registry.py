@@ -86,7 +86,13 @@ def apply_weights(version: Version, X: Any):
     """Inference through a trained-weights version: load the MIOFlow ODE net + flow ``X`` (t: 0→1).
 
     Stack-gated (torch + torchdiffeq + manylatents). This is what "pulling" a trained version
-    means at inference — the trained transport applied to new data. Mirrors the routing demo."""
+    means at inference — the trained transport applied to new data. Mirrors the routing demo.
+
+    Refused in commercial mode before any import: the network is a Yale-derived module."""
+    from manyruns import commercial
+
+    if commercial.enabled():
+        raise ValueError(commercial.REASON)
     import numpy as np
     import torch
     from torchdiffeq import odeint
