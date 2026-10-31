@@ -42,3 +42,18 @@ def test_the_train_stage_survives_the_removal():
     assert 'train' in modes.MODES
     assert plan['store'] == 'outputs/x'
     assert 'planned' in plan['status']
+
+
+THEME_COMMENT = "#: Sourced from the brand deck's `:root` colour tokens."
+
+
+def test_theme_colour_comment_names_no_file():
+    from pathlib import Path
+
+    import manyruns
+
+    theme = Path(manyruns.__file__).resolve().parent / 'tui' / 'theme.py'
+    assert theme.is_file(), 'theme module moved'
+    # Compare first so a failure never echoes the line under test.
+    matches = theme.read_text(encoding='utf-8').splitlines()[30] == THEME_COMMENT
+    assert matches, 'theme.py line 31 is not the spec comment'
