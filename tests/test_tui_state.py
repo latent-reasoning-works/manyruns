@@ -401,9 +401,10 @@ def test_a_refusal_caused_by_a_filter_does_not_claim_that_nothing_embeds():
     never_embeds = {"name": "backwards", "steps": [
         {"name": "mioflow", "group": "lightning", "params": {}}]}
 
-    assert vocab.unmet(filtered, "manifold") == vocab.unmet(never_embeds, "manifold")
-    assert narrate.blocked(never_embeds, "manifold") == [narrate.MISSING_FACT["embedding"]]
-    assert narrate.blocked(filtered, "manifold") == [narrate.CLEARED_FACT["embedding"]]
+    # On `time-course`, so `mioflow`'s `time` need is met and only the embedding is in question.
+    assert vocab.unmet(filtered, "time-course") == vocab.unmet(never_embeds, "time-course")
+    assert narrate.blocked(never_embeds, "time-course") == [narrate.MISSING_FACT["embedding"]]
+    assert narrate.blocked(filtered, "time-course") == [narrate.CLEARED_FACT["embedding"]]
     # and the reason names the CAUSE, so the fix it implies is the one that works
     assert "filter" in narrate.CLEARED_FACT["embedding"]
 
@@ -425,21 +426,23 @@ def test_vocab_facts_is_derived_from_the_tables_and_not_a_fifth_literal():
                              | set(vocab.TOOL_OUTPUT_FACTS))
 
 
-def test_a_fact_no_step_needs_can_never_reach_a_ledger_row():
-    """MEASURED, and it contradicts the mockup in §3.2 — say so rather than pretend.
+def test_a_time_need_reaches_a_ledger_row():
+    """§3.2 draws a hollow `trace a path — needs timepoints` row. It is reachable now.
 
-    §3.2 draws a hollow `trace a path — needs timepoints` row. `vocab.unmet` cannot produce it:
-    `time` is provided by `time-course` data and required by NOTHING, because `mioflow` treats a
-    real clock as a preference and falls back to a diffusion pseudotime (`STEP_NEEDS`'s own
-    comment). So `cflows` is legal on all six shapes and that row cannot appear until some step
-    declares a `time` need. This test fails the day one does — which is the day the mockup
-    becomes reachable."""
+    This test used to pin the opposite: `time` was required by nothing, because `mioflow`
+    treated a real clock as a preference and fell back to a diffusion pseudotime, so `cflows`
+    was legal on all six shapes. That fallback is gone (time is declared, never invented):
+    `mioflow` needs `time`, so `cflows` is a hollow row reading "needs timepoints" on every
+    shape but `time-course`."""
     needed = {f for v in vocab.STEP_NEEDS.values() for f in v}
-    assert "time" not in needed
+    assert "time" in needed
     for shape in vocab.SHAPES:
         rows = {r.recipe: r for r in state.ledger(_obs(shape))}
-        assert rows["cflows"].can_run, f"cflows unexpectedly blocked on {shape}"
-        assert not any("timepoints" in b for r in rows.values() for b in r.blocked)
+        if shape == "time-course":
+            assert rows["cflows"].can_run, "cflows blocked on time-course data"
+        else:
+            assert not rows["cflows"].can_run, f"cflows runs on {shape} with no time axis"
+            assert rows["cflows"].blocked == (narrate.MISSING_FACT["time"],)
 
 
 def test_blocked_says_exactly_what_unmet_refuses_and_agrees_on_legality():
@@ -534,9 +537,12 @@ def test_the_ledger_shows_the_refused_recipe_instead_of_hiding_it():
     # reason, so the catalog grew by one and the runnable count did not move.
     # 6 -> 5 with the `dev.` filter: `sandbox` was runnable here and no longer reaches the pane.
     # 5 -> 7: `archetypes` is no longer `blocked:`, and `branches` is legal on every shape.
-    assert sum(1 for r in rows.values() if r.can_run) == 7
+    # 7 -> 5: `mioflow` needs `time`, so `cflows` and `traced` are hollow on `single`, for a
+    # third fact.
+    assert sum(1 for r in rows.values() if r.can_run) == 5
     assert {name for name, r in rows.items() if not r.can_run} == {
-        "contrast", "qc", "markers", "preprocess"}
+        "contrast", "qc", "markers", "preprocess", "cflows", "traced"}
+    assert rows["cflows"].detail == narrate.MISSING_FACT["time"] == rows["traced"].detail
     # the three gene-axis rows say WHICH fact, and it is not the one `contrast` is missing
     assert rows["qc"].detail == narrate.MISSING_FACT["genes"] == rows["markers"].detail
     assert rows["preprocess"].detail == narrate.MISSING_FACT["genes"]
@@ -661,7 +667,10 @@ def test_the_capability_count_discriminates_once_a_row_reads_its_own_facts():
     # every roster row lost the same one. The POINT of this assertion is the constancy, not the
     # number — a reading that is the same on all 14 datasets discriminates nothing. 5 -> 7:
     # `archetypes` is no longer `blocked:`, and `branches` is legal on every shape.
-    assert set(by_shape.values()) == {7}, f"the shape-only reading is not constant: {by_shape}"
+    # Since `mioflow` needs `time` the shape-only reading discriminates on ONE fact, the time
+    # axis: 7 on a `time-course` row, where `cflows` and `traced` run, and 5 elsewhere.
+    expected = {r.name: 7 if r.obs.shape == "time-course" else 5 for r in rows}
+    assert by_shape == expected, f"the shape-only reading moved: {by_shape}"
 
     with_facts = {r.name: sum(1 for row in state.ledger(r.obs, r.obs.provides()) if row.can_run)
                   for r in rows}
@@ -981,7 +990,7 @@ def test_a_recipe_a_NARROWING_blocks_is_hollow_on_both_surfaces_too(tmp_path, mo
     (tmp_path / "tidytraj.yaml").write_text(
         "name: tidytraj\n"
         "question: Trace the path — where are these tidy cells heading?\n"
-        "suits: [manifold]\n"
+        "suits: [time-course]\n"
         "steps:\n"
         "  - {name: phate, group: latent, params: {n_components: 3}}\n"
         # `filter_cells` for the reason the sibling test above records: `filter_genes` needs
@@ -990,7 +999,8 @@ def test_a_recipe_a_NARROWING_blocks_is_hollow_on_both_surfaces_too(tmp_path, mo
         "  - {name: mioflow, group: lightning, params: {}}\n"
     )
     monkeypatch.setenv("MANYRUNS_RECIPE_DIR", str(tmp_path))
-    obs = _obs("manifold", modality="synthetic")
+    # `time-course`, so `mioflow`'s `time` need is met and the narrowing is the only reason.
+    obs = _obs("time-course", modality="synthetic")
 
     offered = {o["recipe"]: o for o in narrate.offer(obs)}
     row = {r.recipe: r for r in state.ledger(obs)}["tidytraj"]
