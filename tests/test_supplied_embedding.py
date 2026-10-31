@@ -42,8 +42,8 @@ def test_a_supplied_embedding_makes_a_bare_trajectory_recipe_legal():
     Without it this returns {'embedding'} — correct, since nothing anywhere has one. With it
     the recipe is legal, and NOTHING about the step list changed. That is the distinction:
     the fact is about the data on hand, not about which step manufactured it."""
-    assert vocab.unmet(MIOFLOW_ALONE, "manifold") == frozenset({"embedding"})
-    assert vocab.unmet(MIOFLOW_ALONE, "manifold", provided={"embedding"}) == frozenset()
+    assert vocab.unmet(MIOFLOW_ALONE, "time-course") == frozenset({"embedding"})
+    assert vocab.unmet(MIOFLOW_ALONE, "time-course", provided={"embedding"}) == frozenset()
 
 
 def test_supplying_a_fact_never_licenses_a_different_missing_one():
@@ -61,7 +61,7 @@ def test_the_uncomposable_recipe_is_still_refused_with_an_embedding_nowhere():
     embedding has one NOWHERE — not from the data, not from a preceding step — so the
     trajectory step would read the raw ambient matrix as a coordinate system. Measured before
     the engine refused: every step ok, run ok, `pseudotime_range = [0.0, 1.0]`."""
-    assert vocab.unmet(BACKWARDS, "manifold") == frozenset({"embedding"})
+    assert vocab.unmet(BACKWARDS, "time-course") == frozenset({"embedding"})
 
 
 # ── the engine ───────────────────────────────────────────────────────────────
@@ -168,5 +168,5 @@ def test_an_unmet_need_is_never_reported_as_merely_unusual():
     """`unmet` and `noncanonical` answer different questions and must not both answer one.
     A missing embedding is illegal, not unconventional — reporting it in two vocabularies is
     how the two answers drift into disagreement."""
-    assert vocab.unmet(MIOFLOW_ALONE, "manifold") == frozenset({"embedding"})
-    assert vocab.noncanonical(MIOFLOW_ALONE, "manifold") == []
+    assert vocab.unmet(MIOFLOW_ALONE, "time-course") == frozenset({"embedding"})
+    assert vocab.noncanonical(MIOFLOW_ALONE, "time-course") == []
