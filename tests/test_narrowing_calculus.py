@@ -180,7 +180,7 @@ def test_a_column_narrowing_clears_the_embedding_for_the_same_reason_a_row_one_d
     It also errs in the direction `STEP_PRODUCES` says this kind of table is allowed to err in
     ("it prunes a step that would have run, it never admits one that cannot"), and the pruning
     is overridable: see the `provided` test below."""
-    assert vocab.unmet(_recipe(PHATE, FILTER_GENES, MIOFLOW), "manifold",
+    assert vocab.unmet(_recipe(PHATE, FILTER_GENES, MIOFLOW), "time-course",
                        handle=H5AD) == frozenset({"embedding"})
 
 
@@ -191,7 +191,7 @@ def test_a_caller_who_says_they_hold_the_embedding_keeps_it_across_a_narrowing()
     same hatch `STEP_PRODUCES`' commentary names for `clusters`."""
     recipe = _recipe(PHATE, FILTER_GENES, MIOFLOW)
 
-    assert vocab.unmet(recipe, "manifold", provided={"embedding"},
+    assert vocab.unmet(recipe, "time-course", provided={"embedding"},
                        handle=H5AD) == frozenset()
 
 
@@ -206,8 +206,8 @@ def test_detect_doublets_narrows_only_when_the_recipe_asks_it_to():
 
     assert vocab.step_narrows(flags) is False
     assert vocab.step_narrows(removes) is True
-    assert vocab.unmet(_recipe(PHATE, flags, MIOFLOW), "manifold") == frozenset()
-    assert vocab.unmet(_recipe(PHATE, removes, MIOFLOW), "manifold") == frozenset({"embedding"})
+    assert vocab.unmet(_recipe(PHATE, flags, MIOFLOW), "time-course") == frozenset()
+    assert vocab.unmet(_recipe(PHATE, removes, MIOFLOW), "time-course") == frozenset({"embedding"})
 
 
 # ── 3. the rule is derived, not restated ─────────────────────────────────────
@@ -254,11 +254,18 @@ def test_no_step_produced_fact_is_also_a_frame_fact():
     """The disjointness the rule rests on, asserted rather than assumed. If a fact ever appears
     in both a shape table and a producer table, `have &= keep` silently stops clearing it and
     the calculus goes back to being monotone for that one word — the exact silent drift this
-    module opens by describing."""
+    module opens by describing.
+
+    ONE OVERLAP, and it is deliberate: `discretize_time` produces `time`, which a `time-course`
+    dataset also carries. A time label is per cell, so the frame rule (survive a narrowing) is
+    the one that holds, and `step_facts` leaves frame facts out — so the set a narrowing can
+    clear is still disjoint from the frame."""
     produced = {f for facts in vocab.GROUP_PROVIDES.values() for f in facts}
     produced |= {f for facts in vocab.STEP_PRODUCES.values() for f in facts}
 
-    assert produced & vocab.frame_facts() == set()
+    assert produced & vocab.frame_facts() == {"time"}
+    assert vocab.STEP_PRODUCES["discretize_time"] == ("time",)
+    assert vocab.step_facts() & vocab.frame_facts() == set()
 
 
 def test_every_prep_step_that_exists_is_classified_by_what_it_returns():
@@ -344,10 +351,10 @@ def test_a_fact_nothing_ever_produced_is_missing_but_was_never_TAKEN_away():
     """The half that keeps the distinction worth drawing. A filter in a recipe that never
     embeds at all removed nothing from the facts on hand, so the honest reason is still that
     nothing here lays the cells out."""
-    assert vocab.unmet(_recipe(MIOFLOW, PHATE), "manifold") == frozenset({"embedding"})
-    assert vocab.invalidated(_recipe(MIOFLOW, PHATE), "manifold") == frozenset()
-    assert vocab.invalidated(_recipe(FILTER, MIOFLOW), "manifold") == frozenset()
-    assert vocab.invalidated(_recipe(PHATE, TRANSFORM, MIOFLOW), "manifold") == frozenset()
+    assert vocab.unmet(_recipe(MIOFLOW, PHATE), "time-course") == frozenset({"embedding"})
+    assert vocab.invalidated(_recipe(MIOFLOW, PHATE), "time-course") == frozenset()
+    assert vocab.invalidated(_recipe(FILTER, MIOFLOW), "time-course") == frozenset()
+    assert vocab.invalidated(_recipe(PHATE, TRANSFORM, MIOFLOW), "time-course") == frozenset()
 
 
 def test_what_a_narrowing_took_away_is_always_something_unmet_refuses():
@@ -395,7 +402,12 @@ def test_every_bundled_recipe_is_still_legal_on_the_data_its_declared_shape_desc
     needs_genes = frozenset({"genes"}) & vocab.recipe_needs(recipe)
 
     for suit in recipe.get("suits") or ["unknown"]:
-        assert vocab.unmet(recipe, suit, handle=H5AD) == frozenset(), f"{name} on {suit}"
+        # `time` is the other: `mioflow` needs it, so a suit-less recipe with a `mioflow` step
+        # (`sandbox`, read on `unknown`) is refused for it — declared, never invented.
+        needs_time = (frozenset({"time"}) & vocab.recipe_needs(recipe)
+                      - vocab.dataset_provides(suit))
+        assert vocab.unmet(recipe, suit, handle=H5AD) == needs_time, f"{name} on {suit}"
         assert vocab.noncanonical(recipe, suit, handle=H5AD) == [], f"{name} on {suit}"
-        assert vocab.unmet(recipe, suit) == needs_genes, f"{name} on {suit}, no gene axis"
+        assert vocab.unmet(recipe, suit) == needs_genes | needs_time, (
+            f"{name} on {suit}, no gene axis")
         assert vocab.invalidated(recipe, suit) == frozenset(), f"{name} on {suit}"
