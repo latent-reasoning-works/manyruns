@@ -6,13 +6,7 @@ During the open beta, the CLI and record schema can still change.
 
 ## [Unreleased]
 
-- Relicensed from MIT to Apache-2.0. Releases up to and including 0.1.0 stay under MIT; NOTICE keeps the MIT notice and lists the MIOFlow files it does not cover.
-
-
-### Removed
-
-- The second console-script name. The wheel installs one command, `manyruns`; run
-  `manyruns` wherever you ran the other name.
+## [0.1.1] - 2026-10-31
 
 ### Added
 
@@ -116,9 +110,13 @@ During the open beta, the CLI and record schema can still change.
 - `score.unroutable_rungs(offer)` returns the rungs that no offered and runnable recipe claims.
 - `manyruns check` prints a ladder line: the rungs that the offered recipes leave unroutable.
   A gap fails the check on the bundled catalogue and warns in a `$MANYRUNS_RECIPE_DIR`.
+- `manyruns run --ask TEXT` routes a plain-words request to one legal recipe by rules, never
+  a model. A request the data cannot support is declined with nothing run: a trajectory
+  request on `clusters` data, which has no time axis, is refused and reframed.
 
 ### Changed
 
+- Relicensed from MIT to Apache-2.0. Releases up to and including 0.1.0 stay under MIT; NOTICE keeps the MIT notice and lists the MIOFlow files it does not cover.
 - `non_commercial_steps` in the run row now also names an in-process MIOFlow step: every step
   whose name is in `commercial.NON_COMMERCIAL_STEPS`, whatever its outcome and engine. Runs of
   `cflows`, `traced` and `sandbox` record `["mioflow"]` (`sandbox` also `granger`).
@@ -133,13 +131,15 @@ During the open beta, the CLI and record schema can still change.
   reason: with `MANYRUNS_COMMERCIAL=1`, time-course data gets `pseudotime`.
 - The `archetypes` recipe is runnable: its `blocked:` field is removed, and its `aa` step
   declares `n_components: 3`.
-- The `manylatents` lower bound is `>=0.1.9`, the first release in which `aa` fits.
+- The `manylatents` lower bound is `manylatents>=0.1.9`, the first release in which `aa` fits.
 - `score.unroutable_rungs` takes `config_dir` by keyword only.
 - `manyruns actions`, with its gate on (the default), refuses a recipe whose claim the probe
   run does not support. With no probe run, every claim that has a rule is refused.
 
 ### Removed
 
+- The second console-script name. The wheel installs one command, `manyruns`; run
+  `manyruns` wherever you ran the other name.
 - The invented time axis: with no time labels, the in-process MIOFlow route no longer computes
   a diffusion pseudotime binned into five time points. It refuses the run and names
   `discretize_time`. The params `n_neighbors` and `n_timepoints` of a `mioflow` step are gone and
@@ -159,11 +159,6 @@ During the open beta, the CLI and record schema can still change.
 ## [0.1.0] - 2026-09-17
 
 First public release: an open beta for macOS and Linux, Python 3.11–3.12.
-
-### Removed
-
-- The second console-script name. The wheel installs one command, `manyruns`; run
-  `manyruns` wherever you ran the other name.
 
 ### Added
 
@@ -188,5 +183,6 @@ First public release: an open beta for macOS and Linux, Python 3.11–3.12.
 - An explicit seed of 0 is preserved.
 - Displayed figures survive tuning renames and file changes without crashing the TUI.
 
-[Unreleased]: https://github.com/latent-reasoning-works/manyruns/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/latent-reasoning-works/manyruns/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/latent-reasoning-works/manyruns/releases/tag/v0.1.1
 [0.1.0]: https://github.com/latent-reasoning-works/manyruns/releases/tag/v0.1.0
