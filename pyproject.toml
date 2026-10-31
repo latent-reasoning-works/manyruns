@@ -3,7 +3,7 @@
 # manykinds — and names this one by its artifact, the run record. There is deliberately NO
 # `geomancer` console-script alias; see [project.scripts] for why.
 name = "manyruns"
-version = "0.1.0"
+version = "0.1.1"
 # This package holds no dependency, import, config or engine value naming a learner
 # (CLAUDE.md, "No track to a learner"). It delegates compute to
 # manylatents; the learner observes this package's artifacts and drives its CLI from outside.

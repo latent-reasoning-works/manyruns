@@ -25,4 +25,4 @@ live in ``manylatents``. The harness only *delegates* to them — it contributes
 workflow, not the math — and it does not train at all.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
