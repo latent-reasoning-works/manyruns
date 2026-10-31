@@ -11,7 +11,7 @@ id:   sc.branch.reeb
 
 source:
   kind:  preprint
-  cite:  "Steindl, Rocha, Di Bassinga, Warren, Scicluna, Valdez Córdova, Gupta, Torices, Neumann, Mann, Gunawan, Bhaskar, Lock, Chaffer, Wolf & Krishnaswamy, 'scShapeBench: Discovering geometry from high dimensional scRNAseq data', arXiv:2605.12662 (2026)"
+  cite:  "Steindl et al., 'scShapeBench: Discovering geometry from high dimensional scRNAseq data', arXiv:2605.12662 (2026)"
   url:   https://arxiv.org/abs/2605.12662
   verified: 2026-10-30
   note:  "The benchmark whose `multi-branching` structure class this recipe claims. A branch-point count is necessary evidence for branching, not a significance test: a noisy Reeb graph can show a spurious branch point."
