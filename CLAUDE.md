@@ -13,9 +13,11 @@ step dictionary, and `vocab.unmet` checks preconditions.
 
 manyruns names no learner: no dependency, import, engine value, config, or CLI path.
 A learner, or any agent, observes the artifacts (`index.jsonl`, g-vectors, decision
-rows) and drives the CLI from outside, like any user. There is no privileged caller.
-The environment defines what is legal and records what happened; the caller decides
-what to do. See [the environment contract](docs/environment-contract.md), §3.5.
+rows) and drives manyruns from outside, through the CLI or as a library, like any user.
+There is no privileged caller. The environment defines what is legal and records what
+happened; the caller decides what to do. See
+[the environment contract](docs/environment-contract.md), §3.5, and
+[the harness page](docs/harness.md).
 
 Use roles in prose. `tests/learners.py` holds only SHA-256 digests of forbidden
 strings; keep that guard. The public-safety gate checks every tracked file,

@@ -367,9 +367,9 @@ manyruns (this repo)   the harness — distribution + workflow + the config laye
 manylatents · manyagents · shop   DR algorithms, metrics, orchestration, cluster infra
 
 
-the learner             a separate process — and it is NOT in the chain above
+the learner             outside this package — and it is NOT in the chain above
     ╎ observes ▶  manyruns's artifacts (index.jsonl, g-vectors, decision rows)
-    ╎ drives   ▶  manyruns's CLI, as any other user would
+    ╎ drives   ▶  manyruns's CLI or its Python API, as any other user would
 ```
 
 **manyruns names no learner** — no dependency, no import, no `--engine` value, no

@@ -169,9 +169,9 @@ that this boundary is right: it is the one the codebase keeps choosing on its ow
 protocol it implements, not an entry point, not a `Learner` interface, not an optional extra.
 manyruns does not know the learner exists.
 
-The learner **observes manyruns's full state and drives it through the CLI.** It runs the binary,
-reads the artifacts, and issues the next command. In RL terms manyruns is the environment and
-the learner is the agent — and an environment that imports its agent is not an environment.
+The learner **observes manyruns's full state and drives it through the CLI or as a library
+(`docs/harness.md`).** It runs the binary, reads the artifacts, and issues the next command. In
+RL terms manyruns is the environment and the learner is the agent — and an environment that imports its agent is not an environment.
 
 **This supersedes the "injectable harness" shape and this document's own §5.** An injection seam is
 still a track: it puts a learner-shaped hole in the open repository, versions an interface across
