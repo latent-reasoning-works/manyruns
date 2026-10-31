@@ -38,7 +38,11 @@ def test_coverage_warns_when_a_recipe_has_no_legal_dataset(tmp_path, capsys):
     # to run, and it cannot — `filter_genes` and `filter_mito` read gene names.
     assert "WARN  qc" in out and "WARN  markers" in out and "WARN  preprocess" in out
     assert "comes from the data itself and not from any shape" in out
-    assert "4 unexercisable" in out   # was 1 — contrast, plus the three that read gene names
+    # `cflows`, `traced` and `sandbox` joined when `mioflow` declared `time`: a swissroll-only
+    # directory has no time axis, and no recipe step of theirs declares one.
+    assert "WARN  cflows" in out and "WARN  traced" in out and "WARN  sandbox" in out
+    assert "needs a shape providing ['time']" in out
+    assert "7 unexercisable" in out   # contrast, the three that read genes, the three MIOFlow
     assert rc == 0, "an unexercisable recipe is a WARN, not a FAIL — exit stays 0"
 
 
@@ -49,7 +53,9 @@ def test_coverage_clears_when_a_case_control_dataset_exists(tmp_path, capsys):
     out = capsys.readouterr().out
 
     assert "ok    contrast" in out and "runs on case-control" in out
-    assert "unexercisable" not in out
+    assert "WARN  contrast" not in out
+    # what remains is exactly the three MIOFlow recipes, which need a time axis
+    assert "3 unexercisable" in out
 
 
 def test_an_invalid_file_is_a_FAIL_and_flips_the_exit_code(tmp_path, capsys):
