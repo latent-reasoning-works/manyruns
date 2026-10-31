@@ -198,6 +198,19 @@ class RosterTable(DataTable):
         # than replacing scrollbar bookkeeping.
         self.post_message(self.Resized())
 
+    def on_click(self, event: events.Click) -> None:
+        """A click on a group heading leaves the cursor where it was. `action_move` steps over
+        headings and `refresh_rows` never opens on one; without this the mouse alone could park
+        the cursor on a heading, with no `▸` drawn and an enter that does nothing.
+
+        Subclass handlers run before `DataTable._on_click`, so `prevent_default` stops the move.
+        Header clicks (row -1) and clicks past the last row are left to the table."""
+        row = event.style.meta.get("row")
+        selectable = getattr(self.screen, "selectable", None)
+        if (isinstance(row, int) and 0 <= row < self.row_count
+                and selectable is not None and not selectable(row)):
+            event.prevent_default()
+
 
 class RosterScreen(Screen):
     """Choose your data. Rows are selectable, typing filters, enter opens the ledger."""
