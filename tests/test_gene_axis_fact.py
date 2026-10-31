@@ -131,6 +131,9 @@ def test_the_sweep_prices_the_gene_demand_and_every_pruned_cell_is_named():
     else we ship. The recipe adds no cell to any other row — it is the third recipe refused for
     exactly one fact, not a third KIND of refusal, which is what the breakdown below shows and
     a total would have hidden.
+
+    92 pruned since `mioflow` needs `time` (declared, never invented): `cflows`, `traced` and
+    `sandbox` are pruned for `time` on the 13 datasets that are not `synthetic_timecourse`.
     """
     recipes = [catalog.load_recipe(n) for n in catalog.discover_recipes()]
     datasets = [catalog.load_dataset(n) for n in catalog.discover_datasets()]
@@ -148,8 +151,11 @@ def test_the_sweep_prices_the_gene_demand_and_every_pruned_cell_is_named():
         ("markers", ("genes",)): 13,        # every dataset but pbmc3k: 13 synthetic clouds
         ("qc", ("genes",)): 13,             # same 13 — pbmc3k is the only `provides: [genes]`
         ("preprocess", ("genes",)): 13,     # same 13, and the same one fact
+        ("cflows", ("time",)): 13,          # every dataset but synthetic_timecourse
+        ("traced", ("time",)): 13,          # same 13 — `mioflow` needs a time axis
+        ("sandbox", ("time",)): 13,         # same 13, and the same one fact
     }
-    assert sum(pruned.values()) == 53
+    assert sum(pruned.values()) == 92
 
 
 @pytest.mark.parametrize("name", catalog.discover_recipes())
@@ -173,8 +179,13 @@ def test_every_bundled_recipe_is_legal_on_its_declared_shape_given_data_that_car
     """
     recipe = catalog.load_recipe(name)
     for suit in (recipe.get("suits") or ["unknown"]):
-        assert vocab.unmet(recipe, suit, handle=H5AD) == frozenset(), f"{name} on {suit}"
-        assert vocab.unmet(recipe, suit) <= frozenset({"genes"}), f"{name} on {suit}"
+        # `time` is a shape fact, and `sandbox` (suit-less, read on `unknown`) needs it for its
+        # `mioflow` step; every recipe that declares a suit is legal on it.
+        needs_time = (frozenset({"time"}) & vocab.recipe_needs(recipe)
+                      - vocab.dataset_provides(suit))
+        assert vocab.unmet(recipe, suit, handle=H5AD) == needs_time, f"{name} on {suit}"
+        assert vocab.unmet(recipe, suit) <= frozenset({"genes"}) | needs_time, (
+            f"{name} on {suit}")
 
 
 def test_the_observation_reports_a_gene_axis_for_an_h5ad_and_not_for_a_folder():
