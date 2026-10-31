@@ -710,9 +710,13 @@ def test_the_bundled_recipes_keep_their_legality():
             # `filter_mito` have declared the need since Task 6, so the recipe was born refused
             # everywhere the axis is absent, which is the whole reason it is a recipe and not a
             # step: a step would have carried that refusal into every recipe that named it.
+            # `cflows`, `traced` and `sandbox` need `time` for their `mioflow` step, which only
+            # `time-course` carries — declared, never invented.
+            no_time = (name in ("cflows", "traced", "sandbox") and shape != "time-course")
             expected = frozenset({"conditions"}) if no_conditions else (
                 frozenset({"genes"}) if name in ("markers", "qc", "preprocess")
-                else frozenset())
+                else frozenset({"time"}) if no_time else frozenset())
             assert unmet(recipe, shape) == expected, (name, shape)
-            with_axis = frozenset({"conditions"}) if no_conditions else frozenset()
+            with_axis = (frozenset({"conditions"}) if no_conditions
+                         else frozenset({"time"}) if no_time else frozenset())
             assert unmet(recipe, shape, handle=carries_genes) == with_axis, (name, shape)

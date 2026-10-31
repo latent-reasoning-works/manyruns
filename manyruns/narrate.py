@@ -420,12 +420,9 @@ def offer(obs: Observation, available: "list | None" = None, *,
 #: have worked too, and the deciding argument is the rule the TUI is built under: no screen may
 #: compute a fact `narrate` does not expose. The screens need this sentence, so it is here.
 #:
-#: `time` is in the table and is currently UNREACHABLE through `unmet` — measured across all 8
-#: bundled recipes × all 6 shapes, `unmet` returns only `conditions` (and only for `contrast`),
-#: because no step declares a `time` need. It is phrased anyway because it is one of `vocab`'s
-#: four fact words and the exhaustiveness check covers the vocabulary, not today's reachable
-#: subset. Stated rather than discovered later: a ledger row reading "needs timepoints" cannot
-#: appear until some step declares `time` in `vocab.STEP_NEEDS`.
+#: `time` is reachable through `unmet`: `mioflow` declares a `time` need, so `cflows`, `traced`
+#: and `sandbox` read "needs timepoints" on data with no time axis. A recipe can supply it with
+#: a `discretize_time` step (`examples/recipes/cflows_inferred.yaml`).
 MISSING_FACT: dict[str, str] = {
     "conditions": "needs a healthy/disease column",
     "time":       "needs timepoints",
@@ -455,8 +452,8 @@ MISSING_FACT: dict[str, str] = {
     # whose manifest produces the fact, so the sentence points at `manyruns tools list`.
     "pseudotime": "needs an ordering first — add a step that computes a pseudotime "
                   "(dpt, or a model step from `manyruns tools list`)",
-    "trajectories": "needs trajectories first — add a model step that returns them "
-                    "(`manyruns tools list`)",
+    "trajectories": "needs trajectories first — add a step that returns them (mioflow, or "
+                    "a model step from `manyruns tools list`)",
     "class_probabilities": "needs class probabilities first — add a model step that returns "
                            "them (`manyruns tools list`)",
 }
@@ -556,11 +553,18 @@ def unavailable(recipe: dict) -> list[str]:
     The reason is the recipe's own `blocked:` field, so the file that documents the breakage is
     the file that declares it. A `blocked:` with no reason is not a block: an unexplained
     hollow row is the interface defect §0 of the TUI spec names.
+
+    COMMERCIAL MODE ADDS ONE REASON. With the commercial flag on, a recipe with a non-commercial
+    step cannot run in this process whatever the data, which is this function's question
+    exactly; `commercial.refusal` supplies the one sentence, after the recipe's own reasons.
     """
+    from manyruns import commercial
+
     reason = recipe.get("blocked")
     if isinstance(reason, str):
         reason = [reason]
-    return [str(r) for r in (reason or []) if str(r).strip()]
+    return ([str(r) for r in (reason or []) if str(r).strip()]
+            + commercial.refusal(recipe))
 
 
 def split_question(question: str) -> tuple[str, str]:

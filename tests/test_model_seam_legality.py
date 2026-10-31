@@ -51,8 +51,11 @@ def test_step_needs_falls_back_to_the_name_table():
 def test_manifest_replaces_name_table(monkeypatch):
     assert EXAMPLE.is_dir(), "the example tool folder moved"
     monkeypatch.setenv("MANYRUNS_TOOL_DIR", str(EXAMPLE))
+    # `growth_rate` reads the fitted `model`, which the tool keeps in its own interpreter: the
+    # manifest produces only `trajectories`, while the name table's `mioflow` also produces a
+    # `model`. (`sample_trajectories` reads `trajectories`, which both supply.)
     steps = [{"name": "mioflow", "group": "lightning", "tool": "mioflow"},
-             {"name": "sample_trajectories", "group": "probe"}]
+             {"name": "growth_rate", "group": "probe"}]
     given = {"embedding", "time"}
     assert vocab.unmet({"steps": steps}, "manifold", provided=given) == frozenset({"model"})
     untooled = [{k: v for k, v in s.items() if k != "tool"} for s in steps]

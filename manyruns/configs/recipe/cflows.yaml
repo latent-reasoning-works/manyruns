@@ -99,3 +99,13 @@ steps:
 
 question: "Trace the path — where are these cells heading, and what drives the change?"
 suits:    [time-course]
+
+# TIME IS DECLARED, NEVER INVENTED. `mioflow` needs `time` (`vocab.STEP_NEEDS`), so this recipe
+# is blocked at plan time on data with no time axis. It used to run there on a diffusion
+# pseudotime binned into five time points that no step declared. For MIOFlow on unordered data,
+# use `examples/recipes/cflows_inferred.yaml`, which declares its inferred axis with `dpt` and
+# `discretize_time`.
+#
+# NON-COMMERCIAL. `mioflow` runs the manylatents port of MIOFlow, under the Yale non-commercial
+# licence. With the commercial flag on (`manyruns/commercial.py`) this recipe is unavailable,
+# and the run row of any run of it lists `mioflow` in `non_commercial_steps`.

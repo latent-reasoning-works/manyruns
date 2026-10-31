@@ -23,6 +23,7 @@ from typing import Any
 
 from manyruns import __version__
 from manyruns import artifacts as _artifacts
+from manyruns import commercial as _commercial
 from manyruns.measurements import annotate
 from manyruns.pipeline import bounds as _bounds
 from manyruns.pipeline import io as _io
@@ -961,6 +962,14 @@ def apply_step(step: dict, state: dict, g: dict, *, dispatch: dict, ctx: dict,
         _settle(rec)
         _report(on_step, rec, lineage)
         return rec
+    # COMMERCIAL MODE, before any executor and so before any import. A step a session adds to a
+    # run never passed `narrate.unavailable`, so the refusal has to be here too.
+    if _commercial.enabled() and _commercial.is_non_commercial(step):
+        rec["outcome"], rec["unsupported"] = "skipped", True
+        rec["detail"] = _commercial.REASON
+        _settle(rec)
+        _report(on_step, rec, lineage)
+        return rec
     # THE `tool:` SEAM, ahead of the group lookup and only ahead of it. A step naming a tool
     # keeps its honest `group` — the calculus reads that, and nothing here changes what `unmet`
     # decides — but its IMPLEMENTATION is in another interpreter, so the group's engine executor
@@ -1014,8 +1023,16 @@ def apply_step(step: dict, state: dict, g: dict, *, dispatch: dict, ctx: dict,
         # The step's position, for an executor that addresses a file by it (`_ml_latent`'s
         # `RunStepLogger`). Through `ctx`, so no executor signature changes.
         ctx["step_index"] = index
+        before_traj = state.get("trajectories")
         try:
             override = fn(name, rec["params"], state, g, ctx)
+            # A STEP THAT SET TRAJECTORIES draws them, over the embedding the step received
+            # (the frame the paths start in), as `<step>.png`: the in-process MIOFlow route and
+            # a tool step that returns `trajectories` get the same figure.
+            traj = state.get("trajectories")
+            if traj is not None and traj is not before_traj:
+                base = before_obj if before_obj is not None else state.get("X")
+                _display_scatter(base, state, ctx, f"{name}.png", name, trajectories=traj)
         finally:
             # Derived labels no longer name the source column. Keep provenance in
             # state so tune rollback restores it together with the labels themselves.
@@ -1274,6 +1291,22 @@ def as_parent(ref: Any) -> "dict | None":
     return {"run_id": str(run_id), "index": int(index)}
 
 
+def _non_commercial_steps(recipe: dict, steps: list, g: dict) -> list:
+    """The sorted names of the run's non-commercial steps (see `_finalize`)."""
+    declared = {}
+    for step in (recipe or {}).get("steps") or []:
+        if isinstance(step, dict):
+            declared.setdefault(step.get("name"), []).append(step)
+    names = set()
+    for rec in steps:
+        name = rec.get("name")
+        if (_commercial.is_non_commercial(rec)
+                or any(_commercial.is_non_commercial(s) for s in declared.get(name, ()))
+                or g.get(f"{name}.tool_commercial_use") is False):
+            names.add(name)
+    return sorted(names)
+
+
 def _finalize(state: dict, g: dict, *, engine: str, recipe: dict, steps: list,
               plots: list, seed: Any = None, dataset: Any = None,
               dataset_name: str | None = None, data_kwargs: dict | None = None,
@@ -1347,11 +1380,13 @@ def _finalize(state: dict, g: dict, *, engine: str, recipe: dict, steps: list,
         # recipe. A result reached off the beaten path is exactly the one whose provenance a
         # reader needs, so it rides in the record rather than being printed once and lost.
         "caveats": list(caveats or []),
-        # The steps whose tool manifest says `commercial_use: false`, so a reader can select
-        # research-only runs with one key instead of scanning every `*.tool_commercial_use`.
-        "non_commercial_steps": sorted(
-            {s["name"] for s in steps if s.get("outcome") not in DID_NOT_RUN
-             and g.get(f"{s['name']}.tool_commercial_use") is False}),
+        # Every non-commercial step of the run, so a reader can select research-only runs with
+        # one key instead of scanning every `*.tool_commercial_use`: a step whose name or tool
+        # manifest `commercial.is_non_commercial` names, or whose tool fields say
+        # `commercial_use: false`. Whatever its outcome and engine — a mock or refused step is
+        # counted too, which is the safe direction: a reader that refuses non-commercial rows
+        # refuses one row too many, never one too few.
+        "non_commercial_steps": _non_commercial_steps(recipe, steps, g),
         "recipe": recipe.get("name"),
         "num_steps": len(trace),
         "trace": trace,
@@ -1505,13 +1540,25 @@ def _run_probe_step(name, params, state, g, ctx):
     fn = _probes._PROBE_STEPS.get(name)
     if fn is None:
         raise _StepUnsupported(f"no probe named {name!r}")
-    model = state.get("model")
-    if model is None:
+    if _stubs.is_stub(fn):
+        # A declared-but-unimplemented probe refuses as UNSUPPORTED before any slot is read:
+        # an empty slot is a benign decline, and checking it first would let a probe that does
+        # not exist read as an ordinary skip on an engine whose lightning step trains nothing.
+        fn(None, params or {})
+    # A probe in `PROBE_READS` reads its declared slot (`sample_trajectories` reads
+    # `state["trajectories"]`, which the in-process route and a tool step both fill); every
+    # other probe reads `state["model"]`.
+    slot = _probes.PROBE_READS.get(name)
+    value = state.get(slot) if slot else state.get("model")
+    if value is None:
         raise _StepSkipped(
+            f"no {slot} in this state — {name} reads what a trajectory step returned, and no "
+            "step of this run wrote them (the in-process stand-in and the mock write none)"
+            if slot else
             "no trained model in this state — a probe asks a question of a fitted object, and "
             "the lightning step on this engine trains nothing")
     try:
-        answer = fn(model, params or {})
+        answer = fn(value, params or {})
     except _probes._NoAnswer as e:
         raise _StepSkipped(str(e)) from None
     for key, value in (answer or {}).items():
@@ -1851,8 +1898,8 @@ def _ml_lightning(name, params, state, g, ctx):
     # AN ALLOWLIST, and the difference is not style. This read `None if … == "condition"` — a
     # denylist of one — so any kind added upstream fell through and became a time axis. `group`
     # (a cell type, a cluster, a branch) is as much a fabricated trajectory as treated -> healthy
-    # is, and it would have arrived silently. Only `time` is a time axis; everything else falls
-    # back to pseudotime, exactly as unlabelled manifold data does.
+    # is, and it would have arrived silently. Only `time` is a time axis; with anything else the
+    # route gets no labels and refuses (`mioflow.NO_TIME`) — it never invents a time axis.
     time_labels = state.get("labels") if state.get("label_kind") == "time" else None
     # `_run_mioflow_experiment`'s returned "embeddings" is MIOFlow's own `encode()` output —
     # every row integrated from t_min to t_max regardless of that row's own time bin, NOT the
@@ -1871,9 +1918,13 @@ def _ml_lightning(name, params, state, g, ctx):
     if time_labels is not None:
         g["mioflow.n_timepoints"] = len(set(map(str, time_labels)))
     # This used to read `state["emb"] = emb` and nothing else, so the trained flow — the simulatable
-    # object — was dropped one frame later while its coordinates were kept. It is kept now, and
-    # `probe` steps are what it is kept for.
+    # object — was dropped one frame later while its coordinates were kept. It is kept now: the
+    # declared stub probes (`growth_rate`, `decode_to_gene_space`) and `granger` read it.
     state["model"] = model
+    # THE READOUT SLOT. `sample_trajectories` and the figure read `state["trajectories"]`, which
+    # a tool step that returns `trajectories` fills the same way, so one readout serves both
+    # routes. `apply_step` draws `<step>.png` with them over the embedding the step received.
+    state["trajectories"] = _mioflow.trajectories_of(model)
     _check_metadata_alignment(emb, state, ctx)
     state["emb"] = emb
     for k, v in scores.items():
@@ -1881,11 +1932,10 @@ def _ml_lightning(name, params, state, g, ctx):
         if not k.endswith("_note"):
             annotate(g, f"{name}.{k}", kind="measurement", stage=f"{name} engine evaluation")
     _collect_extras(name, extras, state, g)
-    # `base_emb`, not `emb` — see above. The paths come off the RETAINED MODEL rather than a
-    # return value of their own: `state["model"]` is the object the flow left behind, and
-    # `trajectories_of` is the defensive read of the one property a figure needs from it.
-    _display_scatter(base_emb, state, ctx, f"{name}.png", name,
-                     trajectories=_mioflow.trajectories_of(model))
+    # `base_emb`, not `emb` — see above. With trajectories, `apply_step` draws `<step>.png` over
+    # that same frame; without them (an empty datamodule), the plain scatter is drawn here.
+    if state["trajectories"] is None:
+        _display_scatter(base_emb, state, ctx, f"{name}.png", name)
     return None
 
 
@@ -2187,15 +2237,17 @@ def _mock_vec(state: dict, ctx: dict) -> list:
 # mock to invent, and the alternative is `mock` declining every recipe the migration gives a
 # prep block to, which is every bundled recipe but `qc`.
 _DISPATCH: dict[str, dict] = {
-    # `probe` is on manylatents ALONE, and that is the honest asymmetry: it is the only row
-    # whose `lightning` executor trains anything. The in-process stand-in computes a diffusion
-    # pseudotime and the mock invents numbers, so offering a probe there would put a step in the
-    # menu that can only ever decline — which is precisely what `dispatchable` exists to prevent.
+    # `probe` is on every row that runs tool steps. `sample_trajectories` reads
+    # `state["trajectories"]`, which the in-process MIOFlow route fills on manylatents and a tool
+    # step that returns `trajectories` fills on manylatents and on the in-process loop alike.
+    # NOT on `mock`: the mock writes no trajectories and trains nothing, so a probe there could
+    # only ever decline — which is precisely what `dispatchable` exists to prevent.
     "manylatents": {"latent": _ml_latent, "lightning": _ml_lightning,
                     "analysis": _run_analysis_step, "prep": _run_prep_step,
                     "probe": _run_probe_step},
     INPROC: {"latent": _inproc_step, "lightning": _inproc_step,
-             "analysis": _run_analysis_step, "prep": _run_prep_step},
+             "analysis": _run_analysis_step, "prep": _run_prep_step,
+             "probe": _run_probe_step},
     "mock": {"latent": _mock_transform, "lightning": _mock_transform,
              "analysis": _mock_measure, "prep": _run_prep_step},
 }

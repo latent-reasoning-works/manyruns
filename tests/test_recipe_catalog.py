@@ -182,8 +182,12 @@ def test_the_recipe_runs(name, tmp_path):
     else:
         X, genes, counts = _point_cloud(), None, None
 
+    # A recipe whose `mioflow` step needs `time` runs with a real time axis: three time points
+    # over the three blobs. It never runs on an invented one.
+    time = ({"labels": np.repeat([0.0, 1.0, 2.0], len(X) // 3), "label_kind": "time"}
+            if "time" in vocab.unmet(recipe, "clusters") else {})
     res = runner.run_manylatents(recipe, tmp_path, array=X, counts=counts, genes=genes,
-                                 seed=0, fast_dev_run=True)
+                                 seed=0, fast_dev_run=True, **time)
 
     if name in UPSTREAM_BLOCKED:
         failed = [s for s in res["steps"] if s["outcome"] == "error"]

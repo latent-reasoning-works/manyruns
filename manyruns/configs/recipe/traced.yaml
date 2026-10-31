@@ -11,10 +11,14 @@
 # comparable against, and `claims: single-trajectory` is what `score.RUNG` grades it on. Adding a
 # step changes the first and would need an argument about the second.
 #
-# ENGINE: `manylatents` only. The probe declines with a reason on every other engine, and that is
-# correct rather than a gap — `runner._DISPATCH` gives `probe` to manylatents alone because it is
-# the only row whose `lightning` executor trains anything. The in-process loop computes a
-# diffusion pseudotime and the mock invents numbers; neither leaves a model to ask.
+# ENGINE: `manylatents` for a real answer. The probe reads `state["trajectories"]`, which the
+# in-process MIOFlow route fills from the trained model, and is skipped with a reason when that
+# slot is empty: the in-process stand-in computes a diffusion pseudotime and the mock invents
+# numbers, and neither writes trajectories.
+#
+# TIME IS DECLARED, NEVER INVENTED, and the recipe is NON-COMMERCIAL: the notes in `cflows.yaml`
+# apply here unchanged. Blocked at plan time on data with no time axis; unavailable with the
+# commercial flag on (`manyruns/commercial.py`).
 name: traced
 id: sc.traj.probed
 
@@ -34,7 +38,7 @@ claims: single-trajectory
 steps:
   - {name: phate,   group: latent,    params: {n_components: 3}, via: manylatents}
   - {name: mioflow, group: lightning, params: {}, via: manylatents}
-  # Reads `model`, writes to the g-vector, moves no selection and produces no fact.
+  # Reads `trajectories`, writes to the g-vector, moves no selection and produces no fact.
   # `vocab.STEP_NEEDS` declares its need, so a recipe that put it before the fit — or after a
   # filter that dropped the cells the flow was fitted over — is refused at plan time.
   - {name: sample_trajectories, group: probe, params: {}, via: manylatents}

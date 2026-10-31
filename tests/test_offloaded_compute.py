@@ -40,6 +40,8 @@ def retain_model(name, params, state, g, ctx):
         trajectories = np.arange(24.).reshape(3, 4, 2) * params['scale']
 
     state['model'] = Model()
+    # The in-process MIOFlow route fills the readout slot from the model; so does this fake.
+    state['trajectories'] = state['model'].trajectories
 
 
 def test_retained_model_survives_another_attempt_and_parent_rollback(tmp_path):

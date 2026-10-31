@@ -163,10 +163,12 @@ def _diffusion_pseudotime(Z, n_neighbors: int, info: "dict | None" = None):
 
 
 def _step_mioflow(state, g, params, out_dir, plots, target_dim) -> None:
-    """Trajectory step — diffusion pseudotime (a real MIOFlow stand-in for the in-process loop).
+    """Trajectory step — diffusion pseudotime (a MIOFlow stand-in for the in-process loop).
 
     The manylatents engine runs the *actual* MIOFlow (see _run_mioflow_experiment); this
-    stand-in keeps the in-process loop dependency-light (no torch)."""
+    stand-in keeps the in-process loop dependency-light (no torch). It reads no time labels and
+    writes no trajectories, so a `sample_trajectories` probe after it is skipped. Legality is
+    the same on every engine: `vocab.STEP_NEEDS["mioflow"]` needs `time` here too."""
     _require_embedding(state, "mioflow")
     Z = state["emb"]
     n_neighbors = int(params.get("n_neighbors") or min(15, max(2, Z.shape[0] - 1)))
@@ -679,10 +681,10 @@ def _step_discretize_time(state, g, params, out_dir, plots, target_dim) -> None:
     """Bin an upstream ordering (`state["pseudotime"]`, e.g. `dpt`'s output) into MIOFlow
     timepoints — MIOFlow trains on discrete timepoint GROUPS, not a continuous ordering.
 
-    Without this step, `mioflow` on `engine=manylatents` (`runner._ml_lightning`) never sees
-    `state["pseudotime"]` at all: it only reads `state["labels"]`, and when that is empty it
-    computes its OWN pseudotime from scratch and discards whatever ordering step the recipe
-    actually ran (`mioflow.py`'s no-real-time fallback). This step is what lets a recipe's own
+    `mioflow` on `engine=manylatents` (`runner._ml_lightning`) never reads
+    `state["pseudotime"]`: it reads `state["labels"]`, and refuses to run when that holds no
+    time axis (it never invents one). This step provides `time` (`vocab.STEP_PRODUCES`), and it
+    is what lets a recipe's own
     `dpt` — or any future ordering step — reach MIOFlow, by writing the binned result into the
     SAME `state["labels"]` / `state["label_kind"]` channel a real per-cell time axis uses
     (`runner.py`'s `label_kind == "time"` guard). The presence of `mioflow.n_timepoints`

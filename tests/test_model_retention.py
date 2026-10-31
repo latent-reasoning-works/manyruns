@@ -74,8 +74,8 @@ def test_model_is_a_fact_a_named_step_produces():
     the group; the in-process `lightning` executor (`steps._step_mioflow`) computes a diffusion
     pseudotime and trains nothing, so "a lightning step produces a model" is true of one engine
     and a lie about another — the exact test that keeps `lightning` out of `GROUP_PROVIDES`
-    today."""
-    assert vocab.STEP_PRODUCES["mioflow"] == ("model",)
+    today. `trajectories` rides beside it: the slot `sample_trajectories` reads."""
+    assert vocab.STEP_PRODUCES["mioflow"] == ("model", "trajectories")
     assert "model" not in vocab.GROUP_PROVIDES.get("lightning", ())
 
 
@@ -86,7 +86,8 @@ def test_a_probe_before_a_fit_is_refused_at_plan_time():
     recipe = {"name": "t", "steps": [
         {"name": "sample_trajectories", "group": "probe", "params": {}}]}
 
-    assert vocab.unmet(recipe, "time-course") == frozenset({"model"})
+    # The probe reads `trajectories` (`probes.PROBE_READS`), so that is the missing fact.
+    assert vocab.unmet(recipe, "time-course") == frozenset({"trajectories"})
 
 
 def test_a_probe_after_a_fit_is_legal():
@@ -109,8 +110,8 @@ def test_a_filter_between_the_fit_and_the_probe_is_refused():
         {"name": "filter_cells", "group": "prep", "params": {"min_genes": 200}},
         {"name": "sample_trajectories", "group": "probe", "params": {}}]}
 
-    assert vocab.unmet(recipe, "time-course") == frozenset({"model"})
-    assert vocab.invalidated(recipe, "time-course") == frozenset({"model"}), (
+    assert vocab.unmet(recipe, "time-course") == frozenset({"trajectories"})
+    assert vocab.invalidated(recipe, "time-course") == frozenset({"trajectories"}), (
         "and it is reported as CLEARED, not as never-produced — different fixes")
 
 
@@ -121,6 +122,9 @@ def test_model_is_never_a_frame_fact():
     refuses everywhere else."""
     assert "model" not in vocab.frame_facts()
     assert "model" in vocab.step_facts()
+    # and the slot the trajectory probe reads, for the same reason
+    assert "trajectories" not in vocab.frame_facts()
+    assert "trajectories" in vocab.step_facts()
 
 
 # ── the state slot ───────────────────────────────────────────────────────────
@@ -187,11 +191,12 @@ def test_probe_is_a_declared_step_group():
     assert "probe" in vocab.STEP_GROUPS
 
 
-def test_sample_trajectories_reads_the_model_and_writes_to_the_g_vector(tmp_path):
-    """What a probe IS: it asks the model a question and records the answer. It transforms no
-    data, moves no selection, and produces no embedding."""
+def test_sample_trajectories_reads_the_slot_and_writes_to_the_g_vector(tmp_path):
+    """What a probe IS: it asks a question and records the answer. It transforms no data, moves
+    no selection, and produces no embedding. `sample_trajectories` reads `state["trajectories"]`
+    (`probes.PROBE_READS`), which the in-process route fills from the trained model."""
     state = _framed()
-    state["model"] = _FakeFlow()
+    state["trajectories"] = _FakeFlow().trajectories
     g: dict = {}
     ctx = _ctx(tmp_path)
 
@@ -207,15 +212,21 @@ def test_sample_trajectories_reads_the_model_and_writes_to_the_g_vector(tmp_path
     assert state["emb"] is None, "a probe answers a question; it does not re-embed"
 
 
-def test_a_probe_with_no_model_declines_with_a_reason(tmp_path):
+def test_a_probe_with_no_model_declines_with_a_reason(tmp_path, monkeypatch):
     """The engine-specific half the calculus cannot express. `unmet` takes no engine argument
     on purpose — its answer has to hold for every engine — so "this engine's lightning step is
     a stand-in that trains nothing" is a RUN-time fact. `_StepSkipped` is how a step declines,
     and the record carries the reason."""
     from manyruns.pipeline.steps import _StepSkipped
 
-    with pytest.raises(_StepSkipped, match="no trained model"):
+    with pytest.raises(_StepSkipped, match="no trajectories"):
         _runner._run_probe_step("sample_trajectories", {}, _framed(), {}, _ctx(tmp_path))
+    # a probe outside `PROBE_READS` still reads the model, and declines without one
+    from manyruns.pipeline import probes
+
+    monkeypatch.setitem(probes._PROBE_STEPS, "ask_the_model", lambda model, params: {})
+    with pytest.raises(_StepSkipped, match="no trained model"):
+        _runner._run_probe_step("ask_the_model", {}, _framed(), {}, _ctx(tmp_path))
 
 
 def test_an_unknown_probe_declines_rather_than_inventing_an_answer(tmp_path):
@@ -229,10 +240,11 @@ def test_an_unknown_probe_declines_rather_than_inventing_an_answer(tmp_path):
         _runner._run_probe_step("read_its_mind", {}, state, {}, _ctx(tmp_path))
 
 
-def test_a_probe_is_dispatchable_only_where_a_model_can_exist():
-    """`mock` invents numbers and trains nothing; the in-process loop computes a pseudotime and
-    trains nothing. Offering a probe on either would put a step in the menu that can only ever
-    decline — which is the honesty `dispatchable` exists for."""
+def test_a_probe_is_dispatchable_only_where_trajectories_can_exist():
+    """`mock` invents numbers and writes no trajectories, so a probe there could only ever
+    decline — which is the honesty `dispatchable` exists for. The in-process loop runs tool
+    steps, and a tool step that returns `trajectories` fills the slot the probe reads, so the
+    probe is offered there."""
     assert _runner.dispatchable("manylatents", "sample_trajectories", "probe") is True
-    assert _runner.dispatchable(vocab.INPROC, "sample_trajectories", "probe") is False
+    assert _runner.dispatchable(vocab.INPROC, "sample_trajectories", "probe") is True
     assert _runner.dispatchable("mock", "sample_trajectories", "probe") is False

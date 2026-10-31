@@ -125,7 +125,10 @@ def test_load_inputs_refuses_a_named_time_course_dataset(dataset_dir):
     assert "fake_days" in msg
     assert "time-course" in msg, "the refusal must name the declaration it is refusing"
     assert "`time`" in msg, "the refusal must name the MISSING fact"
-    assert "pseudotime" in msg, "the refusal must say what would otherwise be fabricated"
+    # The trajectory step no longer fabricates a pseudotime clock: it refuses with no time
+    # labels. The refusal says that, so the reader knows what the run would have done.
+    assert "refuses to run" in msg and "never invents a clock" in msg, (
+        "the refusal must say what the trajectory step does without the fact")
 
 
 def test_run_explorations_refuses_it_too(dataset_dir):

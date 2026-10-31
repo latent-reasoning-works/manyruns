@@ -1828,6 +1828,13 @@ def _setup_project(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
     # name preprocess one way today and another way tomorrow, with the file that exists to say
     # which asserting the one that did not happen.
     recipe = apply_transform_shim(recipe, getattr(args, "transform", None))
+    # COMMERCIAL MODE refuses here: after the recipe is chosen, before `write_project` and
+    # before any step, so a refused run leaves nothing under `outputs/`.
+    from manyruns import commercial
+
+    for reason in commercial.refusal(recipe):
+        print(f"error: {recipe['name']}: {reason}", file=sys.stderr)
+        raise SystemExit(2)
     data_kwargs, shape = _dataset_contract(dataset_name, dataset,
                                            _parse_kwargs(getattr(args, "data_kwargs", None)))
     _require_source_shape(engine, recipe, dataset, None, shape)
@@ -2084,18 +2091,46 @@ def _choose_recipe(
     if override:
         return override, f"recipe forced to {override!r} (auto-selection skipped)"
 
+    from manyruns import catalog
+
     shape = narrate.shape_of(has_time_axis, conditions, modality)
-    recipe = narrate.offer(narrate.Observation(
-        shape=shape, modality=modality, conditions=conditions))[0]["recipe"]
+    menu = narrate.offer(narrate.Observation(shape=shape, modality=modality,
+                                             conditions=conditions))
+    # THE FIRST ENTRY THAT CAN RUN, never just the head: `offer` returns blocked and unavailable
+    # recipes too (unrecommended, so a screen can show the refusal), and a head that cannot run
+    # would be chosen and then refused. With the commercial flag on, `cflows` is unavailable on
+    # time-course data, and `pseudotime` is the first entry that runs.
+    #
+    # THE BEST MATCH, named in the rationale when it is skipped. `offer` sorts an unavailable
+    # recipe below the runnable ones, so it is the head the menu would have if availability did
+    # not demote a row: of the recipes that suit this shape and that this data does not block,
+    # the first by name (`offer`'s order).
+    recipe, suited = None, []
+    for entry in menu:
+        loaded = catalog.load_recipe(entry["recipe"])
+        data_reasons = narrate.blocked(loaded, shape)
+        reasons = data_reasons + narrate.unavailable(loaded)
+        if recipe is None and not reasons:
+            recipe = entry["recipe"]
+        if shape in (loaded.get("suits") or []) and not data_reasons:
+            suited.append((entry["recipe"], reasons))
+    if recipe is None:
+        recipe = menu[0]["recipe"]
+    best = min(suited) if suited else None
+    skipped = (best[0], best[1][0]) if best and best[0] != recipe and best[1] else None
 
     if shape == "time-course":
-        why = "detected a time / ordering axis → trajectory (CFlows: phate→mioflow)"
+        why = ("detected a time / ordering axis → trajectory (CFlows: phate→mioflow)"
+               if recipe == "cflows" else
+               f"detected a time / ordering axis → trajectory ({recipe})")
     elif shape == "case-control":
         why = (f"detected conditions {sorted(conditions or [])} with no time axis → case/control "
                "contrast (PHATE + condition separation), not a trajectory")
     else:
         why = ("no time axis or conditions detected → structure-only embedding; asserting a "
                "trajectory here would invent an ordering the data does not carry")
+    if skipped is not None:
+        why += f"; {skipped[0]} suits this data but is not chosen: {skipped[1]}"
     return recipe, why
 
 
@@ -2412,8 +2447,8 @@ _FACT_FOR_LABEL_KIND = {"time": "time", "condition": "conditions"}
 _UNDELIVERED_FACT_COST = {
     "time": (
         "`vocab.unmet` reads the DECLARATION, not the run, so a trajectory recipe is still "
-        "called legal; the trajectory step then falls back to a pseudotime computed from the "
-        "embedding — a clock made of the geometry it is supposed to be independent of."
+        "called legal; the trajectory step then has no time labels and refuses to run, because "
+        "it never invents a clock from the geometry it is supposed to be independent of."
     ),
     "conditions": (
         "separation/composition would record `no condition labels` and return None, which the "
@@ -2438,9 +2473,10 @@ def _require_declared_facts(
     `shape: time-course` would have its time axis erased between the declaration the legality
     check reads and the run that consumes it — `unmet(cflows, "time-course")` is `frozenset()`,
     i.e. LEGAL, and `runner._ml_lightning` then computes `time_labels = state["labels"]` =
-    None and `mioflow._run_mioflow_experiment` falls back to a diffusion pseudotime.
+    None. `mioflow._run_mioflow_experiment` used to fall back to a diffusion pseudotime there;
+    it now refuses a run with no time labels, so the step is `skipped` rather than wrong.
 
-    What that produces, measured end to end (`--dataset swissroll --recipe cflows` on the
+    What that produced before the refusal, measured end to end (`--dataset swissroll --recipe cflows` on the
     in-process loop, seed 42, 5000×3): trace `latent:phate → lightning:mioflow`, status `phate: ok,
     mioflow: ok`, run `ok=True`, and `g_vector["pseudotime_range"] == [0.0, 1.0]` — a
     full-range trajectory whose clock came from the embedding, indistinguishable in the record

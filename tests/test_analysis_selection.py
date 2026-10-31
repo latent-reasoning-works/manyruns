@@ -137,3 +137,18 @@ def test_condition_dir_is_not_temporal_but_temporal_dir_still_is(tmp_path):
     _sample_dir(tc, "day3")                                     # temporal names → time course
     assert app._has_timepoint_subdirs(tc) is True
     assert app._dir_conditions(tc) is None
+
+
+# ── auto-selection never picks a blocked or unavailable recipe ───────────────
+def test_time_course_gets_cflows_without_flag(monkeypatch):
+    monkeypatch.delenv("MANYRUNS_COMMERCIAL", raising=False)
+    name, _ = app._choose_recipe(has_time_axis=True, conditions=None)
+    assert name == "cflows"
+
+
+def test_time_course_gets_pseudotime_in_commercial_mode(monkeypatch):
+    monkeypatch.setenv("MANYRUNS_COMMERCIAL", "1")
+    name, why = app._choose_recipe(has_time_axis=True, conditions=None)
+    assert name == "pseudotime"
+    assert "cflows" in why
+    assert "MANYRUNS_COMMERCIAL" in why

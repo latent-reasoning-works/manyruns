@@ -136,9 +136,11 @@ def test_the_refusal_is_at_BOTH_the_calculus_and_the_ENGINE(tmp_path):
     from manyruns.vocab import unmet
 
     # Level 1 — declarative. The recipe is illegal before anything runs, on every shape,
-    # and the missing fact is NAMED so a caller can say why.
+    # and the missing fact is NAMED so a caller can say why. `mioflow` also needs `time`,
+    # which only `time-course` data carries.
     for shape in ("manifold", "time-course", "case-control", "trajectory", "clusters", "unknown"):
-        assert unmet(BACKWARDS, shape) == frozenset({"embedding"}), shape
+        time = frozenset() if shape == "time-course" else frozenset({"time"})
+        assert unmet(BACKWARDS, shape) == frozenset({"embedding"}) | time, shape
 
     # Level 2 — imperative, and independent of level 1: this path never calls `unmet`.
     out = pipeline.run_inproc(np.zeros((12, 4)), BACKWARDS, tmp_path, seed=0)

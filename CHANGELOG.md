@@ -16,6 +16,17 @@ During the open beta, the CLI and record schema can still change.
 
 ### Added
 
+- `MANYRUNS_COMMERCIAL`: someone who builds a proprietary application on the free components
+  sets it to `1`. Then every recipe with a non-commercial step (a step named in
+  `commercial.NON_COMMERCIAL_STEPS`, such as `mioflow`, or a tool step whose manifest says
+  `commercial_use: false`) is a hollow row with one reason, `manyruns run` refuses it with exit
+  2 before any step and writes nothing, an added step is refused, `registry.apply_weights`
+  refuses, and a `commercial_use: false` tool manifest does not load. manyruns then imports none
+  of the seven Yale-derived manylatents modules (`commercial.NON_COMMERCIAL_MODULES`). Unset,
+  empty and `0` leave it off; any other value is an error. The flag covers manyruns' own imports
+  only.
+- `examples/recipes/cflows_inferred.yaml`: MIOFlow on data with no time axis, with the axis
+  declared by the recipe (`dpt`, then `discretize_time`, then `mioflow`).
 - The model seam: a tool manifest with `output.schema: result-v1` returns an embedding,
   clusters, a pseudotime, trajectories, a graph or class probabilities in a `result.json` that
   `external.check_result` checks before any merge. Call mode (`mode: call`) calls an unmodified
@@ -101,6 +112,18 @@ During the open beta, the CLI and record schema can still change.
 
 ### Changed
 
+- `non_commercial_steps` in the run row now also names an in-process MIOFlow step: every step
+  whose name is in `commercial.NON_COMMERCIAL_STEPS`, whatever its outcome and engine. Runs of
+  `cflows`, `traced` and `sandbox` record `["mioflow"]` (`sandbox` also `granger`).
+- `mioflow` needs a time axis (`vocab.STEP_NEEDS["mioflow"] = ("embedding", "time")`), so
+  `cflows`, `traced` and `sandbox` are blocked at plan time on data with no time axis.
+  `discretize_time` provides `time`.
+- `sample_trajectories` reads `state["trajectories"]`, which the in-process MIOFlow route fills
+  from the trained model and a tool step that returns `trajectories` fills the same way; the
+  probe runs on the in-process loop too, and a step that sets trajectories draws `<step>.png`
+  with them.
+- Auto-selection takes the first recipe that can run, and names a skipped best match and its
+  reason: with `MANYRUNS_COMMERCIAL=1`, time-course data gets `pseudotime`.
 - The `archetypes` recipe is runnable: its `blocked:` field is removed, and its `aa` step
   declares `n_components: 3`.
 - The `manylatents` lower bound is `>=0.1.9`, the first release in which `aa` fits.
@@ -110,6 +133,10 @@ During the open beta, the CLI and record schema can still change.
 
 ### Removed
 
+- The invented time axis: with no time labels, the in-process MIOFlow route no longer computes
+  a diffusion pseudotime binned into five time points. It refuses the run and names
+  `discretize_time`. The params `n_neighbors` and `n_timepoints` of a `mioflow` step are gone and
+  now raise the "unknown param" error.
 - The `label` and `rlhf` stubs of `python -m manyruns.harness`, which printed "not yet
   implemented". Use `manyruns label` and the other annotation verbs.
 

@@ -415,7 +415,8 @@ def check_tool(cfg: Any, name: Optional[str] = None) -> list[str]:
 
     The rules depend on the mode (`MODES`). A model manifest (`output.schema: result-v1`)
     returns version 1 results and may produce only seam facts. Every manifest declares its
-    `licence` and its `commercial_use`."""
+    `licence` and its `commercial_use`. In commercial mode a `commercial_use: false` manifest
+    is a problem (`commercial.TOOL_PROBLEM`), so `load_tool` refuses it."""
     from manyruns import vocab
 
     bad: list[str] = []
@@ -438,6 +439,11 @@ def check_tool(cfg: Any, name: Optional[str] = None) -> list[str]:
                    f"it is declared, never derived from the licence")
     elif licence in NON_COMMERCIAL_LICENCES and cfg["commercial_use"] is True:
         bad.append(f"licence {licence} forbids commercial use, so commercial_use cannot be true")
+    elif cfg["commercial_use"] is False:
+        from manyruns import commercial
+
+        if commercial.enabled():
+            bad.append(commercial.TOOL_PROBLEM)
 
     mode = tool_mode(cfg)
     if mode not in MODES:
