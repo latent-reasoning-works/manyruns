@@ -659,7 +659,8 @@ def _detect_group_key(adata: Any) -> "str | None":
     return find_group_key(adata.obs.columns)
 
 
-def load_labeled(path: Path, time_key: "str | None" = None):
+def load_labeled(path: Path, time_key: "str | None" = None,
+                 condition_key: "str | None" = None):
     """Return ``(matrix, labels, kind)``: a 2-D array, optional per-row labels, and whether
     those labels are a ``"time"`` axis or a ``"condition"`` axis (or ``None`` if unlabelled).
 
@@ -700,7 +701,7 @@ def load_labeled(path: Path, time_key: "str | None" = None):
 
     obj = load_array(p)
     if _is_anndata(obj):
-        labels, kind = labels_of(obj, time_key=time_key)
+        labels, kind = labels_of(obj, time_key=time_key, condition_key=condition_key)
         return _anndata_matrix(obj), labels, kind
     return as_matrix(obj), None, None
 
@@ -709,7 +710,8 @@ def _is_anndata(obj: Any) -> bool:
     return type(obj).__name__ == "AnnData" or "anndata" in (type(obj).__module__ or "")
 
 
-def labels_of(obj: Any, time_key: "str | None" = None) -> tuple:
+def labels_of(obj: Any, time_key: "str | None" = None,
+              condition_key: "str | None" = None) -> tuple:
     """Per-row ``(labels, kind)`` from a loaded object — WITHOUT touching the matrix.
 
     Split out of :func:`load_labeled` so the stackless engine can have labels without also
@@ -732,20 +734,54 @@ def labels_of(obj: Any, time_key: "str | None" = None) -> tuple:
     exactly this kind through)."""
     import numpy as np
 
-    key, kind = label_key_of(obj, time_key)
+    key, kind = label_key_of(obj, time_key, condition_key)
     return (np.asarray(obj.obs[key].values), kind) if key is not None else (None, None)
 
 
-def label_key_of(obj: Any, time_key: "str | None" = None) -> tuple:
+def obs_columns(path: Path) -> "list[str] | None":
+    """The per-row metadata column names of a data source, or None when it is not AnnData.
+
+    An `.h5ad` file is opened in backed mode, so no matrix is read. Any other source is
+    loaded with :func:`load_array`. Raises what the reader raises.
+    """
+    if Path(path).suffix.lower() == ".h5ad":
+        import anndata
+
+        obj = anndata.read_h5ad(path, backed="r")
+        try:
+            return [str(c) for c in obj.obs.columns]
+        finally:
+            if getattr(obj, "isbacked", False) and obj.file is not None:
+                obj.file.close()
+    obj = load_array(Path(path))
+    return [str(c) for c in obj.obs.columns] if _is_anndata(obj) else None
+
+
+def label_key_of(obj: Any, time_key: "str | None" = None,
+                 condition_key: "str | None" = None) -> tuple:
     """Return ``(key, analysis_kind)`` with exactly :func:`labels_of`'s precedence.
+
+    A given key comes before name detection: the given time key, then the given condition
+    key, then the detected time column, the detected condition column and the detected group
+    column. A given key replaces detection for its own axis, so a given key that is not a
+    column is skipped and nothing is detected for that axis. With no key given, the order is
+    the one name detection always had.
 
     Display classification is separate: selecting a colour never invents a time axis.
     """
     if not _is_anndata(obj):
         return None, None
-    for key, kind in ((time_key or _detect_time_key(obj), "time"),
-                      (_detect_condition_key(obj), "condition"),
-                      (_detect_group_key(obj), "group")):
+    candidates = []
+    if time_key:
+        candidates.append((time_key, "time"))
+    if condition_key:
+        candidates.append((condition_key, "condition"))
+    if not time_key:
+        candidates.append((_detect_time_key(obj), "time"))
+    if not condition_key:
+        candidates.append((_detect_condition_key(obj), "condition"))
+    candidates.append((_detect_group_key(obj), "group"))
+    for key, kind in candidates:
         if key and key in obj.obs.columns:
             return key, kind
     return None, None

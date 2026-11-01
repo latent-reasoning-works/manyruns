@@ -6,6 +6,19 @@ During the open beta, the CLI and record schema can still change.
 
 ## [Unreleased]
 
+### Added
+
+- `run --choice FILE`: the choice document may carry `time_key` and `condition_key`, the
+  dataset columns that hold the time and the condition of each cell. `check_choice` refuses a
+  key that is not a column of the dataset, or is not a non-empty string, with exit 2 before it
+  writes anything. The loader uses a given key before it finds a column by name. Plain `run`
+  has the matching `--condition-key` flag, and `run --choice` refuses it as a flag. A run row
+  records the column it used as `time_key` or `condition_key` (#26).
+
+### Fixed
+
+- Two intermittent TUI tests are now deterministic, and a click on a column heading no longer moves the roster cursor (#23).
+
 ## [0.1.1] - 2026-10-31
 
 ### Added
