@@ -45,7 +45,11 @@ EXTRA_MAX_BYTES = 8192
 _CHOICE_SURFACES = ("ledger", "tune")
 
 _REQUIRED = ("schema_version", "surface", "dataset", "offer_sha256", "chosen", "chooser", "bound")
-_OPTIONAL = ("scores", "meta", "proposed", "extra")
+_OPTIONAL = ("scores", "meta", "proposed", "extra", "time_key", "condition_key")
+
+#: The optional keys that name a column of the dataset. The run uses a given key before it
+#: detects a column by name (`pipeline.loading.label_key_of`).
+_COLUMN_KEYS = ("time_key", "condition_key")
 _PROPOSED_REQUIRED = ("chooser", "bound", "chosen", "offer_sha256")
 _PROPOSED_OPTIONAL = ("scores", "meta")
 
@@ -221,6 +225,68 @@ def _check_shape(choice: Any) -> None:
         _check_extra(choice["extra"])
     if "proposed" in choice:
         _check_proposed(choice)
+    _check_column_key_types(choice)
+
+
+def _check_column_key_types(choice: dict) -> None:
+    """Each given column key is a non-empty string, and the two keys name two columns."""
+    for key in _COLUMN_KEYS:
+        if key in choice:
+            value = choice[key]
+            if not isinstance(value, str) or not value:
+                raise _refuse(f"{key} must be a non-empty string, the name of a column of the "
+                              f"dataset; got {value!r}")
+    if "time_key" in choice and choice.get("time_key") == choice.get("condition_key"):
+        raise _refuse(f"time_key and condition_key both name the column {choice['time_key']!r}; "
+                      "one column is one axis")
+
+
+def _dataset_columns(name: str) -> Optional[list[str]]:
+    """The metadata column names of a catalog dataset, or None when it has no columns to read.
+
+    A `path` handle is read: an `.h5ad` file in backed mode (no matrix is read), a generated
+    `synthetic:` ref by building it, and any other file by loading it. An engine handle (the
+    engine generates the data) has no columns that manyruns reads. Raises `Refused(1, ...)`
+    when the file cannot be read.
+    """
+    from manyruns import catalog
+
+    handle = catalog.load_dataset(name).get("handle") or {}
+    if handle.get("kind") != "path":
+        return None
+    ref = str(handle.get("ref"))
+    from manyruns.pipeline import loading
+
+    if ref.startswith("synthetic:"):
+        path: Path | str = ref
+    else:
+        from manyruns.shell import dataset_ref_path
+
+        found = dataset_ref_path(ref)
+        if found is None:
+            raise Refused(1, f"cannot load dataset {name!r}: its file {ref!r} is not on this "
+                             "machine, so its columns cannot be checked")
+        path = found
+    try:
+        return loading.obs_columns(Path(path))
+    except Exception as exc:  # noqa: BLE001 - any reader error is a load failure here
+        raise Refused(1, f"cannot load dataset {name!r}: {exc}") from None
+
+
+def _check_column_keys(choice: dict) -> None:
+    """Each given column key is a column of the dataset. Reads only the dataset's metadata."""
+    given = [key for key in _COLUMN_KEYS if key in choice]
+    if not given:
+        return
+    dataset = choice["dataset"]
+    columns = _dataset_columns(dataset)
+    if columns is None:
+        raise _refuse(f"dataset {dataset!r} has no columns that manyruns reads, so a choice on "
+                      f"it takes no {' or '.join(given)}")
+    for key in given:
+        if choice[key] not in columns:
+            raise _refuse(f"{key} {choice[key]!r} is not a column of dataset {dataset!r}; its "
+                          f"columns are {', '.join(columns) or '(none)'}")
 
 
 # ── check 11: the recompute ──────────────────────────────────────────────────────
@@ -349,7 +415,8 @@ def check_choice(choice: dict, *, store: Path | str = ".", seed: int = 42) -> di
     """Judge a choice document. Returns the recomputed action document it was made on.
 
     Raises `Refused(2, ...)` at the first failed check, and `Refused(1, ...)` when the action
-    document cannot be loaded. Reads only `<store>/outputs/index.jsonl`; writes nothing.
+    document cannot be loaded. Reads `<store>/outputs/index.jsonl`, and the dataset's column
+    names when the choice gives `time_key` or `condition_key`; writes nothing.
     """
     _check_shape(choice)
     doc = _recompute(choice, store, seed)
@@ -360,6 +427,7 @@ def check_choice(choice: dict, *, store: Path | str = ".", seed: int = 42) -> di
         reason = _illegal(choice, choice["proposed"]["chosen"], doc, store, seed)
         if reason is not None:
             raise _refuse(f"proposed.chosen is not legal: {reason}")
+    _check_column_keys(choice)
     return doc
 
 
@@ -399,8 +467,9 @@ def review(choice: dict, *, ask: Callable[[dict], Any], human_id: str) -> dict:
     out = {k: copy.deepcopy(choice[k])
            for k in ("schema_version", "surface", "dataset", "offer_sha256")}
     out.update(chosen=final, chooser="human:" + human_id, bound="none", proposed=proposed)
-    if "extra" in choice:
-        out["extra"] = copy.deepcopy(choice["extra"])
+    for key in ("extra", *_COLUMN_KEYS):
+        if key in choice:
+            out[key] = copy.deepcopy(choice[key])
     return out
 
 
