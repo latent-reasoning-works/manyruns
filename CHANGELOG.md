@@ -6,6 +6,22 @@ During the open beta, the CLI and record schema can still change.
 
 ## [Unreleased]
 
+Target: 0.1.2, with `manylatents>=0.1.11`.
+
+### Changed
+
+- A step that produces a partition (`leiden`) writes its labels to `state['clusters']` and
+  keeps `state['emb']`, the coordinates it partitioned. `cluster_quality` now measures the
+  silhouette in those coordinates, not in the gene matrix. The labels persist as
+  `NN-<step>_clusters.npy`, and the final suite measures the embedding, not a label column.
+
+### Added
+
+- `leiden` draws `plots/leiden.png` with a categorical spec: `color_values` are the raw
+  labels, with `category_colors`, `color_by: "leiden"` and `obs_names`.
+- When stdout is not a terminal, `manyruns run` prints one line for each settled step to
+  stderr (`  ✓ pca  ok  1.23s`). An error's message goes on its own line. stdout is unchanged.
+
 ## [0.1.1] - 2026-10-31
 
 ### Added

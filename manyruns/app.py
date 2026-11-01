@@ -2911,9 +2911,10 @@ def _live_step_panel(
       (l. 507) records as how a TUI starts corrupting its own output. Nothing prompt-driven
       reaches here at all: the REPL and the stepped engines go through `session.py`, which
       drives `pipeline` directly, so no questionary prompt can be open while this blocks.
-    - **stdout is not a terminal** → piped output stays byte-identical; rich would otherwise
-      write a full repaint of the panel per update into the file. `is_terminal` is the check
-      the rest of the repo uses (`shell._render_state`, `_emit_inline_image`, `_run`).
+    - **stdout is not a terminal** → no live region: rich would otherwise write a full
+      repaint of the panel per update into the file. `is_terminal` is the check the rest of
+      the repo uses (`shell._render_state`, `_emit_inline_image`, `_run`). The observer is
+      `_piped_step_lines` instead, which writes to stderr, so stdout stays byte-identical.
     - **the engine never reports a step**, or the recipe declares none → nothing to animate.
 
     Rich absent is covered by the terminal guard, not a second one: `shell._default_console`
@@ -2925,9 +2926,29 @@ def _live_step_panel(
 
     console = shell._default_console()
     if not getattr(console, "is_terminal", False):
-        return None, None
+        return None, _piped_step_lines
     name = (recipe or {}).get("name") or "recipe"
     return shell.live_dashboard(console, recipe, f"[bold]{name}[/bold] · {engine} · {source}")
+
+
+def _piped_step_lines(rec: dict, _steps: Any = None) -> None:
+    """One plain line per settled step on stderr, for a reader of a piped run.
+
+    `  ✓ pca  ok  1.23s`: the glyph, name, outcome word and seconds of the end-of-run rows,
+    and nothing after the seconds, because a reader parses the line by that end. An error's
+    message goes on its own line below it. A running step prints nothing."""
+    import sys
+
+    from manyruns import shell
+
+    outcome = rec.get("outcome")
+    if rec.get("state") == "running" or not outcome:
+        return
+    glyph, _ = shell._OUTCOME_STYLE.get(outcome, ("?", "white"))
+    line = f"  {glyph} {rec.get('name') or '?'}  {outcome}  {float(rec.get('seconds') or 0.0):.2f}s"
+    if outcome == "error" and rec.get("detail"):
+        line += f"\n      {rec['detail']}"
+    print(line, file=sys.stderr, flush=True)
 
 
 def run_explorations(

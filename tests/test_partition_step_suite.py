@@ -71,7 +71,7 @@ def test_a_partition_step_is_not_scored_by_the_geometry_suite(tmp_path, monkeypa
 
     by_name = {s["name"]: s for s in out["steps"]}
     assert by_name["leiden"]["outcome"] == "ok", by_name["leiden"]["detail"]
-    assert by_name["leiden"]["produced"].startswith("ndarray(9, 1)")
+    assert by_name["leiden"]["produced"].startswith("ndarray(9,)")
     assert out["ok"] is True
     # The suite still travels with every COORDINATE step, and lands in the g-vector.
     assert [c["algorithms"]["latent"] for c in calls] == ["pca", "leiden"]
@@ -91,3 +91,55 @@ def test_the_exemption_is_read_off_the_calculus_not_a_name_list():
     assert [n for n in ("pca", "umap", "phate", "leiden") if runner._label_valued(n)] == ["leiden"]
     assert all(runner._label_valued(n) == ("clusters" in produces)
                for n, produces in STEP_PRODUCES.items())
+
+
+def _pca_then_leiden(tmp_path, monkeypatch, steps=("pca", "leiden", "cluster_quality")):
+    _engine(monkeypatch, [])
+    groups = {"pca": "latent", "leiden": "latent", "cluster_quality": "analysis"}
+    rng = np.random.default_rng(0)
+    return pipeline.run_manylatents(
+        {"name": "r", "steps": [{"name": s, "group": groups[s], "params": {}} for s in steps]},
+        array=rng.normal(size=(9, 4)).astype(np.float32), out_dir=tmp_path)
+
+
+def test_leiden_keeps_the_coordinates_it_partitioned(tmp_path, monkeypatch):
+    """The labels go to `state['clusters']`; `state['emb']` stays the pca coordinates, so
+    cluster_quality measures the silhouette in the space leiden partitioned."""
+    out = _pca_then_leiden(tmp_path, monkeypatch)
+    by_name = {s["name"]: s for s in out["steps"]}
+    assert by_name["leiden"]["outcome"] == "ok", by_name["leiden"]["detail"]
+    assert by_name["leiden"]["produced"].startswith("ndarray(9,)")
+    clusters = np.load(by_name["leiden"]["artifacts"]["clusters"])
+    assert clusters.dtype.kind == "i" and clusters.tolist() == [0, 0, 0, 1, 1, 1, 2, 2, 2]
+    g = out["g_vector"]
+    assert g["cluster_quality_source"] == "state['clusters']"
+    assert g["cluster_quality_space"] == "state['emb']"
+    assert g["final_dim"] == 2
+
+
+def test_leiden_draws_its_clusters_on_the_kept_coordinates(tmp_path, monkeypatch):
+    """`leiden.png` with a spec whose colour channel is the raw labels, categorical."""
+    from manyruns import figspec
+
+    out = _pca_then_leiden(tmp_path, monkeypatch)
+    by_name = {s["name"]: s for s in out["steps"]}
+    png = [p for p in by_name["leiden"]["plots"] if p.endswith("leiden.png")]
+    assert png, by_name["leiden"]["plots"]
+    spec = figspec.load(png[0])
+    assert spec["coords"].shape == (9, 2)
+    assert spec["is_categorical"] is True
+    assert spec["color_by"] == "leiden"
+    assert sorted(set(spec["color_values"].tolist())) == ["0", "1", "2"]
+    assert sorted(spec["category_colors"]) == ["0", "1", "2"]
+    assert "pca" in spec["title"]
+    assert not any("no scatter" in c for c in out.get("caveats", []))
+
+
+def test_leiden_on_the_raw_input_scores_in_the_input(tmp_path, monkeypatch):
+    """With no embedding before it, leiden partitioned the input matrix: no scatter is drawn
+    (two gene columns are not a map), and the silhouette is measured in that input."""
+    out = _pca_then_leiden(tmp_path, monkeypatch, steps=("leiden", "cluster_quality"))
+    g = out["g_vector"]
+    assert g["cluster_quality_source"] == "state['clusters']"
+    assert g["cluster_quality_space"].startswith("state['X']")
+    assert g["cluster_quality_silhouette"] is not None

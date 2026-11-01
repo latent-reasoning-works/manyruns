@@ -90,17 +90,52 @@ def test_a_command_line_run_at_a_terminal_reaches_the_engine_with_an_observer(mo
     assert callable(rec.inputs["on_step"])
 
 
-def test_piped_output_gets_no_live_region_and_no_observer(monkeypatch):
-    """Redirected to a file, rich writes a full repaint of the panel per update. The payload
-    must come out exactly as it did before this existed — no `on_step` key at all."""
-    _console(monkeypatch, terminal=False)
+def test_piped_output_gets_no_live_region_and_stdout_is_untouched(monkeypatch, capsys):
+    """Redirected to a file, rich writes a full repaint of the panel per update, so no live
+    region opens. The observer that IS passed writes plain lines to stderr only, so stdout
+    stays what it was before the observer existed."""
+    buf = _console(monkeypatch, terminal=False)
     opened = _spy_on_live_regions(monkeypatch)
     rec = _Recorder()
 
     _run(rec, monkeypatch)
 
     assert opened == []
-    assert "on_step" not in rec.inputs
+    assert callable(rec.inputs["on_step"])
+    assert buf.getvalue() == ""
+    assert capsys.readouterr().out == ""
+
+
+#: The line shape a piped reader parses: glyph, step name, outcome word, seconds with `s`,
+#: and nothing after the seconds.
+PIPED_STEP_LINE = r"^\s*[^\w\s]\s*(\w+)\s+([A-Za-z_]+)\s+[\d.]+s\s*$"
+
+
+def test_piped_output_prints_one_stderr_line_per_settled_step(monkeypatch, capsys):
+    """A piped reader follows the run live: one line per step as it settles, on stderr, in
+    the end-of-run rows' words. A running step prints nothing, and an error's message goes on
+    its own line so the step line still ends in its seconds."""
+    import re
+
+    _console(monkeypatch, terminal=False)
+    rec = _Recorder()
+    _run(rec, monkeypatch, recipe=_recipe("pca", "leiden", "pca"))
+    on_step = rec.inputs["on_step"]
+
+    on_step({"name": "pca", "state": "running"}, [])
+    on_step({"name": "pca", "outcome": "ok", "seconds": 1.234}, [])
+    on_step({"name": "leiden", "outcome": "error", "seconds": 0.05,
+             "detail": "ValueError: bad graph"}, [])
+    on_step({"name": "pca", "outcome": "skipped", "seconds": 0.0}, [])
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    lines = captured.err.splitlines()
+    ticks = [m.groups() for m in map(re.compile(PIPED_STEP_LINE).match, lines) if m]
+    assert ticks == [("pca", "ok"), ("leiden", "error"), ("pca", "skipped")]
+    assert lines[0].lstrip().startswith("✓") and lines[0].endswith("1.23s")
+    assert lines[1].lstrip().startswith("✗")
+    assert "ValueError: bad graph" in lines[2] and not re.match(PIPED_STEP_LINE, lines[2])
 
 
 def test_an_observer_the_caller_already_supplied_is_never_displaced(monkeypatch):
