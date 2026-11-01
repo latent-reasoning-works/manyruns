@@ -71,20 +71,41 @@ and its CI passes, so that the Git install of `main` stays current.
    git diff --stat origin/main origin/dev
    ```
 
-3. Open a pull request from `dev` into `main`. Name the merged pull requests in the
-   title, for example `Sync dev into main: <summary> (#23)`. Do not change the version.
-4. When the three checks pass, merge it as a **squash**. Do not push a tag.
-5. Confirm that the two branches hold the same files. The command exits 0 when they do:
+3. Make a sync branch from `main`, named for the day:
+
+   ```sh
+   git switch -c sync/dev-YYYY-MM-DD origin/main
+   ```
+
+4. Make its files exactly the files of `dev`. This also deletes the files that `dev`
+   deleted:
+
+   ```sh
+   git restore --source=origin/dev --staged --worktree :/
+   ```
+
+5. Commit and push the branch:
+
+   ```sh
+   git commit -m "Sync dev into main: <summary> (#NN, #NN)" && git push -u origin HEAD
+   ```
+
+6. Open a pull request from the sync branch into `main`. Do not change the version.
+7. When the three checks pass, merge it as a **squash**. Do not push a tag.
+8. Confirm that the two branches hold the same files. The command exits 0 when they do:
 
    ```sh
    git fetch origin && git diff --quiet origin/main origin/dev
    ```
 
-The sync is a squash, so `main` and `dev` hold the same files but not the same commits.
-Compare them with `git diff`, never with `git log main..dev`, which lists every `dev`
-commit since the first sync. Never commit to `main` by another route: a fix goes to
-`dev` first and reaches `main` with the next sync. A release is a sync followed by the
-steps in the next section.
+Do not open the pull request from `dev` itself. Each sync is a squash, so `main` and
+`dev` hold the same files but share no recent commit. GitHub then merges from an old
+common commit, and files that both branches changed, such as CHANGELOG.md, conflict.
+The sync branch starts from `main`, so its pull request has no conflict. For the same
+reason, compare the branches with `git diff`, never with `git log main..dev`.
+
+Never commit to `main` by another route: a fix goes to `dev` first and reaches `main`
+with the next sync. A release is a sync followed by the steps in the next section.
 
 ## Maintainers: releases
 
