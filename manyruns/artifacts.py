@@ -49,7 +49,7 @@ from typing import Any, Optional
 #: Slots worth persisting. `X` is deliberately absent — see the module docstring. `labels`
 #: too, unless the caller explicitly supplies Session(sample_ids=...). That opt-in stores
 #: row annotations in the manifest, tied to each derived array's actual row selection.
-PERSISTED = ("emb", "pseudotime")
+PERSISTED = ("emb", "pseudotime", "clusters")
 
 #: A separate, much smaller ceiling for ENGINE BYPRODUCTS (`runner._collect_extras`), because
 #: they are a different size class from manyruns's own state and the cap below was chosen for
