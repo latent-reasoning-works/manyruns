@@ -6,14 +6,27 @@ During the open beta, the CLI and record schema can still change.
 
 ## [Unreleased]
 
+Target: 0.1.2, with `manylatents>=0.1.11`.
+
 ### Added
 
+- `leiden` draws `plots/leiden.png` with a categorical spec: `color_values` are the raw
+  labels, with `category_colors`, `color_by: "leiden"` and `obs_names`.
+- When stdout is not a terminal, `manyruns run` prints one line for each settled step to
+  stderr (`  ✓ pca  ok  1.23s`). An error's message goes on its own line. stdout is unchanged.
 - `run --choice FILE`: the choice document may carry `time_key` and `condition_key`, the
   dataset columns that hold the time and the condition of each cell. `check_choice` refuses a
   key that is not a column of the dataset, or is not a non-empty string, with exit 2 before it
   writes anything. The loader uses a given key before it finds a column by name. Plain `run`
   has the matching `--condition-key` flag, and `run --choice` refuses it as a flag. A run row
   records the column it used as `time_key` or `condition_key` (#26).
+
+### Changed
+
+- A step that produces a partition (`leiden`) writes its labels to `state['clusters']` and
+  keeps `state['emb']`, the coordinates it partitioned. `cluster_quality` now measures the
+  silhouette in those coordinates, not in the gene matrix. The labels persist as
+  `NN-<step>_clusters.npy`, and the final suite measures the embedding, not a label column.
 
 ### Fixed
 
