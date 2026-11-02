@@ -117,8 +117,9 @@ def test_payload_has_five_keys(outputs, tmp_path):
     plain_dir = tmp_path / "plain"
     store.append({"run_id": "r1"}, out_dir=plain_dir)
     (plain,) = list(store.read(plain_dir))
-    # the 17 core fields plus `non_commercial_steps` (model seam) and `run_plots` (#25)
-    assert len(plain) == 19
+    # the 17 core fields plus `non_commercial_steps` (model seam), `run_plots` (#25), and
+    # `cancelled` and `not_run` (#37)
+    assert len(plain) == 21
     assert set(row) - set(plain) == {"extra"}
     assert set(plain) <= set(row)
 

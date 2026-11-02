@@ -237,8 +237,8 @@ def test_probe_run_rule(tmp_path):
 
     none = tmp_path / "none"
     none.mkdir()
-    _write_store(none, [{**ROW_A, "ok": False}, {**ROW_A, "complete": False},
-                        {**ROW_A, "seed": 101}])
+    _write_store(none, [{**ROW_A, "ok": False}, {**ROW_A, "cancelled": True},
+                        {**ROW_A, "dataset_name": "pbmc3k"}])
     assert actions.probe_run("swissroll", 42, none) is None
     assert actions.enumerate_actions("ledger", dataset="swissroll", store=none)["evidence"] is None
 
@@ -266,8 +266,10 @@ def test_gate_is_recorded_and_changes_the_digest(tmp_path, monkeypatch):
                                       store=tmp_path)
     assert _without(t_on, "gate", "evidence") == _without(t_off, "gate", "evidence")
 
+    # No probe at seed 101: the seed-42 probe stands in, and the document says so.
     assert actions.enumerate_actions("ledger", dataset="swissroll", seed=101,
-                                     store=tmp_path)["evidence"] is None
+                                     store=tmp_path)["evidence"] == {
+        "run_id": "aaaaaaaaaaaa", "recipe": "embed", "seed": 42, "requested_seed": 101}
     assert actions.enumerate_actions("ledger", dataset="swissroll", seed=42,
                                      store=tmp_path)["evidence"]["run_id"] == "aaaaaaaaaaaa"
 
@@ -535,3 +537,135 @@ def test_returned_and_printed_documents_have_one_digest(tmp_path, monkeypatch, c
     assert docs["ledger"]["offered"]
     assert (docs["tune"]["recipe"], docs["tune"]["step"]) == ("cluster", None)
     assert set(docs["tune"]["knobs"]) == {"umap", "leiden"}
+
+
+# ── #37: an ok run with skipped steps is a probe; another seed's probe stands in ──
+
+#: The steps of a map run on a file whose values are already log-normalised: `normalize` and
+#: `transform` decline it, so the run is `ok` and not `complete`.
+SKIPPED_PREP = [{"name": "normalize", "group": "prep", "outcome": "skipped",
+                 "detail": "not counts"},
+                {"name": "transform", "group": "prep", "outcome": "skipped",
+                 "detail": "not counts"},
+                {"name": "phate", "group": "latent", "outcome": "ok", "detail": "ok"}]
+
+ROW_SKIPPED = {**ROW_A, "complete": False, "steps": SKIPPED_PREP,
+               "g_vector": {"betti_0": 3, "lid": 2.1}}
+
+
+def test_skipped_prep_steps_open_the_gate(tmp_path):
+    _write_store(tmp_path, [ROW_SKIPPED])
+    assert actions.probe_run("swissroll", 42, tmp_path)["run_id"] == "aaaaaaaaaaaa"
+    doc = actions.enumerate_actions("ledger", dataset="swissroll", seed=42, store=tmp_path)
+    assert doc["evidence"] == {"run_id": "aaaaaaaaaaaa", "recipe": "embed", "seed": 42}
+    assert doc["detail"]["cluster"]["support"] == []
+    assert _offered(doc)["cluster"]["can_run"] is True
+
+
+def test_skipped_prep_still_refuses_a_missing_measurement(tmp_path):
+    _write_store(tmp_path, [{**ROW_SKIPPED, "g_vector": {"lid": 2.1}}])
+    doc = actions.enumerate_actions("ledger", dataset="swissroll", seed=42, store=tmp_path)
+    assert doc["evidence"]["run_id"] == "aaaaaaaaaaaa"
+    assert doc["detail"]["cluster"]["support"] == ["betti_0:not_measured"]
+    assert _offered(doc)["cluster"]["can_run"] is False
+
+
+@pytest.mark.parametrize("bad", [
+    {"steps": [*SKIPPED_PREP[:2], {**SKIPPED_PREP[2], "outcome": "error"}]},
+    {"cancelled": True},
+    {"not_run": [{"index": 2, "name": "phate", "reason": "run abandoned"}]},
+    {"ok": False},
+], ids=["step_error", "cancelled", "not_run", "not_ok"])
+def test_a_disqualified_row_is_not_a_probe(tmp_path, bad):
+    later = {**ROW_SKIPPED, "run_id": "bbbbbbbbbbbb"}
+    _write_store(tmp_path, [{**ROW_SKIPPED, **bad}, later])
+    assert actions.probe_run("swissroll", 42, tmp_path)["run_id"] == "bbbbbbbbbbbb"
+    alone = tmp_path / "alone"
+    alone.mkdir()
+    _write_store(alone, [{**ROW_SKIPPED, **bad}])
+    assert actions.probe_run("swissroll", 42, alone) is None
+    assert actions.enumerate_actions("ledger", dataset="swissroll", store=alone)["evidence"] is None
+
+
+def test_cancelled_false_and_empty_not_run_do_not_disqualify(tmp_path):
+    _write_store(tmp_path, [{**ROW_SKIPPED, "cancelled": False, "not_run": []}])
+    assert actions.probe_run("swissroll", 42, tmp_path)["run_id"] == "aaaaaaaaaaaa"
+
+
+def test_another_seeds_probe_stands_in(tmp_path):
+    _write_store(tmp_path, [{**ROW_A, "run_id": "cccccccccccc", "seed": 7, "ok": False},
+                            ROW_SKIPPED, {**ROW_SKIPPED, "run_id": "dddddddddddd", "seed": 3}])
+    probe = actions.probe_run("swissroll", 1, tmp_path)
+    assert probe["run_id"] == "aaaaaaaaaaaa" and probe["seed"] == 42
+    doc = actions.enumerate_actions("ledger", dataset="swissroll", seed=1, store=tmp_path)
+    assert doc["evidence"] == {"run_id": "aaaaaaaaaaaa", "recipe": "embed", "seed": 42,
+                               "requested_seed": 1}
+    assert list(doc["evidence"]) == ["run_id", "recipe", "seed", "requested_seed"]
+    assert _offered(doc)["cluster"]["can_run"] is True
+    tune = actions.enumerate_actions("tune", dataset="swissroll", recipe="cluster", seed=1,
+                                     store=tmp_path)
+    assert tune["evidence"] == doc["evidence"]
+
+
+def test_a_probe_at_the_requested_seed_comes_first(tmp_path):
+    _write_store(tmp_path, [ROW_SKIPPED, {**ROW_SKIPPED, "run_id": "bbbbbbbbbbbb", "seed": 1,
+                                          "g_vector": {"betti_0": 1, "lid": 2.1}}])
+    assert actions.probe_run("swissroll", 1, tmp_path)["run_id"] == "bbbbbbbbbbbb"
+    doc = actions.enumerate_actions("ledger", dataset="swissroll", seed=1, store=tmp_path)
+    assert doc["evidence"] == {"run_id": "bbbbbbbbbbbb", "recipe": "embed", "seed": 1}
+    assert doc["detail"]["cluster"]["support"] == ["betti_0:fails_rule"]
+    at_42 = actions.enumerate_actions("ledger", dataset="swissroll", seed=42, store=tmp_path)
+    assert at_42["evidence"] == {"run_id": "aaaaaaaaaaaa", "recipe": "embed", "seed": 42}
+
+
+def test_no_probe_at_any_seed_leaves_the_document_unchanged(tmp_path):
+    _write_store(tmp_path, [{**ROW_A, "ok": False}, {**ROW_A, "seed": 3, "cancelled": True}])
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    for seed in (1, 42):
+        doc = actions.enumerate_actions("ledger", dataset="swissroll", seed=seed, store=tmp_path)
+        assert doc["evidence"] is None
+        assert doc == actions.enumerate_actions("ledger", dataset="swissroll", seed=seed,
+                                                store=empty)
+        assert "betti_0:not_measured" in _offered(doc)["cluster"]["blocked"]
+
+
+def test_a_probe_at_the_requested_seed_keeps_its_digest(tmp_path):
+    """The key `requested_seed` appears only when the seeds differ, so a document whose probe is
+    at the requested seed hashes as it did before #37."""
+    _write_store(tmp_path, [ROW_A])
+    doc = actions.enumerate_actions("ledger", dataset="swissroll", seed=42, store=tmp_path)
+    assert "requested_seed" not in doc["evidence"]
+
+
+def test_an_inproc_run_whose_prep_skipped_is_the_probe(tmp_path):
+    """End to end: a real in-process run on non-count data. `normalize` and `transform` decline
+    it, so the row is `ok` and not `complete`, and its g-vector is the gate's evidence."""
+    np = pytest.importorskip("numpy")
+    from manyruns.pipeline import runner
+
+    assert tmp_path.is_dir()
+    recipe = catalog.load_recipe("embed")
+    recipe["steps"] = [s for s in recipe["steps"] if s["name"] in ("normalize", "transform",
+                                                                   "phate")]
+    X = np.random.default_rng(0).normal(size=(120, 5))
+    res = runner.run_inproc(X, recipe, tmp_path / "work", seed=0)
+    assert res["ok"] is True and res["complete"] is False
+    assert [(s["name"], s["outcome"]) for s in res["steps"]] == [
+        ("normalize", "skipped"), ("transform", "skipped"), ("phate", "ok")]
+    res["dataset_name"] = "swissroll"
+    store.append(res, out_dir=tmp_path / "outputs")
+    row, = store.read(tmp_path / "outputs")
+    # The row keeps the run's own account of a cancel and of steps not run, which the probe
+    # rule reads.
+    assert row["cancelled"] is False and row["not_run"] == []
+    doc = actions.enumerate_actions("ledger", dataset="swissroll", seed=0, store=tmp_path)
+    assert doc["evidence"] == {"run_id": res["run_id"], "recipe": "embed", "seed": 0}
+    support = doc["detail"]["cluster"]["support"]
+    assert support == sorted(vocab.rung_support(catalog.load_recipe("cluster"),
+                                                res["g_vector"], _admitted()))
+    assert "betti_0:not_measured" not in support
+
+
+def _admitted() -> set:
+    return set(catalog.load_suite()) | set(vocab.ADMITTED_READOUTS)
