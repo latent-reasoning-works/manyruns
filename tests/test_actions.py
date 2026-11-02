@@ -642,6 +642,8 @@ def test_an_inproc_run_whose_prep_skipped_is_the_probe(tmp_path):
     """End to end: a real in-process run on non-count data. `normalize` and `transform` decline
     it, so the row is `ok` and not `complete`, and its g-vector is the gate's evidence."""
     np = pytest.importorskip("numpy")
+    # The final geometry suite needs the compute stack; without it the run is not `ok`.
+    pytest.importorskip("manylatents")
     from manyruns.pipeline import runner
 
     assert tmp_path.is_dir()
@@ -650,7 +652,8 @@ def test_an_inproc_run_whose_prep_skipped_is_the_probe(tmp_path):
                                                                    "phate")]
     X = np.random.default_rng(0).normal(size=(120, 5))
     res = runner.run_inproc(X, recipe, tmp_path / "work", seed=0)
-    assert res["ok"] is True and res["complete"] is False
+    assert res["ok"] is True and res["complete"] is False, [
+        (s["name"], s["outcome"]) for s in res.get("steps", [])]
     assert [(s["name"], s["outcome"]) for s in res["steps"]] == [
         ("normalize", "skipped"), ("transform", "skipped"), ("phate", "ok")]
     res["dataset_name"] = "swissroll"
