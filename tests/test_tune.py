@@ -301,7 +301,10 @@ def test_a_rejected_attempt_keeps_its_own_picture(tmp_path):
 
     tune.run_tune_loop(session, step, lambda _="": next(inputs), out.append)
 
-    pngs = sorted(p.name for p in tmp_path.rglob("phate*.png"))
+    # The per-dataset folder; the run's own copies under `state/<run_id>/plots/` are #25's.
+    plots_dir = tmp_path / "plots"
+    assert plots_dir.is_dir()
+    pngs = sorted(p.name for p in plots_dir.rglob("phate*.png"))
     assert pngs == ["phate.png", "phate@1.png", "phate@2.png"], pngs
     assert any("kept attempt 1" in line for line in out), "the rename is reported, not silent"
 
@@ -713,9 +716,12 @@ def test_a_rejected_attempt_keeps_its_coordinates_not_only_its_picture(tmp_path)
     tune.run_tune_loop(session, tune.parse_step_line("phate knn=5", session.engine),
                        lambda _="": next(inputs), lambda *_: None)
 
-    pngs = sorted(p.name for p in tmp_path.rglob("*.png"))
-    npzs = sorted(p.name for p in tmp_path.rglob("*.spec.npz"))
-    jsons = sorted(p.name for p in tmp_path.rglob("*.spec.json"))
+    # The per-dataset folder; the run's own copies under `state/<run_id>/plots/` are #25's.
+    plots_dir = tmp_path / "plots"
+    assert plots_dir.is_dir()
+    pngs = sorted(p.name for p in plots_dir.rglob("*.png"))
+    npzs = sorted(p.name for p in plots_dir.rglob("*.spec.npz"))
+    jsons = sorted(p.name for p in plots_dir.rglob("*.spec.json"))
     assert len(pngs) == 3, pngs
     assert len(npzs) == 3, f"{len(pngs)} pictures kept but {len(npzs)} coordinate sets: {npzs}"
     assert len(jsons) == 3, jsons
@@ -898,3 +904,32 @@ def test_repl_passes_current_recipe_to_typed_step(monkeypatch):
     inputs = iter(['pca', 'quit'])
     app.interactive_session(session, read=lambda *a: next(inputs), write=lambda *a: None)
     assert seen[0]['params']['n_components'] == 50
+
+
+def test_a_rejected_attempt_keeps_its_own_per_run_figure(tmp_path):
+    """manyruns#25. Every tune attempt runs in ONE lineage, so one `run_id`, so the per-run copy
+    `state/<run_id>/plots/phate.png` is the same path for each attempt. `_keep_attempt` moves
+    it to `phate@1.png` (and its spec files), and the rejected record's `run_plots` follows."""
+    import pathlib
+
+    import numpy as np
+
+    from manyruns import tune, vocab
+
+    session = _mock(engine=vocab.INPROC, out_dir=tmp_path)
+    session.state["X"] = np.random.RandomState(0).randn(150, 8)
+    inputs = iter(["tune", "knn=7", "accept"])
+    tune.run_tune_loop(session, tune.parse_step_line("phate knn=5", session.engine),
+                       lambda _="": next(inputs), lambda *_: None)
+
+    run_dir = tmp_path / "state" / session.run_id / "plots"
+    assert run_dir.is_dir()
+    assert sorted(p.name for p in run_dir.iterdir()) == [
+        "phate.png", "phate.spec.json", "phate.spec.npz",
+        "phate@1.png", "phate@1.spec.json", "phate@1.spec.npz"]
+    named = [rec.get("run_plots") or [] for rec in session.steps]
+    assert [sorted(pathlib.Path(p).name for p in n) for n in named] == [
+        ["phate@1.png", "phate@1.spec.json", "phate@1.spec.npz"],
+        ["phate.png", "phate.spec.json", "phate.spec.npz"]]
+    for path in (p for n in named for p in n):
+        assert pathlib.Path(path).is_file(), path

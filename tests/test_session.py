@@ -83,8 +83,9 @@ def test_a_session_and_a_recipe_produce_the_same_record(tmp_path):
         out = []
         for r in recs:
             rec = {k: v for k, v in r.items() if k not in ("seconds", "artifacts")}
-            if "plots" in rec:
-                rec["plots"] = [Path(x).name for x in rec["plots"]]
+            for key in ("plots", "run_plots"):  # `run_plots` also names the run_id
+                if key in rec:
+                    rec[key] = [Path(x).name for x in rec[key]]
             out.append(rec)
         return out
 

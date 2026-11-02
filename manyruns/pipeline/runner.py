@@ -1118,6 +1118,15 @@ def apply_step(step: dict, state: dict, g: dict, *, dispatch: dict, ctx: dict,
         drew = list((ctx.get("plots") or ())[before_plots:])
         if drew:
             rec["plots"] = drew
+            # THE RUN'S OWN COPY (manyruns#25). `plots/<stem>.png` above is per dataset and the
+            # next run of this recipe overwrites it; `state/<run_id>/plots/` keeps this run's
+            # png and spec files, and `run_plots` names them so a reader needs no layout rule.
+            # Omitted, like `plots`, when the step drew nothing.
+            kept = ([] if ctx.get("out_dir") is None else
+                    [p for png in drew
+                     for p in _artifacts.save_figure(ctx["out_dir"], ctx.get("run_id"), png)])
+            if kept:
+                rec["run_plots"] = kept
         # Geometry goes on BEFORE the report, not after: `on_step` is how the live panel
         # learns a step is done, so a record that gains its delta afterwards is a record
         # the panel renders without one and never revisits. This is also why it sits

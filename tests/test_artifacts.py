@@ -104,9 +104,15 @@ def test_no_partial_file_survives_a_write(tmp_path):
     res = runner.run_inproc(_data(), catalog.load_recipe("cflows"), tmp_path, seed=0)
     state = artifacts.root(tmp_path, res["run_id"])
 
+    assert state.is_dir()
     names = sorted(p.name for p in state.iterdir())
     assert not [n for n in names if "part" in n], names
-    assert all(n.endswith(".npy") or n == artifacts.DONE for n in names), names
+    assert all(n.endswith(".npy") or n in (artifacts.DONE, artifacts.PLOTS)
+               for n in names), names
+    # The run's own figures (#25) are copied the same way: no partial file survives.
+    plots = state / artifacts.PLOTS
+    assert plots.is_dir()
+    assert not [p.name for p in plots.iterdir() if "part" in p.name]
 
 
 def test_the_input_matrix_is_never_written(tmp_path):

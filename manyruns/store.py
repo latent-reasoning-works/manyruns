@@ -16,7 +16,15 @@ the caller supplies an absolute path. Opening a project does not change cwd.
 Version 1 row shape (core top-level keys): ``schema_version`` (written first),
 ``run_id``, ``spec_id``, ``parent``, ``dataset``, ``dataset_name``, ``data_kwargs``, ``at``,
 ``recipe``, ``engine``, ``seed``, ``tool_version``, ``ok``, ``complete``, ``caveats``,
-``non_commercial_steps``, ``steps`` and ``g_vector``. ``non_commercial_steps`` is the sorted
+``non_commercial_steps``, ``steps``, ``run_plots`` and ``g_vector``.
+``run_plots`` lists the run's own figure files, cwd-relative and in step order: for each figure
+a step drew, ``<out_dir>/state/<run_id>/plots/<stem>.png`` and, when written, its
+``.spec.json`` and ``.spec.npz``. Each step record names its share of them in its own
+``run_plots`` key, which is absent when that step drew nothing; the row's ``run_plots`` is
+always a list, ``[]`` when the run drew nothing. A row written before the field existed has no
+such key. These are real copies. The per-dataset ``<out_dir>/plots/<stem>.png`` (named by the
+step record's ``plots``) holds only the latest run's figure, and the next run of the same
+recipe overwrites it. ``non_commercial_steps`` is the sorted
 list of the run's non-commercial steps, whatever their outcome and engine: a step whose name is
 in ``commercial.NON_COMMERCIAL_STEPS`` (an in-process ``mioflow`` step, for example), or whose
 tool manifest says ``commercial_use: false``; ``[]`` means none. A row written before that
@@ -171,6 +179,12 @@ def append(results: dict, *, out_dir: Path | str = "outputs",
         "caveats": _jsonable(results.get("caveats") or []),
         "non_commercial_steps": _jsonable(results.get("non_commercial_steps") or []),
         "steps": _jsonable(results.get("steps") or []),
+        # The run's own figure files (manyruns#25), gathered from the step records in step
+        # order: `state/<run_id>/plots/<stem>.png`, `.spec.json`, `.spec.npz`. Always a list;
+        # `[]` means the run drew nothing, and a missing key means a row from before the field.
+        "run_plots": _jsonable([p for s in (results.get("steps") or [])
+                                if isinstance(s, dict)
+                                for p in (s.get("run_plots") or [])]),
         "g_vector": _jsonable(results.get("g_vector") or {}),
         **(_jsonable(extra or {})),
     }
