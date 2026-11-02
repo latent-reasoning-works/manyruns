@@ -40,7 +40,7 @@ result = space.act(policy.choose(doc, state, history))
 |---|---|
 | `ActionSpace(dataset, *, mode="library", store=".", engine=None, seed=42, device=None)` | `mode` is `"library"` (manyruns runs in this process) or `"cli"` (manyruns runs as `python -m manyruns` in a child process, with the store as its working directory). `store` is the folder whose `outputs/` holds the record; it must exist. |
 | `offer(surface="ledger", *, gate=True, recipe=None, step=None)` | Returns the action document of `ledger`, `tune` or `ladder`. Both modes return equal documents. |
-| `gate` | The geometry mask. With `gate=True`, the legal set holds only the recipes that the measured geometry of the dataset supports. The evidence is the probe run: the first complete run of the dataset and seed in the store. With `gate=False`, only the data preconditions limit it. The document records `gate`, so its digest covers it. |
+| `gate` | The geometry mask. With `gate=True`, the legal set holds only the recipes that the measured geometry of the dataset supports. The evidence is the g-vector of the probe run. See [The probe run](#the-probe-run). With `gate=False`, only the data preconditions limit it. The document records `gate`, so its digest covers it. |
 | `act(choice, *, extra=None)` | Runs one choice document and returns the result document `{"schema_version": 1, "decision_id", "run_id", "exit_code"}`. `exit_code` is 1 when the run itself failed; the decision row is still on disk. |
 | `extra` | An optional JSON object for the run row. `act` puts it in the choice document as the key `extra`, and `run --choice` writes it as the run row's `extra` key. manyruns reads none of its keys. |
 | `Refused` | The exception of a refusal. `exit_code` is 2 for a usage error or an illegal or stale choice, and 1 when the action document cannot be loaded. `message` holds the reason. Nothing was written. |
@@ -60,6 +60,33 @@ manyruns reads no key and calls no model.
 caller must not call `act` from two threads at once. In CLI mode the child runs `app.main`,
 which loads `<store>/.env`; library mode does not. Keep `.env` out of a store when the two
 modes must agree.
+
+### The probe run
+
+The probe run is the run whose g-vector the gate reads. It is the first row in
+`outputs/index.jsonl`, in file order, that has these properties:
+
+- It is a run of the dataset.
+- Its `ok` is `true`.
+- Its `cancelled` is not `true`, and its `not_run` list is empty.
+- No step record has the outcome `"error"`.
+
+A step that skipped does not disqualify a run. For example, `normalize` and `transform` skip
+a file whose values are already log-normalised. That run has `complete: false`, but it is a
+probe run. The gate still refuses each claim whose measurement is not in the g-vector, with
+the reason `<key>:not_measured`.
+
+manyruns looks first for a probe run at the requested seed. If there is none, it uses the
+first probe run of the dataset at any seed. The document names the probe run in `evidence`:
+
+```json
+{"run_id": "aaaaaaaaaaaa", "recipe": "embed", "seed": 42, "requested_seed": 1}
+```
+
+`seed` is the seed of the probe run. `requested_seed` is present only when the probe run came
+from a different seed than the request. If a probe run at the requested seed is written later,
+the next document names that run, and a choice made on the older document is stale. With no
+probe run at any seed, `evidence` is `null` and the gate refuses every claim that has a rule.
 
 ## The choice document
 
@@ -203,6 +230,11 @@ A run row has the key `extra` when the choice carried one, and manyruns does not
 A run row has the keys `time_key` and `condition_key`: the column whose values the run used as
 its time labels or its condition labels. At most one is a name. Both are `null` when the run
 read no such column, for example a run with `--engine mock`, which reads no data.
+
+A run row has the keys `cancelled` and `not_run`. `cancelled` is `true` when the run was
+cancelled, abandoned, or had a tune attempt discarded. `not_run` lists the declared steps that
+the run never issued, each as `{"index", "name", "reason"}`. The probe rule reads both. A row
+written before these keys existed has neither key and reads as not cancelled.
 
 ## Who is a harness
 
