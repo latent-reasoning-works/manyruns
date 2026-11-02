@@ -1096,7 +1096,9 @@ def apply_step(step: dict, state: dict, g: dict, *, dispatch: dict, ctx: dict,
         # phate and mioflow both leave (2700, 3) float32. `watch.py:136,176` sets `produced`
         # unconditionally, so this is also the parity the shared field claims.
         rec["produced"] = (describe(state.get("emb"))
-                           if state.get("emb") is not before_obj else None)
+                           if state.get("emb") is not before_obj else
+                           describe(state.get("clusters"))
+                           if state.get("clusters") is not before_slots.get("clusters") else None)
         # Every new readout belongs to this step unless its producer already stated a more
         # specific stage. Punctuation is not evidence that a number was a parameter.
         declared_settings = {f"{name}.{p}" for p in rec["params"]}
@@ -1857,7 +1859,16 @@ def _ml_latent(name, params, state, g, ctx):
         _collect_extras(name, out, state, g)
         return
     _check_metadata_alignment(emb, state, ctx, out.get("obs_names", out.get("sample_ids")))
-    state["emb"] = emb
+    partition = _label_valued(name) and emb.ndim == 2 and emb.shape[1] == 1
+    if partition:
+        # A partition goes to `state["clusters"]`, and `state["emb"]` keeps the coordinates
+        # it partitioned. Writing the (N, 1) label column over `emb` destroyed them, so
+        # `cluster_quality` scored the silhouette in the gene matrix and no step could draw
+        # the clusters (canonical-recipes.md §5.1, option (a)).
+        state["clusters"] = np.rint(emb[:, 0]).astype(np.int64)
+    else:
+        state["emb"] = emb
+        ctx["emb_from"] = name
     if ctx.get("metrics") and _label_valued(name):
         g[f"{name}.suite_note"] = ("geometry suite not measured: this step produces a "
                                    "partition (clusters), not coordinates")
@@ -1868,7 +1879,31 @@ def _ml_latent(name, params, state, g, ctx):
     # Everything else the engine handed back — see `_collect_extras`. Measured on a plain
     # PHATE run: `affinity` and `kernel`, both N x N, both previously dropped on this line.
     _collect_extras(name, out, state, g)
-    _display_scatter(emb, state, ctx, f"{name}.png", name)
+    if partition:
+        _display_partition(name, state, ctx)
+    else:
+        _display_scatter(emb, state, ctx, f"{name}.png", name)
+
+
+def _display_partition(name, state, ctx):
+    """Draw a partition on the coordinates it was computed in, coloured by cluster.
+
+    The colour channel is the raw labels, categorical, so a reader can redraw the spec with
+    its own palette. Nothing is drawn when the partition was computed on the input matrix:
+    its first two columns are two genes, not a map."""
+    emb = state.get("emb")
+    if emb is None:
+        ctx.setdefault("caveats", []).append(
+            f"{name}: no scatter — it partitioned the input matrix, which has no 2-D view")
+        return []
+    source = ctx.get("emb_from") or "the embedding"
+    title = f"{name} clusters on {source} (first two columns)"
+    channel = {"key": name, "values": state["clusters"].astype(str), "kind": "categorical"}
+    _, ids = current_display(state, ctx) if ctx.get("metadata_aligned", True) else ([], None)
+    if ids is not None and len(ids) != len(emb):
+        ids = None
+    return _io.save_display_scatter(emb, [channel], ctx["out_dir"], f"{name}.png",
+                                    ctx["plots"], title, obs_names=ids)
 
 
 def _ml_lightning(name, params, state, g, ctx):

@@ -443,9 +443,12 @@ def _step_cluster_quality(state, g, params, out_dir, plots, target_dim) -> None:
     g["cluster_quality_max_size"] = int(counts.max())
     # Singletons are the over-partitioning signature, and they are invisible in `n` alone.
     g["cluster_quality_singletons"] = int((counts == 1).sum())
-    Z = state.get("X") if where == _FROM_EMB else state.get("emb")
-    space = "state['X'] (the input — leiden overwrote the coordinates it partitioned)" \
-        if where == _FROM_EMB else "state['emb']"
+    if where == _FROM_EMB:
+        Z, space = state.get("X"), "state['X'] (the input — leiden overwrote the coordinates it partitioned)"
+    elif state.get("emb") is not None:
+        Z, space = state.get("emb"), "state['emb']"
+    else:
+        Z, space = state.get("X"), "state['X'] (the input — the partition was computed on it)"
     if Z is None:
         g["cluster_quality_silhouette"] = None
         g["cluster_quality_silhouette_note"] = (
