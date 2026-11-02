@@ -191,7 +191,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_actions.add_argument("--gate", choices=("on", "off"), default=None,
                            help="the geometry mask (default on; not on the ladder surface)")
     p_actions.add_argument("--seed", type=int, default=None,
-                           help="the seed whose probe run the gate reads (default 42)")
+                           help="the seed whose probe run the gate reads first; with none "
+                                "there, the first probe run at any seed (default 42)")
     p_actions.set_defaults(func=cmd_actions)
 
     # The four verbs that write `outputs/annotations.jsonl` (`manyruns.annotations`): a judgment

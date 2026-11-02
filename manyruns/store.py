@@ -15,8 +15,10 @@ the caller supplies an absolute path. Opening a project does not change cwd.
 
 Version 1 row shape (core top-level keys): ``schema_version`` (written first),
 ``run_id``, ``spec_id``, ``parent``, ``dataset``, ``dataset_name``, ``data_kwargs``, ``at``,
-``recipe``, ``engine``, ``seed``, ``tool_version``, ``ok``, ``complete``, ``caveats``,
-``non_commercial_steps``, ``steps``, ``run_plots`` and ``g_vector``.
+``recipe``, ``engine``, ``seed``, ``tool_version``, ``ok``, ``complete``, ``cancelled``,
+``not_run``, ``caveats``, ``non_commercial_steps``, ``steps``, ``run_plots`` and ``g_vector``.
+``cancelled`` and ``not_run`` are the run's own account of a cancel and of the declared steps it
+never issued (``{index, name, reason}`` each); a row written before them has neither key.
 ``run_plots`` lists the run's own figure files, cwd-relative and in step order: for each figure
 a step drew, ``<out_dir>/state/<run_id>/plots/<stem>.png`` and, when written, its
 ``.spec.json`` and ``.spec.npz``. Each step record names its share of them in its own
@@ -170,6 +172,13 @@ def append(results: dict, *, out_dir: Path | str = "outputs",
         # unlearnable. Absent on rows written before the split; a reader must treat a missing
         # key as unknown rather than as True.
         "complete": results.get("complete"),
+        # The run's own account of a cancel (a cancelled run, a discarded tune attempt, an
+        # abandoned run) and of the declared steps it never issued (`runner._finalize`). The
+        # gate's probe rule reads both (`actions.is_probe`, #37): `complete` alone cannot tell a
+        # step that declined from a run that stopped. Absent on rows written before the fields,
+        # which read as not cancelled.
+        "cancelled": results.get("cancelled"),
+        "not_run": _jsonable(results.get("not_run") or []),
         # What the run says about ITSELF — an unusual composition, or an engine that invented
         # its numbers. The row schema never had this column, so a `mock` lineage landed in the
         # history indistinguishable from a measured one, and a `test_front_door` docstring

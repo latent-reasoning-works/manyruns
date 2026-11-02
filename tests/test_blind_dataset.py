@@ -25,7 +25,8 @@ _GOLDEN = (
     '{"schema_version":1,"run_id":"r1","spec_id":null,"parent":null,'
     '"dataset":"dataset:pbmc3k","dataset_name":"pbmc3k",'
     '"data_kwargs":{"path":"/data/pbmc3k.h5ad"},"at":null,"recipe":null,"engine":null,'
-    '"seed":null,"tool_version":null,"ok":null,"complete":null,"caveats":[],'
+    '"seed":null,"tool_version":null,"ok":null,"complete":null,"cancelled":null,'
+    '"not_run":[],"caveats":[],'
     '"non_commercial_steps":[],"steps":[],"run_plots":[],"g_vector":{},"source":"pbmc3k"}\n'
 )
 
