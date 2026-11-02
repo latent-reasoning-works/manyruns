@@ -23,6 +23,13 @@ tool manifest says ``commercial_use: false``; ``[]`` means none. A row written b
 field existed has no such key, and a missing key means unknown. Product callers also supply the core top-level ``source``,
 ``modality`` and ``decision_id`` fields through the existing ``append(extra=...)`` merge.
 These stay at the top level; absent optional core fields retain their existing meaning.
+``run``, ``init --batch``, ``explore`` and ``run --choice`` also write the core ``time_key`` and
+``condition_key``: the metadata column whose values the run used as its time labels or its
+condition labels (a given ``--time-key``/``--condition-key`` or choice key, else the column
+found by name). At most one is a name. Both are ``null`` when the run read no such column: a
+``mock`` run, a dataset that the engine generates, or time labels taken from sub-folder names.
+A row without these keys was written before they existed, or by another writer; a missing key
+means unknown.
 Missing ``schema_version`` means 1. Readers preserve unknown keys and explicit versions.
 
 Reserve nested ``extra.<caller>`` for FUTURE downstream fields only, e.g.

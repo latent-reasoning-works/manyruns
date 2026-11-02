@@ -7,9 +7,10 @@ tried, what happened, and what should happen.
 ## Development
 
 Target pull requests at `dev`, where development work lands once all three CI
-checks pass; no review is required. `main` is the stable line and receives release
-PRs only. Cut release tags (`v0.1.x`) from `main`. Both branches require the three
-checks and refuse force-pushes and deletion.
+checks pass; no review is required. `main` is the stable line. It receives only the
+sync pull request from `dev` (see [Maintainers: sync `dev` into `main`](#maintainers-sync-dev-into-main)).
+Cut release tags (`v0.1.x`) from `main`. Both branches require the three checks and
+refuse force-pushes and deletion.
 
 Consumers depending on manyruns from Git should pin a release tag. Use `dev` only
 while co-developing a change.
@@ -51,6 +52,60 @@ This is an open beta. The CLI and record schema can still change; describe any
 compatibility impact in the pull request and changelog. Include `manyruns --version`
 output, platform, and Python version when reporting a problem. Share a
 small synthetic reproduction instead of private data or credentials.
+
+## Maintainers: sync `dev` into `main`
+
+A merge into `main` publishes nothing. Only a `v*` tag, or a manual `release.yml` run
+with `publish: true`, publishes. Sync `dev` into `main` whenever `dev` has new merges
+and its CI passes, so that the Git install of `main` stays current.
+
+1. Fetch both branches:
+
+   ```sh
+   git fetch origin
+   ```
+
+2. List what moves. If the output is empty, `main` already holds all of `dev`; stop.
+
+   ```sh
+   git diff --stat origin/main origin/dev
+   ```
+
+3. Make a sync branch from `main`, named for the day:
+
+   ```sh
+   git switch -c sync/dev-YYYY-MM-DD origin/main
+   ```
+
+4. Make its files exactly the files of `dev`. This also deletes the files that `dev`
+   deleted:
+
+   ```sh
+   git restore --source=origin/dev --staged --worktree :/
+   ```
+
+5. Commit and push the branch:
+
+   ```sh
+   git commit -m "Sync dev into main: <summary> (#NN, #NN)" && git push -u origin HEAD
+   ```
+
+6. Open a pull request from the sync branch into `main`. Do not change the version.
+7. When the three checks pass, merge it as a **squash**. Do not push a tag.
+8. Confirm that the two branches hold the same files. The command exits 0 when they do:
+
+   ```sh
+   git fetch origin && git diff --quiet origin/main origin/dev
+   ```
+
+Do not open the pull request from `dev` itself. Each sync is a squash, so `main` and
+`dev` hold the same files but share no recent commit. GitHub then merges from an old
+common commit, and files that both branches changed, such as CHANGELOG.md, conflict.
+The sync branch starts from `main`, so its pull request has no conflict. For the same
+reason, compare the branches with `git diff`, never with `git log main..dev`.
+
+Never commit to `main` by another route: a fix goes to `dev` first and reaches `main`
+with the next sync. A release is a sync followed by the steps in the next section.
 
 ## Maintainers: releases
 

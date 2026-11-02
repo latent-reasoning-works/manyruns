@@ -155,7 +155,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "--choice", metavar="FILE",
         help="run the choice in a choice document (JSON): it is checked against the action "
         "document it names, recorded as a decision, then run. Not with DATA, --dataset, --data, "
-        "--recipe, --modality, --transform, --data-set, --time-key, --color-by or --ask.",
+        "--recipe, --modality, --transform, --data-set, --time-key, --condition-key, --color-by "
+        "or --ask.",
     )
     p_run.set_defaults(func=cmd_run)
 
@@ -458,6 +459,11 @@ def _add_engine_args(p: argparse.ArgumentParser) -> None:
         "(auto-detected from timepoint/day/sample/… if omitted); else pseudotime is used",
     )
     p.add_argument(
+        "--condition-key",
+        help="AnnData .obs column with the per-cell condition (the case/control label); "
+        "auto-detected from disease/condition/group/… if omitted. --time-key comes first.",
+    )
+    p.add_argument(
         "--transform",
         choices=("log1p", "sqrt"),
         default=None,
@@ -531,7 +537,8 @@ def cmd_init(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         return _explore_project(
             proj, seed=args.seed, fast_dev_run=_smoke(args),
             data_kwargs=_parse_kwargs(args.data_kwargs),
-            time_key=args.time_key, device=args.device, color_by=getattr(args, "color_by", None),
+            time_key=args.time_key, condition_key=getattr(args, "condition_key", None),
+            device=args.device, color_by=getattr(args, "color_by", None),
         )
     # Every engine with a step loop is steppable. The predicate here used to be
     # `in ("mock", "manylatents")` — the set from before `mock` left the product surface, and
@@ -684,7 +691,8 @@ def _build_session(args_proj: dict, args: argparse.Namespace, *, resume: bool = 
             print(f"loading {data_folder} …")
         _loaded = _load_inputs(engine, data_folder, dataset, getattr(args, "time_key", None),
                                declared_layers(args_proj.get("recipe")),
-                               **({"color_by": args.color_by} if getattr(args, "color_by", None) else {}))
+                               **({"color_by": args.color_by} if getattr(args, "color_by", None) else {}),
+                               condition_key=getattr(args, "condition_key", None))
         array, labels, label_kind = _loaded["array"], _loaded["labels"], _loaded["kind"]
     # The REPL never reaches `run_explorations` — the session drives the executors directly —
     # so the refusal has to be made here too, before the prompt opens. `runner._ml_lightning`
@@ -967,7 +975,8 @@ def cmd_explore(args: argparse.Namespace, parser: argparse.ArgumentParser) -> in
     return _explore_project(
         proj, seed=args.seed,
         fast_dev_run=_smoke(args), data_kwargs=_parse_kwargs(args.data_kwargs),
-        time_key=args.time_key, device=args.device, color_by=getattr(args, "color_by", None),
+        time_key=args.time_key, condition_key=getattr(args, "condition_key", None),
+        device=args.device, color_by=getattr(args, "color_by", None),
     )
 
 
@@ -997,7 +1006,8 @@ def cmd_run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     return _explore_project(
         proj, seed=args.seed,
         fast_dev_run=_smoke(args), data_kwargs=_parse_kwargs(args.data_kwargs),
-        time_key=args.time_key, device=args.device, color_by=getattr(args, "color_by", None),
+        time_key=args.time_key, condition_key=getattr(args, "condition_key", None),
+        device=args.device, color_by=getattr(args, "color_by", None),
     )
 
 
@@ -1006,8 +1016,8 @@ def cmd_run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
 _CHOICE_REPLACES = (
     ("data_folder", "DATA"), ("dataset", "--dataset"), ("data_arg", "--data"),
     ("recipe", "--recipe"), ("modality", "--modality"), ("transform", "--transform"),
-    ("data_kwargs", "--data-set"), ("time_key", "--time-key"), ("color_by", "--color-by"),
-    ("ask", "--ask"),
+    ("data_kwargs", "--data-set"), ("time_key", "--time-key"),
+    ("condition_key", "--condition-key"), ("color_by", "--color-by"), ("ask", "--ask"),
 )
 
 
@@ -1057,10 +1067,12 @@ def _run_choice(choice: dict, *, engine: Optional[str], seed: int, device: Optio
     chosen = choice["chosen"]
     dataset = choice["dataset"]
     surface = choice["surface"]
+    time_key, condition_key = choice.get("time_key"), choice.get("condition_key")
     setup = argparse.Namespace(
         engine=engine, dataset=dataset, data_folder=None, data_arg=None,
         project=project or _project_name_for(dataset), recipe=chosen["recipe"], ask=None,
-        transform=None, data_kwargs=None, time_key=None, color_by=None, modality=None)
+        transform=None, data_kwargs=None, time_key=time_key, condition_key=condition_key,
+        color_by=None, modality=None)
     step_params = (chosen["step"], chosen["params"]) if surface == "tune" else None
     proj = _setup_project(setup, parser, step_params=step_params)
 
@@ -1086,6 +1098,7 @@ def _run_choice(choice: dict, *, engine: Optional[str], seed: int, device: Optio
     record: dict = {}
     result["exit_code"] = _explore_project(
         proj, seed=seed, fast_dev_run=fast_dev_run, device=device,
+        time_key=time_key, condition_key=condition_key,
         decision_id=decision_id, record=record, run_extra=choice.get("extra"))
     result["run_id"] = record.get("run_id")
     return result
@@ -1944,7 +1957,7 @@ def _setup_project(args: argparse.Namespace, parser: argparse.ArgumentParser, *,
     if color_by := getattr(args, "color_by", None):
         # Refused display arguments must not replace the last saved data/recipe.
         _read_inputs(engine, data_folder, dataset, getattr(args, "time_key", None),
-                     color_by=color_by)
+                     color_by=color_by, condition_key=getattr(args, "condition_key", None))
     path = write_project(project, data_folder, modality, recipe, engine=engine, dataset=dataset,
                          dataset_name=dataset_name, data_kwargs=data_kwargs)
     return {
@@ -1969,6 +1982,7 @@ def _explore_project(
     device: Optional[str] = None,
     color_by: Optional[list[str]] = None,
     *,
+    condition_key: Optional[str] = None,
     decision_id: Optional[str] = None,
     record: Optional[dict] = None,
     run_extra: Optional[dict] = None,
@@ -1997,7 +2011,8 @@ def _explore_project(
                 f"engine={engine} needs a data path (file/folder) or --dataset NAME"
             )
         loaded = _load_inputs(engine, data_folder, dataset, time_key,
-                              declared_layers(proj.get("recipe")), **({"color_by": color_by} if color_by else {}))
+                              declared_layers(proj.get("recipe")), **({"color_by": color_by} if color_by else {}),
+                              condition_key=condition_key)
         array, labels, label_kind = loaded["array"], loaded["labels"], loaded["kind"]
         counts, genes, layers = loaded["counts"], loaded["genes"], loaded["layers"]
 
@@ -2053,7 +2068,8 @@ def _explore_project(
     # which is most of what "strict state of the data and the interventions" means.
     from manyruns import store as _store
 
-    row_extra: dict = {"source": str(source), "modality": proj["modality"]}
+    row_extra: dict = {"source": str(source), "modality": proj["modality"],
+                       **_used_keys(loaded)}
     if decision_id is not None:
         row_extra["decision_id"] = decision_id
     if run_extra is not None:
@@ -2806,9 +2822,20 @@ def _verify_tool(name: str) -> int:
     return 0
 
 
+def _used_keys(loaded: dict) -> dict:
+    """The run row's `time_key` and `condition_key`: the column whose values the run used as
+    its time labels or its condition labels. At most one is a name; the other is None. Both
+    are None when the run read no such column (a mock run, a named engine dataset, or time
+    labels taken from sub-folder names)."""
+    key, kind = loaded.get("label_key"), loaded.get("kind")
+    return {"time_key": key if kind == "time" else None,
+            "condition_key": key if kind == "condition" else None}
+
+
 def _load_inputs(engine: str, data_folder: Optional[Path], dataset: Optional[str],
                  time_key: Optional[str], layers: "tuple | None" = None,
-                 color_by: Optional[list[str]] = None) -> dict:
+                 color_by: Optional[list[str]] = None,
+                 condition_key: Optional[str] = None) -> dict:
     """Load analysis, gene and display channels, then check declared analysis facts.
 
     Ordinary file/generated sources share one object read. Engine-owned generators are
@@ -2816,7 +2843,8 @@ def _load_inputs(engine: str, data_folder: Optional[Path], dataset: Optional[str
     ``color_by`` selects display channels only and never changes analysis labels.
     """
     loaded = _read_inputs(engine, data_folder, dataset, time_key, layers,
-                          **({"color_by": color_by} if color_by else {}))
+                          **({"color_by": color_by} if color_by else {}),
+                          condition_key=condition_key)
     _require_declared_facts(engine, dataset, loaded["labels"], loaded["kind"])
     return loaded
 
@@ -2847,7 +2875,8 @@ class ColorSelectionError(ValueError):
 
 def _read_inputs(engine: str, data_folder: Optional[Path], dataset: Optional[str],
                  time_key: Optional[str], layers: "tuple | None" = None,
-                 color_by: Optional[list[str]] = None) -> dict:
+                 color_by: Optional[list[str]] = None,
+                 condition_key: Optional[str] = None) -> dict:
     """Read analysis and display channels from one object whenever the source permits it.
 
     Directory timepoint labelling stays with load_labeled. Its separate object read is
@@ -2859,11 +2888,12 @@ def _read_inputs(engine: str, data_folder: Optional[Path], dataset: Optional[str
     if engine == "manylatents" and not dataset and data_folder is not None:
         with pipeline.quiet():
             obj = pipeline.load_array(data_folder)
-            label_key = loading.label_key_of(obj, time_key)[0]
+            label_key = loading.label_key_of(obj, time_key, condition_key)[0]
             if Path(data_folder).is_dir():
-                array, labels, kind = pipeline.load_labeled(data_folder, time_key=time_key)
+                array, labels, kind = pipeline.load_labeled(data_folder, time_key=time_key,
+                                                            condition_key=condition_key)
                 # A folder name is an analysis axis, not a column in the source object.
-                own_labels, _ = loading.labels_of(obj, time_key)
+                own_labels, _ = loading.labels_of(obj, time_key, condition_key)
                 import numpy as np
 
                 if labels is not None and (own_labels is None or not np.array_equal(labels, own_labels)):
@@ -2872,7 +2902,8 @@ def _read_inputs(engine: str, data_folder: Optional[Path], dataset: Optional[str
                 # Match load_labeled: keep the source frame sparse and in its original
                 # dtype until a compute step actually needs a dense matrix.
                 array = loading._anndata_matrix(obj) if loading._is_anndata(obj) else pipeline.as_matrix(obj)
-                labels, kind = pipeline.labels_of(obj, time_key=time_key)
+                labels, kind = pipeline.labels_of(obj, time_key=time_key,
+                                                  condition_key=condition_key)
             counts, genes = pipeline.gene_axis(obj)
             loaded_layers = pipeline.layers_of(obj, layers)
             try:

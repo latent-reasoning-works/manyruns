@@ -445,6 +445,7 @@ _FLAGS = [
     (["--transform", "sqrt"], [], "--transform"),
     (["--data-set", "n=3"], [], "--data-set"),
     (["--time-key", "day"], [], "--time-key"),
+    (["--condition-key", "arm"], [], "--condition-key"),
     (["--color-by", "label"], [], "--color-by"),
     (["--ask", "map the structure"], [], "--ask"),
     ([], ["swissroll"], "DATA"),

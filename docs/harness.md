@@ -63,7 +63,7 @@ modes must agree.
 
 ## The choice document
 
-A choice document is one JSON object with seven required keys and four optional keys:
+A choice document is one JSON object with seven required keys and six optional keys:
 
 | Key | Required | Content |
 |---|---|---|
@@ -78,6 +78,8 @@ A choice document is one JSON object with seven required keys and four optional 
 | `meta` | no | The filler's own notes. |
 | `proposed` | no | The filler's choice that a person reviewed. `review` writes it. |
 | `extra` | no | A JSON object for the run row. The caller of `act` writes it. |
+| `time_key` | no | The dataset column that holds the time of each cell. |
+| `condition_key` | no | The dataset column that holds the condition (case/control label) of each cell. |
 
 `offer_sha256` is the SHA-256 hex digest of
 `json.dumps(doc, sort_keys=True, separators=(",", ":"))`, UTF-8
@@ -109,6 +111,14 @@ and is not `verdict` or `proposer`, because manyruns' own readers read those two
 row's `extra`. The values are any JSON with finite numbers. Its compact JSON is at most
 `EXTRA_MAX_BYTES = 8192` bytes.
 
+**The column keys.** `time_key` and `condition_key` sit at the top level, next to `dataset`,
+because `dataset` is a catalog name (a string), not an object. Each is a non-empty string that
+is a column of the dataset, and the two keys name two different columns. manyruns reads the
+dataset's column names to check them; a dataset whose data the engine generates has no columns,
+so a choice on it takes neither key. The run uses a given key before it finds a column by name:
+the time key first, then the condition key, then name detection. The keys are not part of the
+action document, so they do not change `offer_sha256`. `review` keeps them.
+
 **Refusals.** Every check runs before the first write. An illegal, stale or malformed choice
 exits 2 (`Refused.exit_code == 2`) and writes no file.
 
@@ -120,8 +130,9 @@ exits 2 (`Refused.exit_code == 2`) and writes no file.
 | `manyruns run --choice FILE [--engine E] [--seed N] [--device D]` | Checks the choice document in `FILE`, writes the decision row, runs, and writes the run row. |
 
 `run --choice` refuses the flags that name or change what runs (`DATA`, `--dataset`, `--data`,
-`--recipe`, `--modality`, `--transform`, `--data-set`, `--time-key`, `--color-by` and `--ask`)
-with exit 2. It prints two lines, each at column 0:
+`--recipe`, `--modality`, `--transform`, `--data-set`, `--time-key`, `--condition-key`,
+`--color-by` and `--ask`) with exit 2. The choice document carries `time_key` and
+`condition_key` instead. It prints two lines, each at column 0:
 
 - `decision <decision_id> recorded in <path>`, before the run starts;
 - `run <run_id> recorded in <index>`, after it.
@@ -188,6 +199,10 @@ the row's `chosen`: the recipe on `ledger`, and the attempt label (for example
 `phate knn=7 n_components=3`) on `tune`.
 
 A run row has the key `extra` when the choice carried one, and manyruns does not read its keys.
+
+A run row has the keys `time_key` and `condition_key`: the column whose values the run used as
+its time labels or its condition labels. At most one is a name. Both are `null` when the run
+read no such column, for example a run with `--engine mock`, which reads no data.
 
 ## Who is a harness
 
