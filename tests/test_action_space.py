@@ -5,8 +5,8 @@ choice against the document whose digest it names, runs it, and writes the recor
 code. These tests pin the checks, the refusals (each before the first write), the rows of both
 surfaces, the review rows, the run-row extra and the parity of the two modes.
 
-Every test uses a fresh empty store, because the first complete run of a dataset and seed in a
-store is the probe run that the gate reads.
+Every test uses a fresh empty store, because the first ok run of a dataset in a store (at the
+requested seed if there is one, else at any seed) is the probe run that the gate reads.
 """
 from __future__ import annotations
 
@@ -435,6 +435,44 @@ def test_failed_run_keeps_decision(S, monkeypatch, capsys):
     assert app.main(["run", "--choice", str(path), "--engine", "mock"]) == 1
     (row,), (run,) = _rows(S.store)
     assert run["decision_id"] == row["decision_id"]
+
+
+#: A seed-42 map run whose prep steps skipped, with a g-vector that supports `clusters` (#37).
+ROW_SKIPPED_42 = {**ROW_A, "complete": False, "g_vector": {"betti_0": 3, "lid": 2.1},
+                  "steps": [{"name": "normalize", "group": "prep", "outcome": "skipped"},
+                            {"name": "transform", "group": "prep", "outcome": "skipped"},
+                            {"name": "phate", "group": "latent", "outcome": "ok"}]}
+
+
+def test_run_choice_at_a_new_seed_uses_the_seed_42_probe(S):
+    """Only a seed-42 probe exists. A gated choice at seed 1 is legal on the document that names
+    the seed-42 probe, and `run --choice --seed 1` runs it."""
+    _write_store(S.store, [ROW_SKIPPED_42])
+    doc = json.loads(json.dumps(actions.enumerate_actions(
+        "ledger", dataset="swissroll", seed=1, store=S.store)))
+    assert doc["evidence"] == {"run_id": "aaaaaaaaaaaa", "recipe": "embed", "seed": 42,
+                               "requested_seed": 1}
+    choice = _ledger_choice(doc, chosen={"recipe": "cluster"})
+    assert check_choice(choice, store=S.store, seed=1) == doc
+    # The same choice judged at seed 42 names another document, so it is stale there.
+    _refused(choice, S.store, "stale")
+    _ok(_run_choice(S.store, choice, "--seed", "1"))
+    (row,), runs = _rows(S.store)
+    assert row["chosen"] == "cluster"
+    assert runs[-1]["recipe"] == "cluster" and runs[-1]["seed"] == 1
+
+
+def test_a_probe_at_the_requested_seed_is_used(S):
+    seed_1 = {**ROW_SKIPPED_42, "run_id": "bbbbbbbbbbbb", "seed": 1,
+              "g_vector": {"betti_0": 1, "lid": 2.1}}
+    _write_store(S.store, [ROW_SKIPPED_42, seed_1])
+    doc = json.loads(json.dumps(actions.enumerate_actions(
+        "ledger", dataset="swissroll", seed=1, store=S.store)))
+    assert doc["evidence"] == {"run_id": "bbbbbbbbbbbb", "recipe": "embed", "seed": 1}
+    choice = _ledger_choice(doc, chosen={"recipe": "cluster"})
+    with pytest.raises(Refused) as caught:
+        check_choice(choice, store=S.store, seed=1)
+    assert "betti_0:fails_rule" in caught.value.message
 
 
 _FLAGS = [

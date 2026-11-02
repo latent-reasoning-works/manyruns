@@ -16,9 +16,12 @@ Three surfaces:
 **Declared, never sniffed.** The Observation is `narrate.declared_observation`, built from the
 YAML alone, so the document is the same on a machine that holds the data file and on one that
 does not. Nothing here opens a data file, writes anything, builds a `Session` or runs a step.
-With the gate on, the run record is read through `store.read`, and only to find the probe run.
-Its g-vector is the gate's evidence (`vocab.rung_support`); the document names the probe run
-and copies no measured value.
+With the gate on, the run record is read through `store.read`, and only to find the probe run
+(`probe_run`): the first `ok` run of the dataset that was not cancelled and had no step in
+error, at the requested seed if there is one, else at any seed. Its g-vector is the gate's
+evidence (`vocab.rung_support`); the document names the probe run in `evidence` (its `run_id`,
+`recipe` and `seed`, plus `requested_seed` when the two seeds differ) and copies no measured
+value.
 
 **Plain JSON only.** Lists, never tuples, so the document a caller gets in process hashes
 equal to the one it parses from stdout.
@@ -53,18 +56,62 @@ class LoadError(Exception):
         self.name = name
 
 
+def is_probe(row: dict, dataset: str) -> bool:
+    """True when `row` may serve as the gate's evidence for `dataset`.
+
+    The rule (#37): the row is of `dataset`, `ok is True`, `cancelled` is not True, `not_run` is
+    empty, and no step record has the outcome `"error"`.
+
+    - A step that SKIPPED does not disqualify the row. `normalize` and `transform` decline a file
+      whose values are already log-normalised; the run is `ok` and not `complete`, and its
+      g-vector still holds the measurements of its embedding. `complete` stays the run's own
+      account of whether every declared step ran, and this rule does not read it.
+    - A step in `"error"` disqualifies the row, even when `ok` says otherwise: the probe is the
+      run that nothing went wrong in.
+    - A cancelled run disqualifies it: a cancel, a discarded tune attempt or an abandoned run
+      leaves geometry that is not the geometry of the run that was asked for.
+    - `not_run` disqualifies it: a declared step that was never issued means the run stopped
+      before its recipe ended, so its g-vector is the geometry of a partial state, not a run
+      that ran and declined. Today a non-empty `not_run` comes only with an abandoned run, so
+      this check is the same as the `cancelled` check, and it holds for another writer too.
+    - A compute error disqualifies it through `ok`: `runner._finalize` sets `ok` to False when
+      the final geometry could not be measured, and the run row has no `compute_error` field.
+
+    A row written before `cancelled` and `not_run` reached the run row has neither key and reads
+    as not cancelled. The gate still refuses each measurement that is missing from the probe's
+    g-vector (`vocab.rung_support`, `not_measured`), so a row that passes this rule never lets a
+    claim through without its number.
+    """
+    if row.get("dataset_name") != dataset or row.get("ok") is not True:
+        return False
+    if row.get("cancelled") is True or row.get("not_run"):
+        return False
+    return not any(isinstance(s, dict) and s.get("outcome") == "error"
+                   for s in row.get("steps") or [])
+
+
 def probe_run(dataset: str, seed: int, store: Path | str = ".") -> Optional[dict]:
-    """The first complete, successful run of `dataset` at `seed` in `<store>/outputs`, or None.
+    """The probe run of `dataset` for a request at `seed` in `<store>/outputs`, or None.
+
+    A probe is a row that `is_probe` accepts. The first probe at `seed` comes first. With no
+    probe at `seed`, the first probe of `dataset` at any seed stands in, and its own `seed`
+    differs from the requested one; the action document then names both (`evidence.seed` and
+    `evidence.requested_seed`).
 
     FIRST, in file order: the record is append-only, so the first matching row never changes and
-    every document of one episode names the same evidence. A failed or partial run is not
-    evidence. The rule does not look at the recipe: whoever made the run, it is the probe run.
+    every document of one episode names the same evidence. A later run at the requested seed
+    replaces a stand-in from another seed, which makes a choice made on the older document
+    stale. The rule does not look at the recipe: whoever made the run, it is the probe run.
     """
+    fallback = None
     for row in records.read(Path(store) / "outputs"):
-        if (row.get("dataset_name") == dataset and row.get("seed") == seed
-                and row.get("ok") is True and row.get("complete") is True):
+        if not is_probe(row, dataset):
+            continue
+        if row.get("seed") == seed:
             return row
-    return None
+        if fallback is None:
+            fallback = row
+    return fallback
 
 
 def enumerate_actions(surface: str, *, dataset: Optional[str] = None,
@@ -114,9 +161,7 @@ def enumerate_actions(surface: str, *, dataset: Optional[str] = None,
     }
     doc["gate"] = bool(gate)
     probe = probe_run(dataset, seed, store) if gate else None
-    doc["evidence"] = (None if probe is None else
-                       {"run_id": probe.get("run_id"), "recipe": probe.get("recipe"),
-                        "seed": probe.get("seed")})
+    doc["evidence"] = _evidence(probe, seed)
     if surface == "ledger":
         if not gate:
             return {**doc, **_ledger(obs, None, ())}
@@ -128,6 +173,22 @@ def enumerate_actions(surface: str, *, dataset: Optional[str] = None,
         admitted = set(catalog.load_suite()) | set(vocab.ADMITTED_READOUTS)
         return {**doc, **_ledger(obs, evidence, admitted)}
     return {**doc, **_tune(recipe, step)}
+
+
+def _evidence(probe: Optional[dict], seed: int) -> Optional[dict]:
+    """The document's account of the probe run: its `run_id`, `recipe` and `seed`.
+
+    `requested_seed` is added only when the probe came from another seed than the request. A
+    document whose probe is at the requested seed therefore keeps the keys, and the digest, it
+    had before the fallback existed.
+    """
+    if probe is None:
+        return None
+    named = {"run_id": probe.get("run_id"), "recipe": probe.get("recipe"),
+             "seed": probe.get("seed")}
+    if named["seed"] != seed:
+        named["requested_seed"] = seed
+    return named
 
 
 def _ledger(obs, evidence: Optional[dict], admitted) -> dict:

@@ -33,6 +33,14 @@ Target: 0.1.2, with `manylatents>=0.1.11`.
   keeps `state['emb']`, the coordinates it partitioned. `cluster_quality` now measures the
   silhouette in those coordinates, not in the gene matrix. The labels persist as
   `NN-<step>_clusters.npy`, and the final suite measures the embedding, not a label column.
+- The gate's probe run is now the first run of the dataset that is `ok`, not cancelled, has an
+  empty `not_run` and has no step in `error`. A run whose `normalize` and `transform` skipped (a
+  file that is already log-normalised) is a probe run, so the gate reads its g-vector. The gate
+  still refuses each claim whose measurement is missing. With no probe run at the requested
+  seed, the first probe run of the dataset at any seed is used, and the action document's
+  `evidence` then adds `requested_seed` beside the probe run's `seed` and `run_id`. A document
+  whose probe run is at the requested seed keeps its keys and its digest. Run rows now record
+  `cancelled` and `not_run`, which the rule reads (#37).
 
 ### Fixed
 
