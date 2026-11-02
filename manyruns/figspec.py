@@ -33,9 +33,11 @@ product. The run calls it to save the PNG a person looks at; `export()` calls it
 they submit. "What you saw is what you publish" holds by construction rather than by two
 functions being kept in step.
 
-**Addressed by `run_id`, like every other artifact.** The spec sits beside the PNG in the run's
-`plots/` folder, so `index.jsonl` already reaches it and a figure from six months ago is
-re-emittable without re-running anything.
+**Addressed by `run_id`, like every other artifact.** The spec sits beside the PNG in the
+per-dataset `plots/` folder, which holds the latest run's figure. Each run also keeps a copy of
+the PNG and spec under `state/<run_id>/plots/` (`artifacts.save_figure`), and the run row names
+those files in `run_plots`, so a figure from six months ago is re-emittable without re-running
+anything.
 
 **Never the input matrix.** `coords` is the 2-D projection being drawn, not `state["X"]` — the
 line `artifacts.PERSISTED` draws, for the same reason: geometry leaves, the person's data does

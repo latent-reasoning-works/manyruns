@@ -134,6 +134,46 @@ def save_array(out_dir: Path | str, run_id: Optional[str], index: int, step: str
         return None
 
 
+#: The run's own figures, under its run folder: `state/<run_id>/plots/<stem>.png` with its
+#: `.spec.json` and `.spec.npz`. The per-dataset `<out_dir>/plots/` keeps the latest figure.
+PLOTS = "plots"
+
+
+def save_figure(out_dir: Path | str, run_id: Optional[str], png_path: Path | str) -> list[str]:
+    """Copy one drawn figure (its PNG and the spec files beside it) into this run's folder.
+
+    The per-dataset `plots/<stem>.png` is overwritten by the next run of the same recipe on the
+    same data, so a run's figure is kept here as well, as real files (not links, which the next
+    run would retarget). Returns the paths written, in the order png, `.spec.json`,
+    `.spec.npz`; a file that is not there is left out. Each copy is written then renamed, so a
+    reader never sees a partial file. Best effort, as `save_array`: an OSError skips that file.
+    """
+    import shutil
+
+    from manyruns import figspec as _figspec
+
+    if not run_id:
+        return []
+    src = Path(png_path)
+    stem = _figspec.stem_for(src)
+    sources = [src] + [stem.with_name(stem.name + s) for s in (_figspec.META, _figspec.ARRAYS)]
+    dest = root(out_dir, run_id) / PLOTS
+    written: list[str] = []
+    for source in sources:
+        if not source.is_file():
+            continue
+        target = dest / source.name
+        tmp = target.with_name(f".{target.name}.part")
+        try:
+            dest.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, tmp)
+            os.replace(tmp, target)
+        except OSError:
+            continue
+        written.append(str(target))
+    return written
+
+
 def finish(out_dir: Path | str, run_id: Optional[str], written: dict) -> Optional[str]:
     """Mark the run's state folder complete, and index what is in it.
 

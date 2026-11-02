@@ -439,6 +439,21 @@ def _keep_attempt(rec: dict, attempt: int, write: Any) -> None:
             plots[i] = str(dst)
         write(f"  (kept attempt {attempt} as {dst.name})")
 
+    # THE RUN'S OWN COPIES (manyruns#25) are under `state/<run_id>/plots/`, and every attempt
+    # shares one `run_id`, so the next attempt would overwrite them too. They are each named
+    # in `record["run_plots"]` (png and spec files), so each is moved by its own path and the
+    # record follows, in place, for the reason given above. Silent: the png's rename is reported.
+    run_plots = (rec.get("record") or {}).get("run_plots") or []
+    for i, path in enumerate(run_plots):
+        src = Path(str(path))
+        suffix = next((s for s in (_figspec.ARRAYS, _figspec.META) if src.name.endswith(s)),
+                      src.suffix)
+        if not suffix:
+            continue
+        dst = src.with_name(f"{src.name[: -len(suffix)]}@{attempt}{suffix}")
+        if _move(src, dst) is None and dst.is_file() and isinstance(run_plots, list):
+            run_plots[i] = str(dst)
+
 
 def run_tune_loop(session: Any, step: dict, read: Any, write: Any, *,
                   show_plots: Callable[[dict, Any], None] = _show_plots) -> Optional[dict]:
