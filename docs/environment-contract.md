@@ -327,6 +327,8 @@ folder, in a named subfolder when a writer other than the runner owns it.
 | `outputs/index.jsonl` | `store.append` | one run row per line; `run_id` is a core field |
 | `outputs/decisions.jsonl` | `decisions.append` | one decision row per line; `run_id` is `null` for a row written before its run opened |
 | `outputs/<slug>/state/<run_id>/NN-<step>_<slot>.npy` | `artifacts.save_array` | the arrays a step produced, `NN` its position in the lineage |
+| `outputs/<slug>/state/<run_id>/plots/<stem>.png`, `.spec.json`, `.spec.npz` | `artifacts.save_figure` | this run's own copy of each figure it drew and the figure's spec; the step record and the run row name these files in `run_plots` |
+| `outputs/<slug>/plots/<stem>.png`, `.spec.json`, `.spec.npz` | `pipeline.io._save_scatter`, `figspec.save` | the latest figure for the dataset; the next run of the same recipe overwrites it; the step record names the png in `plots` |
 | `outputs/<slug>/state/<run_id>/COMPLETE` | `runner.finish_carry` | the manifest; written once, when the lineage closes |
 | `outputs/<slug>/state/<run_id>/agent/messages.jsonl` | `agents.propose` | the proposer transcript, one stamped `message` line per loop message |
 | `outputs/<slug>/state/<run_id>/engine/<NN>-<step>/outputs.json` | manylatents `SaveOutputs` through `RunStepLogger` | the engine's own record of latent step `NN` |

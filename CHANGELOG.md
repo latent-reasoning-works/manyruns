@@ -20,6 +20,12 @@ Target: 0.1.2, with `manylatents>=0.1.11`.
   writes anything. The loader uses a given key before it finds a column by name. Plain `run`
   has the matching `--condition-key` flag, and `run --choice` refuses it as a flag. A run row
   records the column it used as `time_key` or `condition_key` (#26).
+- Each run keeps its own figures. A drawn figure is also written as
+  `state/<run_id>/plots/<stem>.png` with its `.spec.json` and `.spec.npz`, so a later run of the
+  same recipe on the same data does not replace an older run's figure. The step record and the
+  run row name these files in `run_plots`; the row's list is `[]` when the run drew nothing. The
+  per-dataset `plots/` still holds the latest figure. A rejected tune attempt's copies are kept
+  as `<stem>@<n>` (#25).
 
 ### Changed
 
