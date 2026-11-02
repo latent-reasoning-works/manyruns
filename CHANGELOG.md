@@ -10,6 +10,9 @@ Target: 0.1.2, with `manylatents>=0.1.11`.
 
 ### Added
 
+- `action_space.check_proposed(proposed, offer, *, store, seed)`: the checks of a reviewed
+  choice's `proposed` block, as a public function, so that a harness can check a filler's block
+  against its action document before a person reviews it.
 - `leiden` draws `plots/leiden.png` with a categorical spec: `color_values` are the raw
   labels, with `category_colors`, `color_by: "leiden"` and `obs_names`.
 - When stdout is not a terminal, `manyruns run` prints one line for each settled step to
