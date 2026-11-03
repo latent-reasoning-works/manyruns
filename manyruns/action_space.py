@@ -181,6 +181,14 @@ def _check_extra(extra: Any) -> None:
 def _check_proposed(choice: dict) -> None:
     """Rules a to g of a proposed block. Rule 13, its legality, runs after the recompute."""
     proposed = choice["proposed"]
+    _check_proposed_keys(proposed)
+    if not str(choice["chooser"]).startswith("human:"):
+        raise _refuse("a choice with proposed is a person's review: its chooser must start "
+                      f"with human:, got {choice['chooser']!r}")
+    _check_proposed_values(proposed, choice["offer_sha256"])
+
+
+def _check_proposed_keys(proposed: Any) -> None:
     if not isinstance(proposed, dict):
         raise _refuse("proposed must be a JSON object")
     missing = [k for k in _PROPOSED_REQUIRED if k not in proposed]
@@ -189,18 +197,39 @@ def _check_proposed(choice: dict) -> None:
     unknown = sorted(str(k) for k in proposed if k not in _PROPOSED_REQUIRED + _PROPOSED_OPTIONAL)
     if unknown:
         raise _refuse(f"proposed has the unknown key {', '.join(unknown)}")
-    if not str(choice["chooser"]).startswith("human:"):
-        raise _refuse("a choice with proposed is a person's review: its chooser must start "
-                      f"with human:, got {choice['chooser']!r}")
+
+
+def _check_proposed_values(proposed: dict, want_sha256: str) -> None:
     _check_chooser(proposed["chooser"], "proposed.chooser")
     _check_bound(proposed["bound"], "proposed.bound")
-    if proposed["offer_sha256"] != choice["offer_sha256"]:
+    if proposed["offer_sha256"] != want_sha256:
         raise _refuse("proposed.offer_sha256 differs from offer_sha256: a proposal and its "
                       "review answer one action document")
     if "scores" in proposed:
         _check_scores(proposed["scores"], "proposed.scores")
     if "meta" in proposed:
         _check_meta(proposed["meta"], "proposed.meta")
+
+
+def check_proposed(proposed: Any, offer: dict, *, store: Path | str = ".", seed: int = 42) -> None:
+    """Judge a filler's proposed block against the action document it answers.
+
+    The same rules as a reviewed choice's `proposed` in `check_choice`: rules a to g (its keys,
+    `chooser`, `bound`, `scores`, `meta`, and `offer_sha256` equal to `offer_sha256(offer)`) and
+    the legality of `proposed.chosen` on `offer`. The rule on the reviewer's own `chooser` is
+    not here, because a block on its own has no reviewer yet. `store` and `seed` are the ones
+    `offer` was built with; a `tune` block reads the ledger of that store. Raises
+    `Refused(2, ...)` at the first failed check; writes nothing.
+    """
+    if not isinstance(offer, dict) or offer.get("surface") not in _CHOICE_SURFACES:
+        surface = offer.get("surface") if isinstance(offer, dict) else None
+        raise _refuse(f"surface {surface!r} takes no choice; a proposal answers a "
+                      f"{' or '.join(_CHOICE_SURFACES)} document")
+    _check_proposed_keys(proposed)
+    _check_proposed_values(proposed, offer_sha256(offer))
+    reason = _illegal({"surface": offer["surface"]}, proposed["chosen"], offer, store, seed)
+    if reason is not None:
+        raise _refuse(f"proposed.chosen is not legal: {reason}")
 
 
 def _check_shape(choice: Any) -> None:

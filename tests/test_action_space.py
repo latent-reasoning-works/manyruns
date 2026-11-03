@@ -1057,3 +1057,55 @@ def test_importing_main_runs_nothing(tmp_path):
                           stdin=subprocess.DEVNULL, timeout=120)
     assert done.returncode == 0, done.stderr
     assert done.stdout.strip() == "IMPORTED"
+
+
+# ── check_proposed: the proposed block on its own, against the document it answers ────
+
+
+def _block(doc: dict, chosen: dict | None = None, **kw) -> dict:
+    block = {"chooser": CHOOSER, "bound": "logits", "chosen": chosen or {"recipe": "embed"},
+             "offer_sha256": offer_sha256(doc)}
+    block.update(kw)
+    return block
+
+
+def test_check_proposed_accepts_a_legal_block(S):
+    assert action_space.check_proposed(_block(S.SWISS_DOC), S.SWISS_DOC, store=S.store) is None
+    tune = _block(S.TUNE_DOC, {"recipe": "embed", "step": "phate", "params": {"knn": 7}},
+                  scores=[{"action": {"recipe": "embed"}, "score": 0.9}], meta={"c": 0.8})
+    assert action_space.check_proposed(tune, S.TUNE_DOC, store=S.store) is None
+
+
+@pytest.mark.parametrize("change, text", [
+    (lambda b: "not an object", "proposed must be a JSON object"),
+    (lambda b: {k: v for k, v in b.items() if k != "bound"}, "proposed has no key bound"),
+    (lambda b: {**b, "verdict": 1}, "proposed has the unknown key verdict"),
+    (lambda b: {**b, "chooser": ""}, "proposed.chooser"),
+    (lambda b: {**b, "bound": "vibes"}, "proposed.bound"),
+    (lambda b: {**b, "offer_sha256": "0" * 64}, "proposed.offer_sha256"),
+    (lambda b: {**b, "meta": BIG_META}, "proposed.meta"),
+    (lambda b: {**b, "chosen": {"recipe": "contrast"}}, "proposed.chosen is not legal"),
+    (lambda b: {**b, "chosen": {"recipe": "embed", "x": 1}}, "proposed.chosen is not legal"),
+])
+def test_check_proposed_refuses_what_check_choice_refuses(S, change, text):
+    with pytest.raises(Refused) as caught:
+        action_space.check_proposed(change(_block(S.SWISS_DOC)), S.SWISS_DOC, store=S.store)
+    assert caught.value.exit_code == 2 and text in caught.value.message, caught.value.message
+
+
+def test_check_proposed_refuses_an_offer_that_takes_no_choice(S):
+    ladder = {**S.SWISS_DOC, "surface": "ladder"}
+    with pytest.raises(Refused) as caught:
+        action_space.check_proposed(_block(ladder), ladder, store=S.store)
+    assert caught.value.exit_code == 2 and "ladder" in caught.value.message
+
+
+def test_check_proposed_agrees_with_check_choice_on_a_reviewed_choice(S):
+    # The same block passes on its own and inside a reviewed choice; an illegal one fails both.
+    good = _accepted(S.LEDGER_CHOICE)
+    check_choice(good, store=S.store, seed=42)
+    action_space.check_proposed(good["proposed"], S.SWISS_DOC, store=S.store)
+    bad = _reviewed({**S.LEDGER_CHOICE, "chosen": {"recipe": "contrast"}}, {"recipe": "embed"})
+    _refused(bad, S.store, "proposed.chosen")
+    with pytest.raises(Refused):
+        action_space.check_proposed(bad["proposed"], S.SWISS_DOC, store=S.store)
