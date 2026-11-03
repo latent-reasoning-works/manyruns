@@ -45,6 +45,7 @@ result = space.act(policy.choose(doc, state, history))
 | `extra` | An optional JSON object for the run row. `act` puts it in the choice document as the key `extra`, and `run --choice` writes it as the run row's `extra` key. manyruns reads none of its keys. |
 | `Refused` | The exception of a refusal. `exit_code` is 2 for a usage error or an illegal or stale choice, and 1 when the action document cannot be loaded. `message` holds the reason. Nothing was written. |
 | `review(choice, *, ask, human_id)` | Shows a filler's choice to a person. `ask` is a callable that gets a copy of the choice and returns `"accept"` or a replacement `chosen`. The result is the reviewed choice: `chooser` is `human:<human_id>`, `bound` is `"none"`, and the key `proposed` holds the filler's choice. `review` checks no legality, reads no file and calls no `act`. |
+| `check_proposed(proposed, offer, *, store=".", seed=42)` | Checks a filler's proposed block on its own, against the action document `offer` that it answers, before any person reviews it. It applies the same rules as `proposed` inside a reviewed choice: the keys, `chooser`, `bound`, `scores`, `meta`, `offer_sha256` equal to the digest of `offer`, and the legality of `chosen` on `offer`. It raises `Refused` with exit code 2, and writes nothing. Pass the `store` and `seed` that `offer` was built with. |
 
 **Model fillers.** `as_tools(doc)` returns the legal actions of one action document as tool
 schemas: one `choose_recipe` tool on `ledger`, and one `tune_<step>` tool per tunable step on
