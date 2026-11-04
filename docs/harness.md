@@ -91,7 +91,7 @@ probe run at any seed, `evidence` is `null` and the gate refuses every claim tha
 
 ## The choice document
 
-A choice document is one JSON object with seven required keys and six optional keys:
+A choice document is one JSON object with seven required keys and eight optional keys:
 
 | Key | Required | Content |
 |---|---|---|
@@ -108,6 +108,8 @@ A choice document is one JSON object with seven required keys and six optional k
 | `extra` | no | A JSON object for the run row. The caller of `act` writes it. |
 | `time_key` | no | The dataset column that holds the time of each cell. |
 | `condition_key` | no | The dataset column that holds the condition (case/control label) of each cell. |
+| `sample_key` | no | The dataset column that holds the sample (donor or replicate) of each cell. |
+| `batch_key` | no | The dataset column that holds the technical batch of each cell. |
 
 `offer_sha256` is the SHA-256 hex digest of
 `json.dumps(doc, sort_keys=True, separators=(",", ":"))`, UTF-8
@@ -139,12 +141,14 @@ and is not `verdict` or `proposer`, because manyruns' own readers read those two
 row's `extra`. The values are any JSON with finite numbers. Its compact JSON is at most
 `EXTRA_MAX_BYTES = 8192` bytes.
 
-**The column keys.** `time_key` and `condition_key` sit at the top level, next to `dataset`,
-because `dataset` is a catalog name (a string), not an object. Each is a non-empty string that
-is a column of the dataset, and the two keys name two different columns. manyruns reads the
+**The column keys.** `time_key`, `condition_key`, `sample_key` and `batch_key` sit at the top
+level, next to `dataset`, because `dataset` is a catalog name (a string), not an object. Each is
+a non-empty string that is a column of the dataset, and no two keys name the same column. manyruns reads the
 dataset's column names to check them; a dataset whose data the engine generates has no columns,
 so a choice on it takes neither key. The run uses a given key before it finds a column by name:
-the time key first, then the condition key, then name detection. The keys are not part of the
+the time key first, then the condition key, then name detection. `sample_key` and `batch_key`
+are never detected: a tool that asks for a `sample` or `batch` role (`input.obs`) is skipped
+when its key is absent. The keys are not part of the
 action document, so they do not change `offer_sha256`. `review` keeps them.
 
 **Refusals.** Every check runs before the first write. An illegal, stale or malformed choice
@@ -159,8 +163,8 @@ exits 2 (`Refused.exit_code == 2`) and writes no file.
 
 `run --choice` refuses the flags that name or change what runs (`DATA`, `--dataset`, `--data`,
 `--recipe`, `--modality`, `--transform`, `--data-set`, `--time-key`, `--condition-key`,
-`--color-by` and `--ask`) with exit 2. The choice document carries `time_key` and
-`condition_key` instead. It prints two lines, each at column 0:
+`--sample-key`, `--batch-key`, `--color-by` and `--ask`) with exit 2. The choice document
+carries the four column keys instead. It prints two lines, each at column 0:
 
 - `decision <decision_id> recorded in <path>`, before the run starts;
 - `run <run_id> recorded in <index>`, after it.
@@ -232,10 +236,45 @@ A run row has the keys `time_key` and `condition_key`: the column whose values t
 its time labels or its condition labels. At most one is a name. Both are `null` when the run
 read no such column, for example a run with `--engine mock`, which reads no data.
 
+A run row has the keys `sample_key` and `batch_key`: the column the run read as each cell's
+sample or batch, or `null` when it read none.
+
 A run row has the keys `cancelled` and `not_run`. `cancelled` is `true` when the run was
 cancelled, abandoned, or had a tune attempt discarded. `not_run` lists the declared steps that
 the run never issued, each as `{"index", "name", "reason"}`. The probe rule reads both. A row
 written before these keys existed has neither key and reads as not cancelled.
+
+## Adding a tool
+
+A tool manifest is the configuration that declares a tool's inputs, outputs and parameters.
+Add the manifest and an adapter that implements those declarations. An adapter translates
+the request into the tool's call and writes its result; it must not import manyruns.
+
+| Manifest key | What to declare |
+|---|---|
+| `input.kind` | `state_matrix` for the current matrix, `state_frame` for the current cells and genes in an `.h5ad`, or `source_file` for the original `.h5ad`. A `source_file` tool is refused after cells have been removed; put it before the filter. |
+| `input.obs` | The observation roles required by a `state_frame` tool: `sample`, `batch` or `condition`. |
+| `output.tables` | The table names and required columns, with `output.schema: result-v1`. |
+| `output.mask` | The observation column containing the boolean mask that selects cells to keep. A mask output cannot also declare fitted outputs or tables. |
+| `declaration` | The parameter declaration checked by manykinds. Its method must match the tool name, its group must be `tool`, and manifest parameter defaults must agree with it. |
+
+On the laptop, create the tool's dependency lock after adding its manifest. Replace `TOOL`
+with the manifest name:
+
+```sh
+uv run --no-sync manyruns tools lock TOOL
+```
+
+The conformance suite in `tests/test_tool_conformance.py` is the check every new tool must
+pass. It validates every bundled manifest and uses local stub adapters to check matrix,
+frame, table and mask behavior after filtering. It also checks that a source-file tool runs
+before filtering and is refused after filtering removes cells.
+
+On the laptop, run the conformance suite:
+
+```sh
+uv run --no-sync pytest tests/test_tool_conformance.py -q
+```
 
 ## Who is a harness
 

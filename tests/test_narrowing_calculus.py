@@ -218,18 +218,14 @@ def test_frame_facts_is_the_shape_union_PLUS_what_a_dataset_declares():
     exactly the definition of surviving a narrowing."""
     from_shapes = {f for facts in vocab.SHAPE_PROVIDES.values() for f in facts}
 
-    # TWO now. `splicing` joined with the frame's `layers` slot: spliced/unspliced counts
+    # `splicing` joined with the frame's `layers` slot: spliced/unspliced counts
     # are a property of the BYTES, exactly as gene names are, and no shape can supply either.
     # A velocity FIELD is deliberately NOT here — it is derived, so a narrowing clears it, and
     # that is the line between a frame fact and a step-produced one.
-    assert vocab.DATASET_FACTS == ("genes", "splicing")
+    assert vocab.DATASET_FACTS == ("genes", "splicing", "samples", "batch")
     assert from_shapes == {"conditions", "time"}
-    # `splicing` joins the day the frame can carry layers. It is DECLARABLE by a dataset
-    # from here (`check_provides` reads DATASET_FACTS) and not yet DEMANDABLE — no step
-    # declares the need until a velocity tool does, which is the rule this file's neighbour
-    # states: the demand lands with the supply, never the other way round. So it is a frame
-    # fact and is deliberately absent from `vocab.facts()`.
-    assert vocab.frame_facts() == {"conditions", "time", "genes", "splicing"}
+    # Dataset facts survive narrowing even before a bundled step demands them.
+    assert vocab.frame_facts() == {"conditions", "time", "genes", "splicing", "samples", "batch"}
 
 
 def test_a_dataset_fact_on_hand_survives_a_narrowing():

@@ -19,6 +19,7 @@ Commands:
 
 A bare `manyruns <folder> --project NAME` still works — it maps to `run`.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -55,8 +56,26 @@ _BULK_SUFFIXES = {".csv", ".tsv", ".txt"}
 #  defensible. `_choose_recipe` now derives from `narrate.offer`, so modality no longer
 #  selects a recipe and the table had no remaining reader.)
 
-_SUBCOMMANDS = ("init", "explore", "run", "open", "projects", "check", "actions", "label",
-                "import-labels", "rate", "correct", "claim", "audit", "tools", "shell")
+_SUBCOMMANDS = (
+    "init",
+    "explore",
+    "run",
+    "open",
+    "projects",
+    "check",
+    "actions",
+    "label",
+    "import-labels",
+    "rate",
+    "correct",
+    "claim",
+    "audit",
+    "tools",
+    "shell",
+)
+
+
+_TOOLS_ACTIONS = ("list", "install", "check", "verify", "lock")
 
 
 def _load_dotenv() -> None:
@@ -146,23 +165,27 @@ def _build_parser() -> argparse.ArgumentParser:
     p_run = sub.add_parser("run", help="init + explore in one go (the default)")
     _add_setup_args(p_run)
     p_run.add_argument(
-        "--ask", metavar="TEXT",
+        "--ask",
+        metavar="TEXT",
         help="say what you want in plain words; it is routed to one legal recipe by rules "
         "(never a model), and a request the data cannot support is declined with nothing run. "
         "Not with --recipe.",
     )
     p_run.add_argument(
-        "--choice", metavar="FILE",
+        "--choice",
+        metavar="FILE",
         help="run the choice in a choice document (JSON): it is checked against the action "
         "document it names, recorded as a decision, then run. Not with DATA, --dataset, --data, "
-        "--recipe, --modality, --transform, --data-set, --time-key, --condition-key, --color-by "
+        "--recipe, --modality, --transform, --data-set, --time-key, --condition-key, "
+        "--sample-key, --batch-key, --color-by "
         "or --ask.",
     )
     p_run.set_defaults(func=cmd_run)
 
     p_open = sub.add_parser(
-        "open", help="reopen a saved project and step through it interactively — no data "
-        "source needed, it's already on file"
+        "open",
+        help="reopen a saved project and step through it interactively — no data "
+        "source needed, it's already on file",
     )
     p_open.add_argument("--project", help="project name (locates outputs/<slug>/project.yaml)")
     _add_engine_args(p_open)
@@ -180,19 +203,35 @@ def _build_parser() -> argparse.ArgumentParser:
     p_actions = sub.add_parser(
         "actions", help="the legal action space for a dataset, as one JSON document on stdout"
     )
-    p_actions.add_argument("dataset", nargs="?", metavar="DATASET",
-                           help="a dataset name from the catalog (not on the ladder surface)")
+    p_actions.add_argument(
+        "dataset",
+        nargs="?",
+        metavar="DATASET",
+        help="a dataset name from the catalog (not on the ladder surface)",
+    )
     p_actions.add_argument("--dataset-dir", help="read datasets from this directory instead")
-    p_actions.add_argument("--surface", choices=("ledger", "tune", "ladder"), default="ledger",
-                           help="ledger: which recipes can run · tune: the knobs of one "
-                                "recipe's steps · ladder: the scorer's rung tables")
+    p_actions.add_argument(
+        "--surface",
+        choices=("ledger", "tune", "ladder"),
+        default="ledger",
+        help="ledger: which recipes can run · tune: the knobs of one "
+        "recipe's steps · ladder: the scorer's rung tables",
+    )
     p_actions.add_argument("--recipe", help="the recipe to tune (tune surface)")
     p_actions.add_argument("--step", help="only this tunable step (tune surface)")
-    p_actions.add_argument("--gate", choices=("on", "off"), default=None,
-                           help="the geometry mask (default on; not on the ladder surface)")
-    p_actions.add_argument("--seed", type=int, default=None,
-                           help="the seed whose probe run the gate reads first; with none "
-                                "there, the first probe run at any seed (default 42)")
+    p_actions.add_argument(
+        "--gate",
+        choices=("on", "off"),
+        default=None,
+        help="the geometry mask (default on; not on the ladder surface)",
+    )
+    p_actions.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="the seed whose probe run the gate reads first; with none "
+        "there, the first probe run at any seed (default 42)",
+    )
     p_actions.set_defaults(func=cmd_actions)
 
     # The four verbs that write `outputs/annotations.jsonl` (`manyruns.annotations`): a judgment
@@ -201,32 +240,56 @@ def _build_parser() -> argparse.ArgumentParser:
     # not list them.
     p_label = sub.add_parser("label", help="record the topologies a stored run shows")
     p_label.add_argument("run", metavar="RUN", help="a run_id from outputs/index.jsonl")
-    p_label.add_argument("--topology", required=True, metavar="T[,T...]",
-                         help="comma list from: " + ", ".join(_vocab.TOPOLOGIES))
+    p_label.add_argument(
+        "--topology",
+        required=True,
+        metavar="T[,T...]",
+        help="comma list from: " + ", ".join(_vocab.TOPOLOGIES),
+    )
     _add_annotator_arg(p_label)
-    p_label.add_argument("--raw-label", action="append", default=[], metavar="L",
-                         help="a free-text label to keep beside the topology (repeatable)")
+    p_label.add_argument(
+        "--raw-label",
+        action="append",
+        default=[],
+        metavar="L",
+        help="a free-text label to keep beside the topology (repeatable)",
+    )
     p_label.set_defaults(func=cmd_label)
 
     p_import = sub.add_parser(
-        "import-labels", help="import a benchmark's topology labels, one row per dataset per "
-        "annotator")
+        "import-labels",
+        help="import a benchmark's topology labels, one row per dataset per annotator",
+    )
     p_import.add_argument("benchmark", metavar="BENCHMARK", help="the benchmark: scshapebench")
-    p_import.add_argument("--source", required=True, metavar="FILE",
-                          help="a local JSON-lines file of {dataset, annotator, labels}")
-    p_import.add_argument("--revision", required=True, metavar="SHA",
-                          help="the benchmark revision the file was cut from (7-40 hex)")
+    p_import.add_argument(
+        "--source",
+        required=True,
+        metavar="FILE",
+        help="a local JSON-lines file of {dataset, annotator, labels}",
+    )
+    p_import.add_argument(
+        "--revision",
+        required=True,
+        metavar="SHA",
+        help="the benchmark revision the file was cut from (7-40 hex)",
+    )
     p_import.set_defaults(func=cmd_import_labels)
 
     p_rate = sub.add_parser("rate", help="rate stored runs: a rank, a rubric, or a blind score")
     p_rate.add_argument("runs", nargs="+", metavar="RUN", help="run_ids from outputs/index.jsonl")
     _add_annotator_arg(p_rate)
-    p_rate.add_argument("--rank", metavar="R,R,...",
-                        help="rank mode: a permutation of 1..n, one rank per run (2+ runs)")
+    p_rate.add_argument(
+        "--rank",
+        metavar="R,R,...",
+        help="rank mode: a permutation of 1..n, one rank per run (2+ runs)",
+    )
     p_rate.add_argument("--novelty", metavar="N,...", help="with --rank: 1-5, one per run")
     p_rate.add_argument("--impact", metavar="N,...", help="with --rank: 1-5, one per run")
-    p_rate.add_argument("--rubric", metavar="FILE",
-                        help="rubric mode: a YAML mapping of axis to a 1-5 score (one run)")
+    p_rate.add_argument(
+        "--rubric",
+        metavar="FILE",
+        help="rubric mode: a YAML mapping of axis to a 1-5 score (one run)",
+    )
     p_rate.add_argument("--blind", action="store_true", help="blind mode (one run)")
     p_rate.add_argument("--accuracy", metavar="N", help="with --blind: 1-5")
     p_rate.add_argument("--completeness", metavar="N", help="with --blind: 1-5")
@@ -234,10 +297,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_correct = sub.add_parser("correct", help="record the step a run should have taken")
     p_correct.add_argument("run", metavar="RUN", help="a run_id from outputs/index.jsonl")
-    p_correct.add_argument("--step", required=True, metavar="N",
-                           help="the position in the run's steps (0 is the first)")
-    p_correct.add_argument("--should", required=True, metavar="STEP",
-                           help="the step that should have run there")
+    p_correct.add_argument(
+        "--step",
+        required=True,
+        metavar="N",
+        help="the position in the run's steps (0 is the first)",
+    )
+    p_correct.add_argument(
+        "--should", required=True, metavar="STEP", help="the step that should have run there"
+    )
     _add_annotator_arg(p_correct)
     p_correct.set_defaults(func=cmd_correct)
 
@@ -247,19 +315,32 @@ def _build_parser() -> argparse.ArgumentParser:
     from manyruns import decisions as _decisions
 
     p_claim = sub.add_parser(
-        "claim", help="record a structure-class verdict about a stored run: one probability per "
-        "topology")
+        "claim",
+        help="record a structure-class verdict about a stored run: one probability per topology",
+    )
     p_claim.add_argument("run_id", metavar="RUN", help="a run_id from outputs/index.jsonl")
-    p_claim.add_argument("--topology", required=True, metavar="NAME=P[,NAME=P...]",
-                         help="independent probabilities in [0, 1]; an unnamed topology is 0. "
-                              "Names: " + ", ".join(_vocab.TOPOLOGIES))
-    p_claim.add_argument("--chooser", required=True, metavar="C",
-                         help="who predicted: human:<pseudonym>, llm:<model>, learner:<id> or "
-                              "prior:<id>; never a real name")
-    p_claim.add_argument("--bound", default=None, metavar="B",
-                         help="how the chooser's output was constrained: "
-                              + ", ".join(_decisions.BOUNDS)
-                              + " (required unless the chooser is human:<pseudonym>)")
+    p_claim.add_argument(
+        "--topology",
+        required=True,
+        metavar="NAME=P[,NAME=P...]",
+        help="independent probabilities in [0, 1]; an unnamed topology is 0. "
+        "Names: " + ", ".join(_vocab.TOPOLOGIES),
+    )
+    p_claim.add_argument(
+        "--chooser",
+        required=True,
+        metavar="C",
+        help="who predicted: human:<pseudonym>, llm:<model>, learner:<id> or "
+        "prior:<id>; never a real name",
+    )
+    p_claim.add_argument(
+        "--bound",
+        default=None,
+        metavar="B",
+        help="how the chooser's output was constrained: "
+        + ", ".join(_decisions.BOUNDS)
+        + " (required unless the chooser is human:<pseudonym>)",
+    )
     p_claim.set_defaults(func=cmd_claim)
 
     p_audit = sub.add_parser(
@@ -274,13 +355,18 @@ def _build_parser() -> argparse.ArgumentParser:
     p_tools = sub.add_parser(
         "tools", help="external tools: what is declared, what is built, and how to build it"
     )
-    p_tools.add_argument("action", nargs="?", default="list",
-                         choices=("list", "install", "check", "verify"),
-                         help="list: what is declared and its state · install: build a locked "
-                              "environment · check: run each built tool's selftest · verify: "
-                              "run one tool on a built-in fixture of 12 cells and check its "
-                              "result against the model seam (run it after every pin change)")
-    p_tools.add_argument("name", nargs="?", help="the tool (required for install and verify)")
+    p_tools.add_argument(
+        "action",
+        nargs="?",
+        default="list",
+        choices=_TOOLS_ACTIONS,
+        help="list: what is declared and its state · install: build a locked "
+        "environment · check: run each built tool's selftest · verify: "
+        "run one tool on a built-in fixture of 12 cells and check its "
+        "result against the model seam (run it after every pin change) · lock: "
+        "compile the manifest's requirements into a hashed lock",
+    )
+    p_tools.add_argument("name", nargs="?", help="the tool (required for install, verify and lock)")
     p_tools.set_defaults(func=cmd_tools)
 
     p_shell = sub.add_parser(
@@ -293,9 +379,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _add_annotator_arg(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--annotator", required=True, metavar="P",
-                   help="your pseudonym, never a real name: lowercase letters, digits, _ and -, "
-                        "at most 32 characters (recorded as human:P)")
+    p.add_argument(
+        "--annotator",
+        required=True,
+        metavar="P",
+        help="your pseudonym, never a real name: lowercase letters, digits, _ and -, "
+        "at most 32 characters (recorded as human:P)",
+    )
 
 
 def _add_setup_args(p: argparse.ArgumentParser) -> None:
@@ -312,8 +402,12 @@ def _add_setup_args(p: argparse.ArgumentParser) -> None:
     # `--data` and reports `ambiguous option: could match --dataset, --data-set` — which is
     # the first thing anyone types, and it reads like the flag doesn't exist. An exact
     # match wins over prefix matching, so declaring it resolves the ambiguity.
-    p.add_argument("--data", dest="data_arg", metavar="PATH",
-                   help="same as the positional DATA (explicit form)")
+    p.add_argument(
+        "--data",
+        dest="data_arg",
+        metavar="PATH",
+        help="same as the positional DATA (explicit form)",
+    )
     p.add_argument("--modality", help="override modality for a named dataset (scrna/bulk)")
     p.add_argument(
         "--recipe",
@@ -422,8 +516,13 @@ def _add_engine_args(p: argparse.ArgumentParser) -> None:
         # unaffected, but it is not advertised as something to reach for.
         + "; ".join(f"{n}: {d}" for n, d, _ in ENGINES if n not in DEV_ENGINES),
     )
-    p.add_argument("--color-by", action="append", default=None, metavar="COLUMN",
-                   help="display metadata column; repeat for one figure per column")
+    p.add_argument(
+        "--color-by",
+        action="append",
+        default=None,
+        metavar="COLUMN",
+        help="display metadata column; repeat for one figure per column",
+    )
     p.add_argument(
         "--device",
         choices=("cpu", "cuda", "mps"),
@@ -459,6 +558,8 @@ def _add_engine_args(p: argparse.ArgumentParser) -> None:
         help="AnnData .obs column with per-cell timepoints — MIOFlow's real time label "
         "(auto-detected from timepoint/day/sample/… if omitted); else pseudotime is used",
     )
+    p.add_argument("--sample-key", help="AnnData .obs column naming each cell's sample.")
+    p.add_argument("--batch-key", help="AnnData .obs column naming each cell's batch.")
     p.add_argument(
         "--condition-key",
         help="AnnData .obs column with the per-cell condition (the case/control label); "
@@ -469,9 +570,9 @@ def _add_engine_args(p: argparse.ArgumentParser) -> None:
         choices=("log1p", "sqrt"),
         default=None,
         help="SHIM: overrides the `transform` step's `method` param (sqrt = PHATE/MIOFlow EB "
-             "convention). The transform is a declared recipe step now; this flag survives so "
-             "existing commands keep working and is DELETED when the general "
-             "`--set <step>.<param>=<value>` lands (backlog item 3).",
+        "convention). The transform is a declared recipe step now; this flag survives so "
+        "existing commands keep working and is DELETED when the general "
+        "`--set <step>.<param>=<value>` lands (backlog item 3).",
     )
 
 
@@ -536,10 +637,16 @@ def cmd_init(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     print(f"project initialized: {proj['path']}")
     if getattr(args, "batch", False):
         return _explore_project(
-            proj, seed=args.seed, fast_dev_run=_smoke(args),
+            proj,
+            seed=args.seed,
+            fast_dev_run=_smoke(args),
             data_kwargs=_parse_kwargs(args.data_kwargs),
-            time_key=args.time_key, condition_key=getattr(args, "condition_key", None),
-            device=args.device, color_by=getattr(args, "color_by", None),
+            time_key=args.time_key,
+            condition_key=getattr(args, "condition_key", None),
+            sample_key=getattr(args, "sample_key", None),
+            batch_key=getattr(args, "batch_key", None),
+            device=args.device,
+            color_by=getattr(args, "color_by", None),
         )
     # Every engine with a step loop is steppable. The predicate here used to be
     # `in ("mock", "manylatents")` — the set from before `mock` left the product surface, and
@@ -553,8 +660,10 @@ def cmd_init(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
 
     if _runner.steppable(proj.get("engine", "mock")):
         return interactive_session(_build_session(proj, args))
-    print(f"(engine={proj.get('engine')} runs a whole recipe in one call and reports no "
-          f"per-step outcome — use `manyruns run` or --batch)")
+    print(
+        f"(engine={proj.get('engine')} runs a whole recipe in one call and reports no "
+        f"per-step outcome — use `manyruns run` or --batch)"
+    )
     return 0
 
 
@@ -581,7 +690,9 @@ def _align_resumed_inputs(loaded: dict, resume: dict) -> tuple[dict, list[str], 
             return None
         ids = np.asarray(ids, dtype=str)
         if ids.ndim != 1 or len(ids) != len(arrays[slot]) or len(set(ids)) != len(ids):
-            raise ValueError(f"cannot resume {slot}: artifact sample IDs must be unique and match its rows")
+            raise ValueError(
+                f"cannot resume {slot}: artifact sample IDs must be unique and match its rows"
+            )
         return ids
 
     def positions(source_ids, wanted, context):
@@ -590,7 +701,9 @@ def _align_resumed_inputs(loaded: dict, resume: dict) -> tuple[dict, list[str], 
             raise ValueError(f"cannot resume {context}: sample IDs must be unique")
         lookup = {value: i for i, value in enumerate(source_ids)}
         if any(value not in lookup for value in wanted):
-            raise ValueError(f"cannot resume {context}: missing sample IDs; restore the original source or start a fresh run")
+            raise ValueError(
+                f"cannot resume {context}: missing sample IDs; restore the original source or start a fresh run"
+            )
         return np.asarray([lookup[value] for value in wanted], dtype=int)
 
     def omit(slot, note):
@@ -603,11 +716,17 @@ def _align_resumed_inputs(loaded: dict, resume: dict) -> tuple[dict, list[str], 
     # Keep the project usable from its source, without guessing which rows survived.
     while slots:
         base = slots[0]
-        if (ids_for(base) is not None or loaded.get("array") is None
-                or loaded["array"].shape[0] == len(arrays[base])):
+        if (
+            ids_for(base) is not None
+            or loaded.get("array") is None
+            or loaded["array"].shape[0] == len(arrays[base])
+        ):
             break
-        omit(base, "artifact has no sample IDs and its row count differs from the source; "
-             "starting fresh from the source when no compatible slots remain")
+        omit(
+            base,
+            "artifact has no sample IDs and its row count differs from the source; "
+            "starting fresh from the source when no compatible slots remain",
+        )
         slots.pop(0)
     if not slots:
         return loaded, notes, True
@@ -619,12 +738,15 @@ def _align_resumed_inputs(loaded: dict, resume: dict) -> tuple[dict, list[str], 
     if wanted is not None:
         source_ids = loaded.get("obs_names")
         if source_ids is None:
-            raise ValueError("cannot resume: source has no unique sample IDs to align with the artifact; start a fresh run")
+            raise ValueError(
+                "cannot resume: source has no unique sample IDs to align with the artifact; start a fresh run"
+            )
         rows = positions(source_ids, wanted, "source")
         for key in ("array", "counts", "labels", "obs_names"):
             if loaded.get(key) is not None:
                 loaded[key] = loaded[key][rows]
         loaded["layers"] = {k: v[rows] for k, v in (loaded.get("layers") or {}).items()}
+        loaded["obs"] = {k: v[rows] for k, v in (loaded.get("obs") or {}).items()}
         loaded["color"] = [{**c, "values": c["values"][rows]} for c in loaded.get("color") or ()]
     for slot in slots[1:]:
         try:
@@ -638,9 +760,11 @@ def _align_resumed_inputs(loaded: dict, resume: dict) -> tuple[dict, list[str], 
             continue
         if ids is None:
             unverified.append(slot)
-    notes.extend(f"cannot verify resumed {slot}: positional alignment is unverified; "
-                 "source metadata will not be attached to derived coordinates"
-                 for slot in unverified)
+    notes.extend(
+        f"cannot verify resumed {slot}: positional alignment is unverified; "
+        "source metadata will not be attached to derived coordinates"
+        for slot in unverified
+    )
     return loaded, notes, not unverified
 
 
@@ -678,8 +802,13 @@ def _build_session(args_proj: dict, args: argparse.Namespace, *, resume: bool = 
     out_dir = Path("outputs") / _slug(args_proj["project"])
 
     data_kwargs, declared_shape = _dataset_contract(
-        args_proj.get("dataset_name"), dataset,
-        {**(args_proj.get("data_kwargs") or {}), **_parse_kwargs(getattr(args, "data_kwargs", None))})
+        args_proj.get("dataset_name"),
+        dataset,
+        {
+            **(args_proj.get("data_kwargs") or {}),
+            **_parse_kwargs(getattr(args, "data_kwargs", None)),
+        },
+    )
     array, labels, label_kind = None, None, None
     _loaded = dict(_EMPTY_INPUTS)
     # `real` is loaded here too, and that is the other half of deleting the gate: it was
@@ -690,10 +819,17 @@ def _build_session(args_proj: dict, args: argparse.Namespace, *, resume: bool = 
     if engine == "manylatents" and (dataset or data_folder is not None):
         if data_folder is not None:
             print(f"loading {data_folder} …")
-        _loaded = _load_inputs(engine, data_folder, dataset, getattr(args, "time_key", None),
-                               declared_layers(args_proj.get("recipe")),
-                               **({"color_by": args.color_by} if getattr(args, "color_by", None) else {}),
-                               condition_key=getattr(args, "condition_key", None))
+        _loaded = _load_inputs(
+            engine,
+            data_folder,
+            dataset,
+            getattr(args, "time_key", None),
+            declared_layers(args_proj.get("recipe")),
+            **({"color_by": args.color_by} if getattr(args, "color_by", None) else {}),
+            condition_key=getattr(args, "condition_key", None),
+            sample_key=getattr(args, "sample_key", None),
+            batch_key=getattr(args, "batch_key", None),
+        )
         array, labels, label_kind = _loaded["array"], _loaded["labels"], _loaded["kind"]
     # The REPL never reaches `run_explorations` — the session drives the executors directly —
     # so the refusal has to be made here too, before the prompt opens. `runner._ml_lightning`
@@ -725,7 +861,8 @@ def _build_session(args_proj: dict, args: argparse.Namespace, *, resume: bool = 
     # actually came from, which is the run `parent` has to address.
     resumed_parent = (
         {"run_id": resume["origin"]["emb"], "index": resume["index"]["emb"]}
-        if resume and "emb" in resume["arrays"] else None
+        if resume and "emb" in resume["arrays"]
+        else None
     )
 
     _require_source_shape(engine, args_proj["recipe"], dataset, array, declared_shape, resumed_emb)
@@ -737,11 +874,17 @@ def _build_session(args_proj: dict, args: argparse.Namespace, *, resume: bool = 
         fast_dev_run=_smoke(args),
         modality=args_proj["modality"],
         recipe=args_proj["recipe"],
+        source_path=_loaded.get("source_path"),
+        obs=_loaded.get("obs"),
         array=array,
         labels=labels,
-        counts=_loaded["counts"], genes=_loaded["genes"], layers=_loaded["layers"],
-        color=_loaded.get("color"), sample_ids=_loaded.get("obs_names"), label_key=_loaded.get("label_key"),
-        label_kind=label_kind,   # so a stepped manylatents run won't read a condition axis as time
+        counts=_loaded["counts"],
+        genes=_loaded["genes"],
+        layers=_loaded["layers"],
+        color=_loaded.get("color"),
+        sample_ids=_loaded.get("obs_names"),
+        label_key=_loaded.get("label_key"),
+        label_kind=label_kind,  # so a stepped manylatents run won't read a condition axis as time
         dataset=dataset,
         dataset_name=args_proj.get("dataset_name"),
         data_kwargs=data_kwargs,
@@ -768,6 +911,11 @@ def _build_session(args_proj: dict, args: argparse.Namespace, *, resume: bool = 
         for note in resume_notes:
             warnings.warn(note, UserWarning, stacklevel=2)
     session.source = (dataset and f"dataset:{dataset}") or (data_folder or args_proj["project"])
+    # The run row's `sample_key`/`batch_key` — `interactive_session` records them from here,
+    # the way it already reads `session.source`, because `_loaded` itself does not survive
+    # past this function and the Session carries no other memory of which column was read.
+    session.sample_key = _loaded.get("sample_key")
+    session.batch_key = _loaded.get("batch_key")
     return session
 
 
@@ -788,18 +936,24 @@ def interactive_session(session, read=input, write=print) -> int:
 
     write(f"✓ initialized — modality {session.modality}, engine {session.engine}")
     if session.engine == "mock":
-        write("  (mock engine: fast fake numbers, no plots — restart with "
-              "`--engine manylatents` for real PHATE/MIOFlow + plots)")
+        write(
+            "  (mock engine: fast fake numbers, no plots — restart with "
+            "`--engine manylatents` for real PHATE/MIOFlow + plots)"
+        )
     resumed = getattr(session, "resumed", None)
     if resumed:
         produced = ", ".join(f"{step}→{slot}" for step, slot, _ in resumed["steps"])
-        write(f"  resumed from run {resumed['run_id'][:8]}: {produced} "
-              "(a step that recomputes it overwrites this)")
+        write(
+            f"  resumed from run {resumed['run_id'][:8]}: {produced} "
+            "(a step that recomputes it overwrites this)"
+        )
     # What THIS session can dispatch, not a fixed four: a step whose group has no executor on
     # this engine would otherwise be offered and then decline.
     offered = ", ".join(available_actions(session.engine)) or "(none on this engine)"
-    write(f"  steps: {offered}   meta: run · summary · trace · help · quit"
-          "   (type `help` for the full alias list, or `<step> key=value ...` to override params)")
+    write(
+        f"  steps: {offered}   meta: run · summary · trace · help · quit"
+        "   (type `help` for the full alias list, or `<step> key=value ...` to override params)"
+    )
     declared = [s["name"] for s in (session.recipe.get("steps") or [])]
     accepted: list[dict] = []
     retried = False
@@ -830,8 +984,11 @@ def interactive_session(session, read=input, write=print) -> int:
             continue
         if name == "summary":
             path = write_summary(
-                session.project, getattr(session, "source", session.project),
-                session.modality, session.results(), session.recipe,
+                session.project,
+                getattr(session, "source", session.project),
+                session.modality,
+                session.results(),
+                session.recipe,
             )
             write(f"✓ summary written: {path}")
             continue
@@ -881,9 +1038,15 @@ def interactive_session(session, read=input, write=print) -> int:
         from manyruns import store as _store
 
         try:
-            index = _store.append(results, extra={
-                "source": str(getattr(session, "source", session.project)),
-                "modality": session.modality})
+            index = _store.append(
+                results,
+                extra={
+                    "source": str(getattr(session, "source", session.project)),
+                    "modality": session.modality,
+                    "sample_key": getattr(session, "sample_key", None),
+                    "batch_key": getattr(session, "batch_key", None),
+                },
+            )
             write(f"run {results.get('run_id')} recorded in {index}")
         except OSError as e:  # noqa: BLE001 - a read-only cwd must not lose a finished session
             write(f"(run not recorded: {e})")
@@ -928,14 +1091,18 @@ def cmd_app(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         from manyruns import shell
         from manyruns.installation import ENVIRONMENT_REPAIR
 
-        print(f"note: the interactive app is unavailable ({e}) — falling back to the console. "
-              f"To restore it, {ENVIRONMENT_REPAIR}.", file=sys.stderr)
+        print(
+            f"note: the interactive app is unavailable ({e}) — falling back to the console. "
+            f"To restore it, {ENVIRONMENT_REPAIR}.",
+            file=sys.stderr,
+        )
         return shell.run_shell(args)
     return run(args)
 
 
 def _saved_project(
-    args: argparse.Namespace, parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
 ) -> tuple[str, dict]:
     """The saved project a command names, with the CLI's recipe overrides folded in.
 
@@ -961,8 +1128,11 @@ def _saved_project(
         from manyruns.shell import _resolve_dataset
 
         folder, dataset, _, _ = _resolve_dataset(proj["dataset_name"])
-        proj = {**proj, "data_folder": str(folder) if folder is not None else None,
-                "dataset": dataset}
+        proj = {
+            **proj,
+            "data_folder": str(folder) if folder is not None else None,
+            "dataset": dataset,
+        }
     # Only when the flag was actually typed: a project.yaml that somehow carries no `recipe`
     # must keep failing where it failed before, not inside a shim.
     if getattr(args, "transform", None):
@@ -974,10 +1144,16 @@ def cmd_explore(args: argparse.Namespace, parser: argparse.ArgumentParser) -> in
     """#12/#13 — run the recipe on an already-initialized project, write the summary."""
     _project, proj = _saved_project(args, parser)
     return _explore_project(
-        proj, seed=args.seed,
-        fast_dev_run=_smoke(args), data_kwargs=_parse_kwargs(args.data_kwargs),
-        time_key=args.time_key, condition_key=getattr(args, "condition_key", None),
-        device=args.device, color_by=getattr(args, "color_by", None),
+        proj,
+        seed=args.seed,
+        fast_dev_run=_smoke(args),
+        data_kwargs=_parse_kwargs(args.data_kwargs),
+        time_key=args.time_key,
+        condition_key=getattr(args, "condition_key", None),
+        sample_key=getattr(args, "sample_key", None),
+        batch_key=getattr(args, "batch_key", None),
+        device=args.device,
+        color_by=getattr(args, "color_by", None),
     )
 
 
@@ -1005,20 +1181,35 @@ def cmd_run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         print(declined.reframe)
         return 0
     return _explore_project(
-        proj, seed=args.seed,
-        fast_dev_run=_smoke(args), data_kwargs=_parse_kwargs(args.data_kwargs),
-        time_key=args.time_key, condition_key=getattr(args, "condition_key", None),
-        device=args.device, color_by=getattr(args, "color_by", None),
+        proj,
+        seed=args.seed,
+        fast_dev_run=_smoke(args),
+        data_kwargs=_parse_kwargs(args.data_kwargs),
+        time_key=args.time_key,
+        condition_key=getattr(args, "condition_key", None),
+        sample_key=getattr(args, "sample_key", None),
+        batch_key=getattr(args, "batch_key", None),
+        device=args.device,
+        color_by=getattr(args, "color_by", None),
     )
 
 
 #: The flags a choice document replaces: each names or changes what runs. Pairs of the
 #: namespace attribute and the name the refusal prints.
 _CHOICE_REPLACES = (
-    ("data_folder", "DATA"), ("dataset", "--dataset"), ("data_arg", "--data"),
-    ("recipe", "--recipe"), ("modality", "--modality"), ("transform", "--transform"),
-    ("data_kwargs", "--data-set"), ("time_key", "--time-key"),
-    ("condition_key", "--condition-key"), ("color_by", "--color-by"), ("ask", "--ask"),
+    ("data_folder", "DATA"),
+    ("dataset", "--dataset"),
+    ("data_arg", "--data"),
+    ("recipe", "--recipe"),
+    ("modality", "--modality"),
+    ("transform", "--transform"),
+    ("data_kwargs", "--data-set"),
+    ("time_key", "--time-key"),
+    ("condition_key", "--condition-key"),
+    ("sample_key", "--sample-key"),
+    ("batch_key", "--batch-key"),
+    ("color_by", "--color-by"),
+    ("ask", "--ask"),
 )
 
 
@@ -1041,9 +1232,15 @@ def _cmd_run_choice(args: argparse.Namespace, parser: argparse.ArgumentParser) -
     if not isinstance(choice, dict):
         parser.error(f"the choice file {args.choice} does not hold a JSON object")
     try:
-        result = _run_choice(choice, engine=args.engine, seed=args.seed, device=args.device,
-                             project=args.project, parser=parser,
-                             fast_dev_run=_smoke(args))
+        result = _run_choice(
+            choice,
+            engine=args.engine,
+            seed=args.seed,
+            device=args.device,
+            project=args.project,
+            parser=parser,
+            fast_dev_run=_smoke(args),
+        )
     except action_space.Refused as refused:
         if refused.exit_code == 2:
             parser.error(refused.message)
@@ -1052,9 +1249,16 @@ def _cmd_run_choice(args: argparse.Namespace, parser: argparse.ArgumentParser) -
     return result["exit_code"]
 
 
-def _run_choice(choice: dict, *, engine: Optional[str], seed: int, device: Optional[str],
-                project: Optional[str], parser: argparse.ArgumentParser,
-                fast_dev_run: bool = False) -> dict:
+def _run_choice(
+    choice: dict,
+    *,
+    engine: Optional[str],
+    seed: int,
+    device: Optional[str],
+    project: Optional[str],
+    parser: argparse.ArgumentParser,
+    fast_dev_run: bool = False,
+) -> dict:
     """Run one checked choice and return the result document.
 
     The order is the contract: check (nothing written on a refusal), set up the project, write
@@ -1069,26 +1273,49 @@ def _run_choice(choice: dict, *, engine: Optional[str], seed: int, device: Optio
     dataset = choice["dataset"]
     surface = choice["surface"]
     time_key, condition_key = choice.get("time_key"), choice.get("condition_key")
+    sample_key, batch_key = choice.get("sample_key"), choice.get("batch_key")
     setup = argparse.Namespace(
-        engine=engine, dataset=dataset, data_folder=None, data_arg=None,
-        project=project or _project_name_for(dataset), recipe=chosen["recipe"], ask=None,
-        transform=None, data_kwargs=None, time_key=time_key, condition_key=condition_key,
-        color_by=None, modality=None)
+        engine=engine,
+        dataset=dataset,
+        data_folder=None,
+        data_arg=None,
+        project=project or _project_name_for(dataset),
+        recipe=chosen["recipe"],
+        ask=None,
+        transform=None,
+        data_kwargs=None,
+        time_key=time_key,
+        condition_key=condition_key,
+        sample_key=sample_key,
+        batch_key=batch_key,
+        color_by=None,
+        modality=None,
+    )
     step_params = (chosen["step"], chosen["params"]) if surface == "tune" else None
     proj = _setup_project(setup, parser, step_params=step_params)
 
     proposed = None
     if "proposed" in choice:
         filler = choice["proposed"]
-        proposed = {"chooser": filler["chooser"], "bound": filler["bound"],
-                    "chosen": action_space.label(choice, filler["chosen"], doc),
-                    "offer_sha256": filler["offer_sha256"]}
+        proposed = {
+            "chooser": filler["chooser"],
+            "bound": filler["bound"],
+            "chosen": action_space.label(choice, filler["chosen"], doc),
+            "offer_sha256": filler["offer_sha256"],
+        }
         proposed.update({k: filler[k] for k in ("scores", "meta") if k in filler})
     decision_id = decisions.append(
-        offered=doc["offered"], chosen=action_space.label(choice, chosen, doc),
-        dataset=doc["dataset"]["name"], shape=doc["dataset"]["shape"],
-        topology=doc["dataset"]["topology"], surface=surface,
-        chooser=choice["chooser"], bound=choice["bound"], gate=doc["gate"], proposed=proposed)
+        offered=doc["offered"],
+        chosen=action_space.label(choice, chosen, doc),
+        dataset=doc["dataset"]["name"],
+        shape=doc["dataset"]["shape"],
+        topology=doc["dataset"]["topology"],
+        surface=surface,
+        chooser=choice["chooser"],
+        bound=choice["bound"],
+        gate=doc["gate"],
+        proposed=proposed,
+    )
     result = {"schema_version": 1, "decision_id": decision_id, "run_id": None, "exit_code": 1}
     if decision_id is None:
         # A harness exists to produce the record. With no person waiting, a choice whose
@@ -1098,9 +1325,18 @@ def _run_choice(choice: dict, *, engine: Optional[str], seed: int, device: Optio
     print(f"decision {decision_id} recorded in {decisions.index_path('outputs')}")
     record: dict = {}
     result["exit_code"] = _explore_project(
-        proj, seed=seed, fast_dev_run=fast_dev_run, device=device,
-        time_key=time_key, condition_key=condition_key,
-        decision_id=decision_id, record=record, run_extra=choice.get("extra"))
+        proj,
+        seed=seed,
+        fast_dev_run=fast_dev_run,
+        device=device,
+        time_key=time_key,
+        condition_key=condition_key,
+        sample_key=sample_key,
+        batch_key=batch_key,
+        decision_id=decision_id,
+        record=record,
+        run_extra=choice.get("extra"),
+    )
     result["run_id"] = record.get("run_id")
     return result
 
@@ -1124,8 +1360,10 @@ def cmd_open(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     # Same predicate `cmd_init` gates on, for the same reason: the learner's engine ran a whole recipe
     # in one downstream call and reports no per-step outcome, so there is no REPL to open.
     if not _runner.steppable(proj.get("engine", "mock")):
-        print(f"(engine={proj.get('engine')} runs a whole recipe in one call and reports no "
-              f"per-step outcome — use `manyruns explore --project {project!r}` instead)")
+        print(
+            f"(engine={proj.get('engine')} runs a whole recipe in one call and reports no "
+            f"per-step outcome — use `manyruns explore --project {project!r}` instead)"
+        )
         return 0
     # `load_project` returns the bare yaml contents (no `path` key — that's `_setup_project`'s
     # own return shape, not `project.yaml`'s), so the path is re-derived the same way
@@ -1149,10 +1387,14 @@ def cmd_projects(args: argparse.Namespace, parser: argparse.ArgumentParser) -> i
         return 0
     for path in paths:
         proj = OmegaConf.to_container(OmegaConf.load(path), resolve=True)
-        source = (proj.get("dataset") and f"dataset:{proj['dataset']}") or proj.get("data_folder") or "?"
+        source = (
+            (proj.get("dataset") and f"dataset:{proj['dataset']}") or proj.get("data_folder") or "?"
+        )
         recipe = (proj.get("recipe") or {}).get("name", "?")
-        print(f"{proj.get('project', path.parent.name):<24} {source:<40} "
-              f"engine={proj.get('engine', '?'):<12} recipe={recipe}")
+        print(
+            f"{proj.get('project', path.parent.name):<24} {source:<40} "
+            f"engine={proj.get('engine', '?'):<12} recipe={recipe}"
+        )
     return 0
 
 
@@ -1177,8 +1419,10 @@ def cmd_audit(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         for note in v.notes:
             print(f"       {note}")
     counts = {k: sum(1 for v in verdicts if v.verdict == k) for k in _admit.VERDICTS}
-    print(f"\n{counts['admitted']} admitted · {counts['flagged']} flagged · "
-          f"{counts['rejected']} rejected · {counts['deferred']} deferred")
+    print(
+        f"\n{counts['admitted']} admitted · {counts['flagged']} flagged · "
+        f"{counts['rejected']} rejected · {counts['deferred']} deferred"
+    )
     return 1 if counts["rejected"] else 0
 
 
@@ -1194,15 +1438,23 @@ def cmd_actions(args: argparse.Namespace, parser: argparse.ArgumentParser) -> in
     from manyruns import actions
 
     if args.surface == "ladder":
-        given = [flag for flag, value in (("--gate", args.gate), ("--seed", args.seed))
-                 if value is not None]
+        given = [
+            flag
+            for flag, value in (("--gate", args.gate), ("--seed", args.seed))
+            if value is not None
+        ]
         if given:
             parser.error(f"the ladder surface takes no {', '.join(given)}")
     try:
         doc = actions.enumerate_actions(
-            args.surface, dataset=args.dataset, recipe=args.recipe, step=args.step,
-            dataset_dir=args.dataset_dir, gate=args.gate != "off",
-            seed=42 if args.seed is None else args.seed)
+            args.surface,
+            dataset=args.dataset,
+            recipe=args.recipe,
+            step=args.step,
+            dataset_dir=args.dataset_dir,
+            gate=args.gate != "off",
+            seed=42 if args.seed is None else args.seed,
+        )
     except actions.UsageError as exc:
         parser.error(str(exc))
     except actions.LoadError as exc:
@@ -1223,8 +1475,10 @@ def _annotator(args: argparse.Namespace, parser: argparse.ArgumentParser) -> str
     from manyruns import annotations
 
     if not re.fullmatch(annotations.PSEUDONYM_PATTERN, args.annotator):
-        parser.error(f"--annotator {args.annotator!r} is not a pseudonym: lowercase letters, "
-                     "digits, _ and -, at most 32 characters, starting with a letter or digit")
+        parser.error(
+            f"--annotator {args.annotator!r} is not a pseudonym: lowercase letters, "
+            "digits, _ and -, at most 32 characters, starting with a letter or digit"
+        )
     return "human:" + args.annotator
 
 
@@ -1246,8 +1500,10 @@ def _missing_runs(run_ids, found: dict) -> int:
 
 
 def _not_written() -> int:
-    print("error: the annotation was not recorded (outputs/annotations.jsonl could not be "
-          "written)", file=sys.stderr)
+    print(
+        "error: the annotation was not recorded (outputs/annotations.jsonl could not be written)",
+        file=sys.stderr,
+    )
     return 1
 
 
@@ -1258,8 +1514,9 @@ def cmd_label(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     given = [t.strip() for t in args.topology.split(",") if t.strip()]
     unknown = [t for t in given if t not in _vocab.TOPOLOGIES]
     if unknown:
-        parser.error(f"unknown topology {', '.join(unknown)}: must be from "
-                     f"{', '.join(_vocab.TOPOLOGIES)}")
+        parser.error(
+            f"unknown topology {', '.join(unknown)}: must be from {', '.join(_vocab.TOPOLOGIES)}"
+        )
     if not given:
         parser.error("--topology needs at least one value")
     chooser = _annotator(args, parser)
@@ -1270,11 +1527,14 @@ def cmd_label(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     dataset = run.get("dataset_name")
     if dataset is None:
         dataset = run.get("dataset")
-    payload = {"dataset": dataset,
-               "topology": [t for t in _vocab.TOPOLOGIES if t in given],
-               "raw": list(args.raw_label)}
-    aid = annotations.append("label", run_id=args.run, chooser=chooser, payload=payload,
-                             out_dir="outputs")
+    payload = {
+        "dataset": dataset,
+        "topology": [t for t in _vocab.TOPOLOGIES if t in given],
+        "raw": list(args.raw_label),
+    }
+    aid = annotations.append(
+        "label", run_id=args.run, chooser=chooser, payload=payload, out_dir="outputs"
+    )
     if aid is None:
         return _not_written()
     print(aid)
@@ -1309,8 +1569,10 @@ def _read_benchmark_lines(data: bytes) -> tuple[list[dict], Optional[str]]:
         if not all(isinstance(label, str) for label in obj["labels"]):
             return [], f"line {n}: every label must be a str"
         if not re.fullmatch(annotations.PSEUDONYM_PATTERN, obj["annotator"]):
-            return [], (f"line {n}: annotator {obj['annotator']!r} is not a pseudonym "
-                        "(lowercase letters, digits, _ and -, at most 32 characters)")
+            return [], (
+                f"line {n}: annotator {obj['annotator']!r} is not a pseudonym "
+                "(lowercase letters, digits, _ and -, at most 32 characters)"
+            )
         pair = (obj["dataset"], obj["annotator"])
         if pair in seen:
             return [], f"line {n}: dataset {pair[0]!r} and annotator {pair[1]!r} repeat a line"
@@ -1348,8 +1610,11 @@ def cmd_import_labels(args: argparse.Namespace, parser: argparse.ArgumentParser)
     for row in annotations.read("outputs"):
         src = (row.get("payload") or {}).get("source") if row.get("kind") == "label" else None
         if isinstance(src, dict) and src.get("sha256") == digest:
-            print(f"error: this file was already imported (sha256 {digest[:12]}…); nothing was "
-                  "imported", file=sys.stderr)
+            print(
+                f"error: this file was already imported (sha256 {digest[:12]}…); nothing was "
+                "imported",
+                file=sys.stderr,
+            )
             return 1
     meta = {"name": "scshapebench", "revision": args.revision, "sha256": digest}
     written = skipped = 0
@@ -1358,10 +1623,22 @@ def cmd_import_labels(args: argparse.Namespace, parser: argparse.ArgumentParser)
         if not topology:
             skipped += 1
             continue
-        payload = {"dataset": obj["dataset"], "topology": topology,
-                   "raw": list(obj["labels"]), "source": dict(meta)}
-        if annotations.append("label", run_id=None, chooser="human:" + obj["annotator"],
-                              payload=payload, out_dir="outputs") is None:
+        payload = {
+            "dataset": obj["dataset"],
+            "topology": topology,
+            "raw": list(obj["labels"]),
+            "source": dict(meta),
+        }
+        if (
+            annotations.append(
+                "label",
+                run_id=None,
+                chooser="human:" + obj["annotator"],
+                payload=payload,
+                out_dir="outputs",
+            )
+            is None
+        ):
             print(f"error: the write failed after {written} rows", file=sys.stderr)
             return 1
         written += 1
@@ -1421,20 +1698,31 @@ def cmd_rate(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
 
     runs = list(args.runs)
     n = len(runs)
-    modes = [m for m, on in (("--rank", args.rank is not None),
-                             ("--rubric", args.rubric is not None),
-                             ("--blind", args.blind)) if on]
+    modes = [
+        m
+        for m, on in (
+            ("--rank", args.rank is not None),
+            ("--rubric", args.rubric is not None),
+            ("--blind", args.blind),
+        )
+        if on
+    ]
     if len(modes) != 1:
-        parser.error("give exactly one of --rank, --rubric or --blind"
-                     + (f" (got {', '.join(modes)})" if modes else ""))
+        parser.error(
+            "give exactly one of --rank, --rubric or --blind"
+            + (f" (got {', '.join(modes)})" if modes else "")
+        )
     mode = modes[0]
     if args.rank is None:
         given = [f for f, v in (("--novelty", args.novelty), ("--impact", args.impact)) if v]
         if given:
             parser.error(f"{', '.join(given)} needs --rank")
     if not args.blind:
-        given = [f for f, v in (("--accuracy", args.accuracy),
-                                ("--completeness", args.completeness)) if v is not None]
+        given = [
+            f
+            for f, v in (("--accuracy", args.accuracy), ("--completeness", args.completeness))
+            if v is not None
+        ]
         if given:
             parser.error(f"{', '.join(given)} needs --blind")
     if mode == "--rank" and n < 2:
@@ -1459,20 +1747,28 @@ def cmd_rate(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
             if len(scores) != n:
                 parser.error(f"{flag} needs {n} values, one per run, got {len(scores)}")
             extra[flag] = [_score(flag, s, parser) for s in scores]
-        payloads = [{"mode": "rank", "rank": ranks[i], "compared": list(runs),
-                     "novelty": extra["--novelty"][i], "impact": extra["--impact"][i]}
-                    for i in range(n)]
+        payloads = [
+            {
+                "mode": "rank",
+                "rank": ranks[i],
+                "compared": list(runs),
+                "novelty": extra["--novelty"][i],
+                "impact": extra["--impact"][i],
+            }
+            for i in range(n)
+        ]
     elif mode == "--blind":
         if args.accuracy is None or args.completeness is None:
             parser.error("--blind needs --accuracy and --completeness")
         if "," in args.accuracy or "," in args.completeness:
             parser.error("--accuracy and --completeness take one score each")
         acc = _score("--accuracy", _int_list("--accuracy", args.accuracy, parser)[0], parser)
-        com = _score("--completeness",
-                     _int_list("--completeness", args.completeness, parser)[0], parser)
+        com = _score(
+            "--completeness", _int_list("--completeness", args.completeness, parser)[0], parser
+        )
         payloads = [{"mode": "blind", "blind": True, "accuracy": acc, "completeness": com}]
     else:
-        payloads = []   # filled after the run check: a bad file must not hide an unknown run
+        payloads = []  # filled after the run check: a bad file must not hide an unknown run
 
     found = _last_runs(runs)
     if any(r not in found for r in runs):
@@ -1484,8 +1780,9 @@ def cmd_rate(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
             return 1
         payloads = [{"mode": "rubric", "scores": scores, "rubric_sha256": digest}]
     for run_id, payload in zip(runs, payloads):
-        aid = annotations.append("rating", run_id=run_id, chooser=chooser, payload=payload,
-                                 out_dir="outputs")
+        aid = annotations.append(
+            "rating", run_id=run_id, chooser=chooser, payload=payload, out_dir="outputs"
+        )
         if aid is None:
             return _not_written()
         print(aid)
@@ -1506,8 +1803,9 @@ def cmd_claim(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     except ValueError as exc:
         parser.error(str(exc))
     try:
-        payload = verdict.write_verdict(args.run_id, probs, chooser=args.chooser,
-                                        bound=args.bound, out_dir="outputs")
+        payload = verdict.write_verdict(
+            args.run_id, probs, chooser=args.chooser, bound=args.bound, out_dir="outputs"
+        )
     except ValueError as exc:
         parser.error(str(exc))
     except LookupError as exc:
@@ -1537,13 +1835,23 @@ def cmd_correct(args: argparse.Namespace, parser: argparse.ArgumentParser) -> in
     run = found[args.run]
     steps = run.get("steps") or []
     if step >= len(steps):
-        print(f"error: --step {step} is past the end: run {args.run} has {len(steps)} "
-              f"step{'s' if len(steps) != 1 else ''}", file=sys.stderr)
+        print(
+            f"error: --step {step} is past the end: run {args.run} has {len(steps)} "
+            f"step{'s' if len(steps) != 1 else ''}",
+            file=sys.stderr,
+        )
         return 1
     did = steps[step].get("name") if isinstance(steps[step], dict) else None
-    aid = annotations.append("correction", run_id=args.run, chooser=chooser,
-                             payload={"did": did}, decision_id=run.get("decision_id"),
-                             step=step, should=resolved["name"], out_dir="outputs")
+    aid = annotations.append(
+        "correction",
+        run_id=args.run,
+        chooser=chooser,
+        payload={"did": did},
+        decision_id=run.get("decision_id"),
+        step=step,
+        should=resolved["name"],
+        out_dir="outputs",
+    )
     if aid is None:
         return _not_written()
     print(aid)
@@ -1563,7 +1871,7 @@ def cmd_check(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     gaps: list = []
     ladder_failed = False
     ddir = getattr(args, "dataset_dir", None)
-    recipes: list[dict] = []   # the valid ones, for the coverage pass
+    recipes: list[dict] = []  # the valid ones, for the coverage pass
     datasets: list[dict] = []
 
     print("recipes")
@@ -1625,8 +1933,11 @@ def cmd_check(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         # the readable summary; legality is computed per dataset.
         shapes = sorted({d.get("shape", "unknown") for d in datasets})
         for r in recipes:
-            runs_on = [d for d in datasets
-                       if not unmet(r, d.get("shape", "unknown"), handle=d.get("handle"))]
+            runs_on = [
+                d
+                for d in datasets
+                if not unmet(r, d.get("shape", "unknown"), handle=d.get("handle"))
+            ]
             if runs_on:
                 where = ", ".join(sorted({d.get("shape", "unknown") for d in runs_on}))
                 print(f"  ok    {r['name']:<14} runs on {where}")
@@ -1646,26 +1957,36 @@ def cmd_check(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
                 # `case-control` is exactly the shape they should go find.
                 absent = sorted(set(need) & set(vocab.DATASET_FACTS) - set(cleared))
                 if cleared:
-                    print(f"  WARN  {r['name']:<14} no dataset can exercise it — a later step "
-                          f"clears {cleared}, which an earlier step produced; move the filter "
-                          "before the step that needs it, or re-run that step after it")
+                    print(
+                        f"  WARN  {r['name']:<14} no dataset can exercise it — a later step "
+                        f"clears {cleared}, which an earlier step produced; move the filter "
+                        "before the step that needs it, or re-run that step after it"
+                    )
                 elif absent:
-                    print(f"  WARN  {r['name']:<14} no dataset can exercise it — needs {absent}, "
-                          f"which comes from the data itself and not from any shape; none of "
-                          f"the {len(datasets)} declared datasets carries it")
+                    print(
+                        f"  WARN  {r['name']:<14} no dataset can exercise it — needs {absent}, "
+                        f"which comes from the data itself and not from any shape; none of "
+                        f"the {len(datasets)} declared datasets carries it"
+                    )
                 else:
-                    print(f"  WARN  {r['name']:<14} no dataset can exercise it — needs a shape "
-                          f"providing {need or '?'} (have: {', '.join(shapes)})")
+                    print(
+                        f"  WARN  {r['name']:<14} no dataset can exercise it — needs a shape "
+                        f"providing {need or '?'} (have: {', '.join(shapes)})"
+                    )
 
         # ladder: the rungs no OFFERED recipe can claim. The check offer is structural — a
         # valid recipe that is not `blocked:` and is legal on at least one declared dataset;
         # `check` has no measurements, so the rung-support gate does not apply here. A gap in
         # the bundled catalogue is a FAIL. A `$MANYRUNS_RECIPE_DIR` holds a sweep's arms and
         # need not cover the ladder, so a gap there is a WARN and keeps the exit code.
-        check_offer = [r["name"] for r in recipes
-                       if not narrate.unavailable(r)
-                       and any(not unmet(r, d.get("shape", "unknown"), handle=d.get("handle"))
-                               for d in datasets)]
+        check_offer = [
+            r["name"]
+            for r in recipes
+            if not narrate.unavailable(r)
+            and any(
+                not unmet(r, d.get("shape", "unknown"), handle=d.get("handle")) for d in datasets
+            )
+        ]
         gaps = list(score.unroutable_rungs(check_offer))
         print("\nladder (rungs the offered recipes can claim)")
         if not gaps:
@@ -1704,8 +2025,16 @@ def _ask(prompt: str, default: str) -> str:
 
 
 #: Args that mean "I already know what I want" — any of them keeps `run` a one-shot.
-_RUN_INTENT_ARGS = ("data_folder", "data_arg", "dataset", "recipe", "engine", "project", "ask",
-                    "choice")
+_RUN_INTENT_ARGS = (
+    "data_folder",
+    "data_arg",
+    "dataset",
+    "recipe",
+    "engine",
+    "project",
+    "ask",
+    "choice",
+)
 
 
 def _wants_the_console(args: argparse.Namespace) -> bool:
@@ -1789,8 +2118,9 @@ def _fetch_cli_source(name: str, parser: argparse.ArgumentParser) -> None:
         parser.error(str(exc) + "\n" + "\n".join(lines))
 
 
-def _dataset_contract(dataset_name: Optional[str], dataset: Optional[str],
-                      overrides: Optional[dict] = None) -> tuple[dict, Optional[tuple[int, int]]]:
+def _dataset_contract(
+    dataset_name: Optional[str], dataset: Optional[str], overrides: Optional[dict] = None
+) -> tuple[dict, Optional[tuple[int, int]]]:
     """Resolve generator settings and their fit dimensions as one source contract.
 
     A legacy ref is useful only when it is itself a catalog name. Never reverse-map
@@ -1818,8 +2148,11 @@ def _dataset_contract(dataset_name: Optional[str], dataset: Optional[str],
     pinned = row.get("params") or {}
     effective = {**pinned, **params}
     dims = row.get("dims")
-    shape = (declared_shape([dims.get("n_samples"), dims.get("n_features")])
-             if dims and effective == pinned else None)
+    shape = (
+        declared_shape([dims.get("n_samples"), dims.get("n_features")])
+        if dims and effective == pinned
+        else None
+    )
     return effective, shape
 
 
@@ -1827,12 +2160,16 @@ def _require_source_shape(engine, recipe, dataset, array, shape, embedding=None)
     """Refuse a bounded named-source run when its input dimensions are unverified."""
     from manyruns.pipeline import bounds
 
-    if (engine == "manylatents" and dataset
-            and any(step.get("limits") for step in (recipe or {}).get("steps", []))
-            and bounds.shape_of({"emb": embedding}, {"array": array, "declared_shape": shape}) is None):
+    if (
+        engine == "manylatents"
+        and dataset
+        and any(step.get("limits") for step in (recipe or {}).get("steps", []))
+        and bounds.shape_of({"emb": embedding}, {"array": array, "declared_shape": shape}) is None
+    ):
         raise ValueError(
             f"cannot bound recipe parameters for {dataset!r}: generator settings have no "
-            "verified fit dimensions. Use a matching catalog declaration or an explicit generated data file.")
+            "verified fit dimensions. Use a matching catalog declaration or an explicit generated data file."
+        )
 
 
 class _AskDeclined(Exception):
@@ -1860,8 +2197,12 @@ def _route_ask(text: str, obs: Any) -> Optional[str]:
     return recipe
 
 
-def _setup_project(args: argparse.Namespace, parser: argparse.ArgumentParser, *,
-                   step_params: Optional[tuple[str, dict]] = None) -> dict:
+def _setup_project(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+    *,
+    step_params: Optional[tuple[str, dict]] = None,
+) -> dict:
     """Prompt for the minimum (#11), detect modality (#10), pick the recipe, persist it.
 
     One data source (the DATA arg or --dataset) that is EITHER a filesystem path OR a
@@ -1876,8 +2217,11 @@ def _setup_project(args: argparse.Namespace, parser: argparse.ArgumentParser, *,
         )
 
     # Resolve the data source FIRST, so the project name can default from it.
-    raw = (getattr(args, "dataset", None) or getattr(args, "data_folder", None)
-           or getattr(args, "data_arg", None))
+    raw = (
+        getattr(args, "dataset", None)
+        or getattr(args, "data_folder", None)
+        or getattr(args, "data_arg", None)
+    )
     if not raw:
         raw = _data_from_drop_folder()
     project = args.project or _ask("project name", _project_name_for(raw))
@@ -1886,7 +2230,7 @@ def _setup_project(args: argparse.Namespace, parser: argparse.ArgumentParser, *,
     routed = None
     dataset_name = None
     src = Path(raw)
-    if src.exists():                                  # a file or folder → manyruns loads it
+    if src.exists():  # a file or folder → manyruns loads it
         data_folder, dataset = src, None
         try:
             modality = detect_modality(src)
@@ -1896,7 +2240,7 @@ def _setup_project(args: argparse.Namespace, parser: argparse.ArgumentParser, *,
             from manyruns import narrate
 
             routed = _route_ask(ask, narrate.read_data(src, modality, source=src.name))
-    elif _looks_like_path(raw):                       # meant as a path, but missing → clear error
+    elif _looks_like_path(raw):  # meant as a path, but missing → clear error
         parser.error(f"data path not found: {raw}")
     else:
         # The catalog owns handles on both front doors. Only a manylatents handle is an
@@ -1909,7 +2253,7 @@ def _setup_project(args: argparse.Namespace, parser: argparse.ArgumentParser, *,
             try:
                 routed = _route_ask(ask, _resolve_dataset(raw)[3])
             except (FileNotFoundError, ValueError, KeyError):
-                pass                                  # the resolution below reports it
+                pass  # the resolution below reports it
         try:
             _fetch_cli_source(raw, parser)
             data_folder, dataset, modality, _ = _resolve_dataset(raw)
@@ -1918,16 +2262,23 @@ def _setup_project(args: argparse.Namespace, parser: argparse.ArgumentParser, *,
             parser.error(
                 f"cannot resolve {raw!r}: tried a local path and a catalog handle "
                 f"(including manylatents generators). Supply an existing data path or "
-                f"declare a dataset in MANYRUNS_DATASET_DIR. {exc}")
-        if (data_folder is not None and not data_folder.exists()
-                and not str(data_folder).startswith("synthetic:")):
-            parser.error(f"catalog handle {raw!r} resolved to missing data {data_folder}; "
-                         f"put the file there or in the data drop folder, or supply its existing path")
+                f"declare a dataset in MANYRUNS_DATASET_DIR. {exc}"
+            )
+        if (
+            data_folder is not None
+            and not data_folder.exists()
+            and not str(data_folder).startswith("synthetic:")
+        ):
+            parser.error(
+                f"catalog handle {raw!r} resolved to missing data {data_folder}; "
+                f"put the file there or in the data drop folder, or supply its existing path"
+            )
 
     if routed:
         print(f"ask: {ask!r} → {routed}")
-    recipe, rationale = select_analysis(modality, data_folder,
-                                        override=getattr(args, "recipe", None) or routed)
+    recipe, rationale = select_analysis(
+        modality, data_folder, override=getattr(args, "recipe", None) or routed
+    )
     print(f"analysis: {recipe['name']} — {rationale}")
     # `--transform` reaches `init`/`run` HERE, at the one line where this command decides what
     # its recipe is — not at each of the four consumers downstream (`_explore_project` for
@@ -1952,15 +2303,32 @@ def _setup_project(args: argparse.Namespace, parser: argparse.ArgumentParser, *,
     for reason in commercial.refusal(recipe):
         print(f"error: {recipe['name']}: {reason}", file=sys.stderr)
         raise SystemExit(2)
-    data_kwargs, shape = _dataset_contract(dataset_name, dataset,
-                                           _parse_kwargs(getattr(args, "data_kwargs", None)))
+    data_kwargs, shape = _dataset_contract(
+        dataset_name, dataset, _parse_kwargs(getattr(args, "data_kwargs", None))
+    )
     _require_source_shape(engine, recipe, dataset, None, shape)
     if color_by := getattr(args, "color_by", None):
         # Refused display arguments must not replace the last saved data/recipe.
-        _read_inputs(engine, data_folder, dataset, getattr(args, "time_key", None),
-                     color_by=color_by, condition_key=getattr(args, "condition_key", None))
-    path = write_project(project, data_folder, modality, recipe, engine=engine, dataset=dataset,
-                         dataset_name=dataset_name, data_kwargs=data_kwargs)
+        _read_inputs(
+            engine,
+            data_folder,
+            dataset,
+            getattr(args, "time_key", None),
+            color_by=color_by,
+            condition_key=getattr(args, "condition_key", None),
+            sample_key=getattr(args, "sample_key", None),
+            batch_key=getattr(args, "batch_key", None),
+        )
+    path = write_project(
+        project,
+        data_folder,
+        modality,
+        recipe,
+        engine=engine,
+        dataset=dataset,
+        dataset_name=dataset_name,
+        data_kwargs=data_kwargs,
+    )
     return {
         "project": project,
         "data_folder": str(data_folder) if data_folder is not None else None,
@@ -1984,6 +2352,8 @@ def _explore_project(
     color_by: Optional[list[str]] = None,
     *,
     condition_key: Optional[str] = None,
+    sample_key: Optional[str] = None,
+    batch_key: Optional[str] = None,
     decision_id: Optional[str] = None,
     record: Optional[dict] = None,
     run_extra: Optional[dict] = None,
@@ -1992,7 +2362,10 @@ def _explore_project(
     engine = proj.get("engine", "mock")
     dataset = proj.get("dataset")
     data_kwargs, declared_shape = _dataset_contract(
-        proj.get("dataset_name"), dataset, {**(proj.get("data_kwargs") or {}), **(data_kwargs or {})})
+        proj.get("dataset_name"),
+        dataset,
+        {**(proj.get("data_kwargs") or {}), **(data_kwargs or {})},
+    )
     out_dir = Path("outputs") / _slug(proj["project"])
 
     # Real engines load the data up front (#4). This delegates to `_load_inputs` rather
@@ -2008,12 +2381,18 @@ def _explore_project(
     loaded = dict(_EMPTY_INPUTS)
     if engine == "manylatents":
         if not dataset and data_folder is None:
-            raise RuntimeError(
-                f"engine={engine} needs a data path (file/folder) or --dataset NAME"
-            )
-        loaded = _load_inputs(engine, data_folder, dataset, time_key,
-                              declared_layers(proj.get("recipe")), **({"color_by": color_by} if color_by else {}),
-                              condition_key=condition_key)
+            raise RuntimeError(f"engine={engine} needs a data path (file/folder) or --dataset NAME")
+        loaded = _load_inputs(
+            engine,
+            data_folder,
+            dataset,
+            time_key,
+            declared_layers(proj.get("recipe")),
+            **({"color_by": color_by} if color_by else {}),
+            condition_key=condition_key,
+            sample_key=sample_key,
+            batch_key=batch_key,
+        )
         array, labels, label_kind = loaded["array"], loaded["labels"], loaded["kind"]
         counts, genes, layers = loaded["counts"], loaded["genes"], loaded["layers"]
 
@@ -2027,13 +2406,22 @@ def _explore_project(
     results = modes.run(
         "infer",
         {
-            "data": data_folder, "modality": proj["modality"], "recipe": proj["recipe"],
-            "engine": engine, "dataset": dataset,
-            "dataset_name": proj.get("dataset_name"), "declared_shape": declared_shape,
-            "array": array, "out_dir": out_dir, "seed": seed, "fast_dev_run": fast_dev_run,
+            "data": data_folder,
+            "modality": proj["modality"],
+            "recipe": proj["recipe"],
+            "engine": engine,
+            "dataset": dataset,
+            "dataset_name": proj.get("dataset_name"),
+            "declared_shape": declared_shape,
+            "array": array,
+            "out_dir": out_dir,
+            "seed": seed,
+            "fast_dev_run": fast_dev_run,
             # `label_kind` was computed here and then dropped, so the one fact that stops a
             # trajectory being fitted to a case/control axis never left this function.
-            "data_kwargs": data_kwargs, "labels": labels, "label_kind": label_kind,
+            "data_kwargs": data_kwargs,
+            "labels": labels,
+            "label_kind": label_kind,
             # The declared suite — WHICH metrics matter is manyruns's call (CLAUDE.md's
             # split); computing them is the engine's. `serving`/`modes` already forwarded a
             # `metrics` key, but nothing ever populated it, so every run silently fell back
@@ -2043,12 +2431,16 @@ def _explore_project(
             # re-reads the file only when the caller passed no array, and this caller always
             # passes one — so every `manyruns run` on a real `.h5ad` reached the engine with no
             # gene axis. Forwarding the pair is the whole fix.
-            "counts": counts, "genes": genes,
+            "counts": counts,
+            "genes": genes,
             # DECLARED-ONLY (`declared_layers`): empty unless a step asked for a layer, so a
             # recipe that needs none pays nothing.
             "layers": layers,
-            "color": loaded.get("color"), "obs_names": loaded.get("obs_names"),
+            "color": loaded.get("color"),
+            "obs_names": loaded.get("obs_names"),
             "label_key": loaded.get("label_key"),
+            "source_path": loaded.get("source_path"),
+            "obs": loaded.get("obs"),
         },
         device=device,
     )
@@ -2069,8 +2461,7 @@ def _explore_project(
     # which is most of what "strict state of the data and the interventions" means.
     from manyruns import store as _store
 
-    row_extra: dict = {"source": str(source), "modality": proj["modality"],
-                       **_used_keys(loaded)}
+    row_extra: dict = {"source": str(source), "modality": proj["modality"], **_used_keys(loaded)}
     if decision_id is not None:
         row_extra["decision_id"] = decision_id
     if run_extra is not None:
@@ -2122,6 +2513,8 @@ def explore_once(
     color: Any = None,
     obs_names: Any = None,
     label_key: Optional[str] = None,
+    sample_key: Optional[str] = None,
+    batch_key: Optional[str] = None,
 ) -> dict:
     """Run one named recipe on one data source and return the results dict (g_vector, status,
     final_dim, …) — no file I/O, no printing. The interactive shell's execute step for the
@@ -2146,11 +2539,26 @@ def explore_once(
     recipe, _ = select_analysis(modality, data_folder, override=recipe_name)
     recipe = apply_transform_shim(recipe, transform)
     return run_explorations(
-        data_folder, modality, recipe=recipe, engine=engine, dataset=dataset,
-        seed=seed, fast_dev_run=fast_dev_run, time_key=time_key,
-        device=device, out_dir=out_dir, on_step=on_step,
-        dataset_name=dataset_name, data_kwargs=data_kwargs, declared_shape=declared_shape,
-        color_by=color_by, color=color, obs_names=obs_names, label_key=label_key,
+        data_folder,
+        modality,
+        recipe=recipe,
+        engine=engine,
+        dataset=dataset,
+        seed=seed,
+        fast_dev_run=fast_dev_run,
+        time_key=time_key,
+        device=device,
+        out_dir=out_dir,
+        on_step=on_step,
+        dataset_name=dataset_name,
+        data_kwargs=data_kwargs,
+        declared_shape=declared_shape,
+        color_by=color_by,
+        color=color,
+        obs_names=obs_names,
+        label_key=label_key,
+        sample_key=sample_key,
+        batch_key=batch_key,
     )
 
 
@@ -2202,7 +2610,10 @@ from manyruns.vocab import find_group_key as _find_group_key  # noqa: E402
 
 
 def _choose_recipe(
-    *, has_time_axis: bool, conditions: Optional[list], modality: str = "unknown",
+    *,
+    has_time_axis: bool,
+    conditions: Optional[list],
+    modality: str = "unknown",
     override: Optional[str] = None,
 ) -> tuple[str, str]:
     """Pure decision: data shape → (recipe name, human rationale). Product-owned, testable.
@@ -2226,8 +2637,7 @@ def _choose_recipe(
     from manyruns import catalog
 
     shape = narrate.shape_of(has_time_axis, conditions, modality)
-    menu = narrate.offer(narrate.Observation(shape=shape, modality=modality,
-                                             conditions=conditions))
+    menu = narrate.offer(narrate.Observation(shape=shape, modality=modality, conditions=conditions))
     # THE FIRST ENTRY THAT CAN RUN, never just the head: `offer` returns blocked and unavailable
     # recipes too (unrecommended, so a screen can show the refusal), and a head that cannot run
     # would be chosen and then refused. With the commercial flag on, `cflows` is unavailable on
@@ -2252,15 +2662,21 @@ def _choose_recipe(
     skipped = (best[0], best[1][0]) if best and best[0] != recipe and best[1] else None
 
     if shape == "time-course":
-        why = ("detected a time / ordering axis → trajectory (CFlows: phate→mioflow)"
-               if recipe == "cflows" else
-               f"detected a time / ordering axis → trajectory ({recipe})")
+        why = (
+            "detected a time / ordering axis → trajectory (CFlows: phate→mioflow)"
+            if recipe == "cflows"
+            else f"detected a time / ordering axis → trajectory ({recipe})"
+        )
     elif shape == "case-control":
-        why = (f"detected conditions {sorted(conditions or [])} with no time axis → case/control "
-               "contrast (PHATE + condition separation), not a trajectory")
+        why = (
+            f"detected conditions {sorted(conditions or [])} with no time axis → case/control "
+            "contrast (PHATE + condition separation), not a trajectory"
+        )
     else:
-        why = ("no time axis or conditions detected → structure-only embedding; asserting a "
-               "trajectory here would invent an ordering the data does not carry")
+        why = (
+            "no time axis or conditions detected → structure-only embedding; asserting a "
+            "trajectory here would invent an ordering the data does not carry"
+        )
     if skipped is not None:
         why += f"; {skipped[0]} suits this data but is not chosen: {skipped[1]}"
     return recipe, why
@@ -2268,7 +2684,9 @@ def _choose_recipe(
 
 # sub-folder names that read as a TIME axis (t0/, day3/, tp2/, 00/, …) — a real time course.
 # Names like treated/, control/ do NOT match → they're conditions, not timepoints.
-_TIME_DIR_RE = re.compile(r"^(t|tp|d|day|days|stage|week|timepoint|time)[-_ ]?\d+$|^\d+$", re.IGNORECASE)
+_TIME_DIR_RE = re.compile(
+    r"^(t|tp|d|day|days|stage|week|timepoint|time)[-_ ]?\d+$|^\d+$", re.IGNORECASE
+)
 
 
 def _sample_subdirs(data_path: Optional[Path]) -> list:
@@ -2276,8 +2694,10 @@ def _sample_subdirs(data_path: Optional[Path]) -> list:
     if data_path is None or not Path(data_path).is_dir():
         return []
     return [
-        d for d in Path(data_path).iterdir()
-        if d.is_dir() and (any(d.glob("matrix.mtx*")) or list(d.glob("*.h5ad")) or list(d.glob("*.h5")))
+        d
+        for d in Path(data_path).iterdir()
+        if d.is_dir()
+        and (any(d.glob("matrix.mtx*")) or list(d.glob("*.h5ad")) or list(d.glob("*.h5")))
     ]
 
 
@@ -2370,14 +2790,18 @@ def _inspect_obs(path: Path) -> tuple[bool, Optional[list], Optional[tuple]]:
 
 
 def select_analysis(
-    modality: str, data_path: Optional[Path] = None, *, override: Optional[str] = None,
+    modality: str,
+    data_path: Optional[Path] = None,
+    *,
+    override: Optional[str] = None,
 ) -> tuple[dict, str]:
     """Auto-select the exploration recipe from the data shape (product-owned). Returns
     (recipe dict, rationale). Data-driven by default; `override` (from --recipe or the router)
     short-circuits detection but still reports why."""
     if override:
-        name, why = _choose_recipe(has_time_axis=False, conditions=None, modality=modality,
-                                   override=override)
+        name, why = _choose_recipe(
+            has_time_axis=False, conditions=None, modality=modality, override=override
+        )
         return load_recipe(name), why
 
     has_time = _has_timepoint_subdirs(data_path)
@@ -2385,7 +2809,7 @@ def select_analysis(
     if not has_time and data_path is not None:
         p = Path(data_path)
         if p.is_dir():
-            conditions = _dir_conditions(p)                    # per-condition folders → contrast
+            conditions = _dir_conditions(p)  # per-condition folders → contrast
         elif p.suffix.lower() in {".h5ad", ".h5"}:
             # The group axis is DELIBERATELY DISCARDED here and not forwarded to
             # `_choose_recipe`. `narrate.shape_of` takes two facts, and a third would read
@@ -2435,7 +2859,8 @@ def apply_transform_shim(recipe: dict, transform: Optional[str]) -> dict:
     out = dict(recipe)
     out["steps"] = [
         {**s, "params": {**(s.get("params") or {}), "method": transform}}
-        if s.get("name") == "transform" else s
+        if s.get("name") == "transform"
+        else s
         for s in (recipe.get("steps") or [])
     ]
     return out
@@ -2605,7 +3030,10 @@ _UNDELIVERED_FACT_COST = {
 
 
 def _require_declared_facts(
-    engine: str, dataset: Optional[str], labels: Any, label_kind: Optional[str],
+    engine: str,
+    dataset: Optional[str],
+    labels: Any,
+    label_kind: Optional[str],
 ) -> None:
     """Refuse a NAMED dataset whose declared shape asserts a data fact the loader did not
     deliver. ONE home for that rule, in the shape of `pipeline.steps._require_embedding`.
@@ -2706,9 +3134,19 @@ def _require_declared_facts(
 #:
 #: `dict(_EMPTY_INPUTS)` at every return, never the constant itself — a shared mutable default
 #: handed to a caller is the next silent failure along.
-_EMPTY_INPUTS: dict = {"array": None, "labels": None, "kind": None,
-                       "counts": None, "genes": None, "layers": {},
-                       "color": None, "obs_names": None, "label_key": None}
+_EMPTY_INPUTS: dict = {
+    "array": None,
+    "labels": None,
+    "kind": None,
+    "counts": None,
+    "genes": None,
+    "layers": {},
+    "color": None,
+    "obs_names": None,
+    "label_key": None,
+    "source_path": None,
+    "obs": None,
+}
 
 
 def cmd_tools(args: Any, parser: Any = None) -> int:
@@ -2722,6 +3160,20 @@ def cmd_tools(args: Any, parser: Any = None) -> int:
 
     action = getattr(args, "action", "list") or "list"
     names = _tc.discover_tools()
+    if action == "lock":
+        if not args.name:
+            print("which tool? " + (", ".join(names) or "(none declared)"))
+            return 2
+        try:
+            out = _tc.lock(args.name)
+        except Exception as e:  # noqa: BLE001 - the message is the product here
+            print(f"could not lock {args.name}: {e}")
+            return 1
+        if out["returncode"] == 0:
+            print(out["lock"])
+        elif out["stderr"]:
+            print(out["stderr"])
+        return out["returncode"]
     if action == "verify":
         if not args.name:
             print("which tool? " + (", ".join(names) or "(none declared)"))
@@ -2743,7 +3195,9 @@ def cmd_tools(args: Any, parser: Any = None) -> int:
         except Exception as e:  # noqa: BLE001 - the message is the product here
             print(f"could not build {args.name}: {e}")
             return 1
-        print(f"{args.name}: built {out['env']} (lock {out['digest']}) — selftest {out['selftest']}")
+        print(
+            f"{args.name}: built {out['env']} (lock {out['digest']}) — selftest {out['selftest']}"
+        )
         return 0 if out["ok"] else 1
 
     rc = 0
@@ -2794,8 +3248,10 @@ def _verify_tool(name: str) -> int:
     print(f"  manifest      ok: {name} {cfg.get('version')} (mode {_tc.tool_mode(cfg)})")
     kind = (cfg.get("input") or {}).get("kind")
     if kind != "state_matrix":
-        print(f"  input         FAILED: input.kind is {kind!r}; the built-in fixture is a "
-              f"state_matrix of 12 cells")
+        print(
+            f"  input         FAILED: input.kind is {kind!r}; the built-in fixture is a "
+            f"state_matrix of 12 cells"
+        )
         return 3
     print("  input         ok: state_matrix")
     if status not in ("ready", "overridden"):
@@ -2818,8 +3274,10 @@ def _verify_tool(name: str) -> int:
             print(f"  result        FAILED: {e}")
             return 1
     model = (cfg.get("output") or {}).get("schema") == _tc.RESULT_SCHEMA
-    print("  result        ok: " + ("check_result accepts it" if model
-                                    else "the .h5ad output matches the manifest"))
+    print(
+        "  result        ok: "
+        + ("check_result accepts it" if model else "the .h5ad output matches the manifest")
+    )
     return 0
 
 
@@ -2827,25 +3285,45 @@ def _used_keys(loaded: dict) -> dict:
     """The run row's `time_key` and `condition_key`: the column whose values the run used as
     its time labels or its condition labels. At most one is a name; the other is None. Both
     are None when the run read no such column (a mock run, a named engine dataset, or time
-    labels taken from sub-folder names)."""
+    labels taken from sub-folder names). Sample and batch keys record explicit columns
+    read for those roles, or None when no column was read."""
     key, kind = loaded.get("label_key"), loaded.get("kind")
-    return {"time_key": key if kind == "time" else None,
-            "condition_key": key if kind == "condition" else None}
+    return {
+        "time_key": key if kind == "time" else None,
+        "condition_key": key if kind == "condition" else None,
+        "sample_key": loaded.get("sample_key"),
+        "batch_key": loaded.get("batch_key"),
+    }
 
 
-def _load_inputs(engine: str, data_folder: Optional[Path], dataset: Optional[str],
-                 time_key: Optional[str], layers: "tuple | None" = None,
-                 color_by: Optional[list[str]] = None,
-                 condition_key: Optional[str] = None) -> dict:
+def _load_inputs(
+    engine: str,
+    data_folder: Optional[Path],
+    dataset: Optional[str],
+    time_key: Optional[str],
+    layers: "tuple | None" = None,
+    color_by: Optional[list[str]] = None,
+    condition_key: Optional[str] = None,
+    sample_key: Optional[str] = None,
+    batch_key: Optional[str] = None,
+) -> dict:
     """Load analysis, gene and display channels, then check declared analysis facts.
 
     Ordinary file/generated sources share one object read. Engine-owned generators are
     left to the engine; explicit colour choices refuse when their metadata is unavailable.
     ``color_by`` selects display channels only and never changes analysis labels.
     """
-    loaded = _read_inputs(engine, data_folder, dataset, time_key, layers,
-                          **({"color_by": color_by} if color_by else {}),
-                          condition_key=condition_key)
+    loaded = _read_inputs(
+        engine,
+        data_folder,
+        dataset,
+        time_key,
+        layers,
+        **({"color_by": color_by} if color_by else {}),
+        condition_key=condition_key,
+        sample_key=sample_key,
+        batch_key=batch_key,
+    )
     _require_declared_facts(engine, dataset, loaded["labels"], loaded["kind"])
     return loaded
 
@@ -2864,7 +3342,7 @@ def declared_layers(recipe: Optional[dict]) -> tuple:
     """
     wanted: list = []
     for step in (recipe or {}).get("steps") or []:
-        for name in (step.get("layers") or ()):
+        for name in step.get("layers") or ():
             if name not in wanted:
                 wanted.append(str(name))
     return tuple(wanted)
@@ -2874,10 +3352,17 @@ class ColorSelectionError(ValueError):
     """A display choice the CLI reports as an argument error."""
 
 
-def _read_inputs(engine: str, data_folder: Optional[Path], dataset: Optional[str],
-                 time_key: Optional[str], layers: "tuple | None" = None,
-                 color_by: Optional[list[str]] = None,
-                 condition_key: Optional[str] = None) -> dict:
+def _read_inputs(
+    engine: str,
+    data_folder: Optional[Path],
+    dataset: Optional[str],
+    time_key: Optional[str],
+    layers: "tuple | None" = None,
+    color_by: Optional[list[str]] = None,
+    condition_key: Optional[str] = None,
+    sample_key: Optional[str] = None,
+    batch_key: Optional[str] = None,
+) -> dict:
     """Read analysis and display channels from one object whenever the source permits it.
 
     Directory timepoint labelling stays with load_labeled. Its separate object read is
@@ -2891,33 +3376,56 @@ def _read_inputs(engine: str, data_folder: Optional[Path], dataset: Optional[str
             obj = pipeline.load_array(data_folder)
             label_key = loading.label_key_of(obj, time_key, condition_key)[0]
             if Path(data_folder).is_dir():
-                array, labels, kind = pipeline.load_labeled(data_folder, time_key=time_key,
-                                                            condition_key=condition_key)
+                array, labels, kind = pipeline.load_labeled(
+                    data_folder, time_key=time_key, condition_key=condition_key
+                )
                 # A folder name is an analysis axis, not a column in the source object.
                 own_labels, _ = loading.labels_of(obj, time_key, condition_key)
                 import numpy as np
 
-                if labels is not None and (own_labels is None or not np.array_equal(labels, own_labels)):
+                if labels is not None and (
+                    own_labels is None or not np.array_equal(labels, own_labels)
+                ):
                     label_key = None
             else:
                 # Match load_labeled: keep the source frame sparse and in its original
                 # dtype until a compute step actually needs a dense matrix.
-                array = loading._anndata_matrix(obj) if loading._is_anndata(obj) else pipeline.as_matrix(obj)
-                labels, kind = pipeline.labels_of(obj, time_key=time_key,
-                                                  condition_key=condition_key)
+                array = (
+                    loading._anndata_matrix(obj)
+                    if loading._is_anndata(obj)
+                    else pipeline.as_matrix(obj)
+                )
+                labels, kind = pipeline.labels_of(
+                    obj, time_key=time_key, condition_key=condition_key
+                )
             counts, genes = pipeline.gene_axis(obj)
             loaded_layers = pipeline.layers_of(obj, layers)
+            obs = loading.obs_roles_of(obj, sample_key=sample_key, batch_key=batch_key)
             try:
                 color = [loading.color_channel_of(obj, key) for key in color_by or ()]
             except ValueError as exc:
                 raise ColorSelectionError(str(exc)) from exc
         names = runner.implicit_sample_ids(obj)
-        return {"array": array, "labels": labels, "kind": kind,
-                "counts": counts, "genes": genes, "layers": loaded_layers,
-                "color": color, "obs_names": names, "label_key": label_key}
+        return {
+            "source_path": str(data_folder) if Path(data_folder).is_file() else None,
+            "obs": obs,
+            "sample_key": sample_key,
+            "batch_key": batch_key,
+            "array": array,
+            "labels": labels,
+            "kind": kind,
+            "counts": counts,
+            "genes": genes,
+            "layers": loaded_layers,
+            "color": color,
+            "obs_names": names,
+            "label_key": label_key,
+        }
     if color_by:
-        raise ColorSelectionError(f"cannot inspect metadata for {dataset or engine!r}; "
-                                  "use an annotated data file to choose --color-by")
+        raise ColorSelectionError(
+            f"cannot inspect metadata for {dataset or engine!r}; "
+            "use an annotated data file to choose --color-by"
+        )
     return dict(_EMPTY_INPUTS)
 
 
@@ -2930,7 +3438,10 @@ _REPORTING_ENGINES = frozenset({"manylatents"})
 
 
 def _live_step_panel(
-    recipe: Optional[dict], engine: str, on_step: Any, source: str,
+    recipe: Optional[dict],
+    engine: str,
+    on_step: Any,
+    source: str,
 ) -> tuple[Any, Any]:
     """The shell's live dashboard, for the paths that reach the engine without one.
 
@@ -3010,6 +3521,10 @@ def run_explorations(
     color: Any = None,
     obs_names: Any = None,
     label_key: Optional[str] = None,
+    source_path: Any = None,
+    obs: dict | None = None,
+    sample_key: Optional[str] = None,
+    batch_key: Optional[str] = None,
 ) -> dict:
     """#12 — run the exploration via the serving backend.
 
@@ -3047,16 +3562,28 @@ def run_explorations(
     # PARAMETERS now, so a caller that loaded them passes them on. The branch below stays as the
     # fallback for a caller that did not (the experiment harness, which passes only a path).
     if array is None and labels is None and data_folder is not None:
-        loaded = _load_inputs(engine, data_folder, dataset, time_key,
-                              declared_layers(recipe), **({"color_by": color_by} if color_by else {}))
+        loaded = _load_inputs(
+            engine,
+            data_folder,
+            dataset,
+            time_key,
+            declared_layers(recipe),
+            **({"sample_key": sample_key} if sample_key is not None else {}),
+            **({"batch_key": batch_key} if batch_key is not None else {}),
+            **({"color_by": color_by} if color_by else {}),
+        )
         array, labels, label_kind = loaded["array"], loaded["labels"], loaded["kind"]
         counts, genes, layers = loaded["counts"], loaded["genes"], loaded["layers"]
         color = loaded.get("color") if color is None else color
         obs_names = loaded.get("obs_names") if obs_names is None else obs_names
         label_key = loaded.get("label_key") if label_key is None else label_key
+        source_path = loaded.get("source_path") if source_path is None else source_path
+        obs = loaded.get("obs") if obs is None else obs
     elif color_by:
-        raise ColorSelectionError("cannot inspect metadata for this preloaded matrix or generator; "
-                                  "supply an annotated data file or explicit display channels")
+        raise ColorSelectionError(
+            "cannot inspect metadata for this preloaded matrix or generator; "
+            "supply an annotated data file or explicit display channels"
+        )
     # `_load_inputs` is skipped above for a NAMED dataset (`data_folder is None`), and this is
     # the one function every path funnels into — `explore_once` (the shell), `modes._infer`
     # (the CLI's `run`/`explore`/`--batch`) and the experiment harness. Without this line
@@ -3077,12 +3604,17 @@ def run_explorations(
     inputs: Any = label
     if recipe:
         inputs = {
+            "source_path": source_path,
+            "obs": obs,
             "data": label,
             "modality": modality,
             "recipe": recipe,
             "dataset": dataset,
-            "dataset_name": dataset_name, "declared_shape": declared_shape,
-            "color": color, "obs_names": obs_names, "label_key": label_key,
+            "dataset_name": dataset_name,
+            "declared_shape": declared_shape,
+            "color": color,
+            "obs_names": obs_names,
+            "label_key": label_key,
             "out_dir": str(out_dir) if out_dir is not None else ".",
             "seed": seed,
             "fast_dev_run": fast_dev_run,
@@ -3100,7 +3632,7 @@ def run_explorations(
         if layers:
             inputs["layers"] = layers
         if metrics:
-            inputs["metrics"] = list(metrics)   # the declared suite → manylatents' registry
+            inputs["metrics"] = list(metrics)  # the declared suite → manylatents' registry
         if label_kind:
             # "time" | "condition" | "group"; each consumer allowlists the kind it wants
             inputs["label_kind"] = label_kind

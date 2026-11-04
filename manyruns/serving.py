@@ -24,6 +24,7 @@ LocalServer engines:
                        public libs (phate/statsmodels/…), bypassing the learner + shop
                        (see manyruns/pipeline.py). For "paste a path, get the shape."
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -147,6 +148,8 @@ class LocalServer:
         return pipeline.run_manylatents(
             recipe=data.get("recipe") or {},
             data_ref=data.get("dataset"),
+            source_path=data.get("source_path"),
+            obs=data.get("obs"),
             dataset_name=data.get("dataset_name"),
             array=data.get("array"),
             out_dir=Path(data.get("out_dir") or "."),
@@ -154,7 +157,8 @@ class LocalServer:
             fast_dev_run=bool(data.get("fast_dev_run", True)),
             data_kwargs=data.get("data_kwargs") or {},
             declared_shape=data.get("declared_shape"),
-            color=data.get("color"), sample_ids=data.get("obs_names"),
+            color=data.get("color"),
+            sample_ids=data.get("obs_names"),
             label_key=data.get("label_key"),
             labels=data.get("labels"),
             # The gene axis. `run_manylatents` has carried these two parameters since the frame
@@ -162,9 +166,9 @@ class LocalServer:
             # the producer, and this is the last hop.
             counts=data.get("counts"),
             genes=data.get("genes"),
-            layers=data.get("layers"),   # a second matrix over the same cells, declared-only
-            device=self.device,   # the resolved device reaches MIOFlow's Trainer (no longer a cpu pin)
-            metrics=data.get("metrics"),   # the declared metric suite (manyruns.protocols.Suite)
+            layers=data.get("layers"),  # a second matrix over the same cells, declared-only
+            device=self.device,  # the resolved device reaches MIOFlow's Trainer (no longer a cpu pin)
+            metrics=data.get("metrics"),  # the declared metric suite (manyruns.protocols.Suite)
             on_step=data.get("on_step"),
             # "time" | "condition" | "group". THREE kinds, and every consumer takes an
             # ALLOWLIST on the one it wants: only "time" reaches a trajectory step
@@ -196,7 +200,7 @@ class LocalServer:
             "served_by": "local",
             "engine": "mock",
             "num_steps": len(trace),
-            "trace": trace,          # emergent, heterogeneous, dynamic length
+            "trace": trace,  # emergent, heterogeneous, dynamic length
             # The mock conforms to the same g-vector schema as the real engines: emit what
             # it genuinely has (`final_dim`) and OMIT what it doesn't. It works on a 1-D
             # stand-in vector, so it has no rows — n_samples/n_features/n_embedded are
@@ -217,22 +221,46 @@ class LocalServer:
         recipe = payload["recipe"]
         seed = payload.get("seed", 42)
         dataset = payload.get("dataset") or payload.get("data")
-        identity_args = dict(engine="mock", seed=seed, dataset=dataset,
-                             dataset_name=payload.get("dataset_name"),
-                             data_kwargs=payload.get("data_kwargs"))
+        identity_args = dict(
+            engine="mock",
+            seed=seed,
+            dataset=dataset,
+            dataset_name=payload.get("dataset_name"),
+            data_kwargs=payload.get("data_kwargs"),
+        )
         ident = runner.identity(recipe, **identity_args)
         # Use the same record loop as interactive mock sessions. No input arrays are
         # supplied, so prep declines honestly and the mock executors only mutate a list.
         state = runner._new_state()
         state["vec"] = self._as_vector(payload.get("data", ""))
         g: dict = {}
-        ctx = {"out_dir": Path(payload.get("out_dir") or "."), "plots": [],
-               "target_dim": self.target_dim, "seed": seed, "run_id": ident[0], "caveats": []}
-        steps = runner._run_steps(recipe, state, g, dispatch=runner.dispatch_for("mock"),
-                                  ctx=ctx, on_step=payload.get("on_step"))
+        ctx = {
+            "out_dir": Path(payload.get("out_dir") or "."),
+            "plots": [],
+            "target_dim": self.target_dim,
+            "seed": seed,
+            "run_id": ident[0],
+            "caveats": [],
+        }
+        steps = runner._run_steps(
+            recipe,
+            state,
+            g,
+            dispatch=runner.dispatch_for("mock"),
+            ctx=ctx,
+            on_step=payload.get("on_step"),
+        )
         g["final_dim"] = len(state["vec"])
-        return runner._finalize(state, g, recipe=recipe, steps=steps, plots=[],
-                                caveats=ctx["caveats"], ident=ident, **identity_args)
+        return runner._finalize(
+            state,
+            g,
+            recipe=recipe,
+            steps=steps,
+            plots=[],
+            caveats=ctx["caveats"],
+            ident=ident,
+            **identity_args,
+        )
 
     def _next_step(self, state: dict, i: int) -> dict | None:
         """The driver: pick the next open-ended step from current state. This is the
@@ -243,12 +271,15 @@ class LocalServer:
         if dim > self.target_dim:  # keep reducing — alternate latent/lightning (heterogeneous)
             name = ["pca", "umap", "autoencoder", "phate"][i % 4]
             group = "lightning" if name == "autoencoder" else "latent"
-            return {"group": group, "name": name,
-                    "params": {"n_components": max(self.target_dim, dim // 2)}}
-        for m in self.metrics:     # then measure until the signature is complete
+            return {
+                "group": group,
+                "name": name,
+                "params": {"n_components": max(self.target_dim, dim // 2)},
+            }
+        for m in self.metrics:  # then measure until the signature is complete
             if m not in state["g"]:
                 return {"group": "analysis", "name": m, "params": {}}
-        return None                # nothing left to do -> stop
+        return None  # nothing left to do -> stop
 
     @staticmethod
     def _as_vector(data: Any) -> list[float]:

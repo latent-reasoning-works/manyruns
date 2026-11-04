@@ -22,7 +22,7 @@ rest — because jax takes CUDA wheels on linux and none on macOS (measured: 211
 233). One lock for both platforms therefore means either 2.4 GB of CUDA nobody asked for or a
 resolution that is a lie on one of them. Two locks, and the platform is part of the identity.
 
-**NOTHING HERE EVER BUILDS AN ENVIRONMENT.** `resolve()` reports; it does not install. The
+**RESOLVING NEVER BUILDS AN ENVIRONMENT.** `resolve()` reports; it does not install. The
 realized env for that one tool is **2.4 GB** (measured), and a recipe step that quietly
 downloads 2.4 GB mid-run is not a step, it is an outage. A run that needs a missing tool is
 REFUSED — at plan time where possible — with the exact command that fixes it. That is the same
@@ -33,6 +33,7 @@ early, say what is wrong, never improvise.
 the same digest. A tool re-locked for a security patch is a DIFFERENT tool as far as the record
 is concerned, which is the honest answer — that is what re-locking means.
 """
+
 from __future__ import annotations
 
 import os
@@ -40,16 +41,35 @@ from manyruns import env as _env
 import platform
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any, Optional
 
 #: Fields a tool manifest may declare. Closed, because a typo'd key that silently does nothing
 #: is the failure this whole vocabulary style exists to prevent.
-TOOL_FIELDS = frozenset({
-    "name", "version", "summary", "source", "licence", "produces", "needs",
-    "python", "requires", "entrypoint", "selftest", "input", "output", "params",
-    "mode", "call", "commercial_use", "distribution",
-})
+TOOL_FIELDS = frozenset(
+    {
+        "name",
+        "version",
+        "summary",
+        "source",
+        "licence",
+        "produces",
+        "needs",
+        "python",
+        "requires",
+        "entrypoint",
+        "selftest",
+        "input",
+        "output",
+        "params",
+        "declaration",
+        "mode",
+        "call",
+        "commercial_use",
+        "distribution",
+    }
+)
 
 #: How manyruns reaches a tool. `run` (the default) starts the manifest's own adapter in the
 #: tool's interpreter. `call` starts manyruns's generic call adapter there, which makes the one
@@ -78,10 +98,15 @@ SELECTOR_PATTERN = r'^(return(\[-?\d+\]|\.[A-Za-z_]\w*|\["[^"]+"\])?|instance\.[
 #: Licences that forbid commercial use. A consistency check in ONE direction only: such a
 #: licence cannot claim `commercial_use: true`. `commercial_use` is declared, never derived
 #: from `licence`, because a derived rule would call an unknown or misspelled licence commercial.
-NON_COMMERCIAL_LICENCES = frozenset({
-    "LicenseRef-Yale-Non-Commercial", "CC-BY-NC-4.0", "CC-BY-NC-SA-4.0", "CC-BY-NC-ND-4.0",
-    "PolyForm-Noncommercial-1.0.0",
-})
+NON_COMMERCIAL_LICENCES = frozenset(
+    {
+        "LicenseRef-Yale-Non-Commercial",
+        "CC-BY-NC-4.0",
+        "CC-BY-NC-SA-4.0",
+        "CC-BY-NC-ND-4.0",
+        "PolyForm-Noncommercial-1.0.0",
+    }
+)
 
 #: How the tool's inputs are assembled. A CLOSED vocabulary, because the two differ in what they
 #: are allowed to see and getting that wrong is silent.
@@ -124,9 +149,11 @@ def platform_tag() -> str:
     so a lock built elsewhere must not be silently accepted here.
     """
     system = {"Darwin": "macos", "Linux": "linux", "Windows": "windows"}.get(
-        platform.system(), platform.system().lower())
+        platform.system(), platform.system().lower()
+    )
     machine = {"AMD64": "x86_64", "arm64": "arm64", "aarch64": "arm64"}.get(
-        platform.machine(), platform.machine())
+        platform.machine(), platform.machine()
+    )
     return f"{system}-{machine}"
 
 
@@ -134,8 +161,9 @@ def lock_name(cfg: dict, tag: Optional[str] = None) -> str:
     return f"{cfg['name']}-{cfg['version']}-{tag or platform_tag()}.lock"
 
 
-def lock_path(cfg: dict, config_dir: Optional[Path | str] = None,
-              tag: Optional[str] = None) -> Path:
+def lock_path(
+    cfg: dict, config_dir: Optional[Path | str] = None, tag: Optional[str] = None
+) -> Path:
     return tool_dir(config_dir) / "locks" / lock_name(cfg, tag)
 
 
@@ -182,8 +210,10 @@ def install_command(cfg: dict, config_dir: Optional[Path | str] = None) -> str:
     """The exact command that makes this tool runnable. Printed in every refusal, because a
     refusal that does not say how to fix it is a dead end rather than a next step."""
     digest = lock_digest(lock_path(cfg, config_dir)) or "<lock-missing>"
-    return (f"manyruns tools install {cfg['name']}"
-            f"   # builds {env_path(cfg, digest)} from {lock_name(cfg)}")
+    return (
+        f"manyruns tools install {cfg['name']}"
+        f"   # builds {env_path(cfg, digest)} from {lock_name(cfg)}"
+    )
 
 
 def resolve(name: str, config_dir: Optional[Path | str] = None) -> dict:
@@ -206,41 +236,78 @@ def resolve(name: str, config_dir: Optional[Path | str] = None) -> dict:
     try:
         cfg = load_tool(name, config_dir)
     except (ValueError, FileNotFoundError) as e:
-        return {"status": "no-manifest", "python": None, "digest": None,
-                "reason": str(e), "fix": None}
+        return {
+            "status": "no-manifest",
+            "python": None,
+            "digest": None,
+            "reason": str(e),
+            "fix": None,
+        }
 
     if tool_mode(cfg) == "precomputed":
-        return {"status": "precomputed", "python": None, "digest": None, "cfg": cfg,
-                "reason": f"precomputed results under {precomputed_root(cfg, config_dir)}",
-                "fix": None}
+        return {
+            "status": "precomputed",
+            "python": None,
+            "digest": None,
+            "cfg": cfg,
+            "reason": f"precomputed results under {precomputed_root(cfg, config_dir)}",
+            "fix": None,
+        }
 
     override = _override_python(name)
     if override is not None:
         ok = override.is_file() and os.access(override, os.X_OK)
-        return {"status": "overridden" if ok else "no-lock", "python": override if ok else None,
-                "digest": None, "cfg": cfg,
-                "reason": (f"using MANYRUNS_TOOL_{name.upper()}_PYTHON={override}" if ok else
-                           f"MANYRUNS_TOOL_{name.upper()}_PYTHON={override} is not an executable"),
-                "fix": None}
+        return {
+            "status": "overridden" if ok else "no-lock",
+            "python": override if ok else None,
+            "digest": None,
+            "cfg": cfg,
+            "reason": (
+                f"using MANYRUNS_TOOL_{name.upper()}_PYTHON={override}"
+                if ok
+                else f"MANYRUNS_TOOL_{name.upper()}_PYTHON={override} is not an executable"
+            ),
+            "fix": None,
+        }
 
     path = lock_path(cfg, config_dir)
     digest = lock_digest(path)
     if digest is None:
-        return {"status": "no-lock", "python": None, "digest": None, "cfg": cfg,
-                "reason": (f"{cfg['name']} {cfg['version']} has no lock for {platform_tag()} "
-                           f"({path} is absent) — it has never been pinned on this platform, so "
-                           f"there is no environment to reproduce"),
-                "fix": f"manyruns tools lock {cfg['name']}"}
+        return {
+            "status": "no-lock",
+            "python": None,
+            "digest": None,
+            "cfg": cfg,
+            "reason": (
+                f"{cfg['name']} {cfg['version']} has no lock for {platform_tag()} "
+                f"({path} is absent) — it has never been pinned on this platform, so "
+                f"there is no environment to reproduce"
+            ),
+            "fix": f"manyruns tools lock {cfg['name']}",
+        }
 
     env = env_path(cfg, digest)
     python = env / "bin" / "python"
     if python.is_file():
-        return {"status": "ready", "python": python, "digest": digest, "cfg": cfg,
-                "reason": f"{cfg['name']} {cfg['version']} @ {digest}", "fix": None}
-    return {"status": "not-built", "python": None, "digest": digest, "cfg": cfg,
-            "reason": (f"{cfg['name']} {cfg['version']} is locked for {platform_tag()} "
-                       f"(lock {digest}) but not built at {env}"),
-            "fix": install_command(cfg, config_dir)}
+        return {
+            "status": "ready",
+            "python": python,
+            "digest": digest,
+            "cfg": cfg,
+            "reason": f"{cfg['name']} {cfg['version']} @ {digest}",
+            "fix": None,
+        }
+    return {
+        "status": "not-built",
+        "python": None,
+        "digest": digest,
+        "cfg": cfg,
+        "reason": (
+            f"{cfg['name']} {cfg['version']} is locked for {platform_tag()} "
+            f"(lock {digest}) but not built at {env}"
+        ),
+        "fix": install_command(cfg, config_dir),
+    }
 
 
 def provenance(name: str, resolved: dict) -> dict:
@@ -312,14 +379,18 @@ def _pin_problems(cfg: dict) -> list[str]:
     dist = str(cfg.get("distribution") or cfg.get("name"))
     named = [str(r).strip() for r in req if _requirement_name(str(r)) == _normalize_dist(dist)]
     if not named:
-        return [f"`requires` has no pin for {dist!r}: one item must be `{dist}==<exact version>` "
-                f"(set `distribution` when the PyPI name differs from the tool's name)"]
+        return [
+            f"`requires` has no pin for {dist!r}: one item must be `{dist}==<exact version>` "
+            f"(set `distribution` when the PyPI name differs from the tool's name)"
+        ]
     if len(named) > 1:
         return [f"`requires` names {dist!r} {len(named)} times ({named}); the pin is one item"]
     pattern = rf"^{re.escape(dist)}(\[[a-z0-9_,-]+\])?==[0-9][0-9A-Za-z.+!-]*$"
     if not re.match(pattern, named[0], flags=re.IGNORECASE):
-        return [f"`requires` item {named[0]!r} is not a pin: name {dist!r} with `==` and an "
-                f"exact version, so an upstream release cannot change a result unannounced"]
+        return [
+            f"`requires` item {named[0]!r} is not a pin: name {dist!r} with `==` and an "
+            f"exact version, so an upstream release cannot change a result unannounced"
+        ]
     return []
 
 
@@ -342,11 +413,11 @@ def check_call(call: Any, produces: Any) -> list[str]:
 
     if not isinstance(call, dict):
         return [f"call must be a mapping of {sorted(CALL_KEYS)}, got {type(call).__name__}"]
-    bad = [f"call: unknown key {k!r} (known: {sorted(CALL_KEYS)})" for k in call
-           if k not in CALL_KEYS]
+    bad = [
+        f"call: unknown key {k!r} (known: {sorted(CALL_KEYS)})" for k in call if k not in CALL_KEYS
+    ]
     target = call.get("target")
-    if not isinstance(target, str) or not re.match(
-            r"^[A-Za-z_][\w.]*:[A-Za-z_][\w.]*$", target):
+    if not isinstance(target, str) or not re.match(r"^[A-Za-z_][\w.]*:[A-Za-z_][\w.]*$", target):
         bad.append(f"call.target must be '<module>:<qualname>', got {target!r}")
     method = call.get("method")
     if method is not None and not (isinstance(method, str) and method.isidentifier()):
@@ -372,26 +443,34 @@ def check_call(call: Any, produces: Any) -> list[str]:
         params = []
     for item in params:
         if item not in options:
-            bad.append(f"call.params: {item!r} is not a key of call.options "
-                       f"{sorted(options)}")
+            bad.append(f"call.params: {item!r} is not a key of call.options {sorted(options)}")
     outputs = call.get("outputs")
     if not isinstance(outputs, dict) or not outputs:
-        bad.append(f"call.outputs must be a non-empty map from a fact in {list(CALL_FACTS)} "
-                   f"to a selector")
+        bad.append(
+            f"call.outputs must be a non-empty map from a fact in {list(CALL_FACTS)} to a selector"
+        )
         outputs = {}
     for fact, selector in outputs.items():
         if fact not in CALL_FACTS:
-            bad.append(f"call.outputs: {fact!r} cannot be selected (selectable: "
-                       f"{list(CALL_FACTS)}); a {fact} needs a pinned adapter")
+            bad.append(
+                f"call.outputs: {fact!r} cannot be selected (selectable: "
+                f"{list(CALL_FACTS)}); a {fact} needs a pinned adapter"
+            )
         elif not isinstance(selector, str) or not re.match(SELECTOR_PATTERN, selector):
-            bad.append(f"call.outputs.{fact}: {selector!r} is not a selector (return, "
-                       f"return[<int>], return.<attr>, return[\"<key>\"], instance.<attr>)")
+            bad.append(
+                f"call.outputs.{fact}: {selector!r} is not a selector (return, "
+                f'return[<int>], return.<attr>, return["<key>"], instance.<attr>)'
+            )
         elif selector.startswith("instance.") and not method:
-            bad.append(f"call.outputs.{fact}: the instance selector {selector!r} needs "
-                       f"call.method, because without it no instance is built")
+            bad.append(
+                f"call.outputs.{fact}: the instance selector {selector!r} needs "
+                f"call.method, because without it no instance is built"
+            )
     if outputs and set(outputs) != set(produces or ()):
-        bad.append(f"call.outputs {sorted(outputs)} must equal the manifest's produces "
-                   f"{sorted(produces or ())}")
+        bad.append(
+            f"call.outputs {sorted(outputs)} must equal the manifest's produces "
+            f"{sorted(produces or ())}"
+        )
     return bad
 
 
@@ -418,25 +497,67 @@ def check_tool(cfg: Any, name: Optional[str] = None) -> list[str]:
     `licence` and its `commercial_use`. In commercial mode a `commercial_use: false` manifest
     is a problem (`commercial.TOOL_PROBLEM`), so `load_tool` refuses it."""
     from manyruns import vocab
+    from manykinds.params import check_declaration
+    from omegaconf import OmegaConf
 
     bad: list[str] = []
+    if OmegaConf.is_config(cfg):
+        cfg = OmegaConf.to_container(cfg, resolve=True)
     if not isinstance(cfg, dict):
         return [f"tool {name!r} is not a mapping"]
+    decl = cfg.get("declaration")
+    if decl is not None:
+        if OmegaConf.is_config(decl):
+            decl = OmegaConf.to_container(decl, resolve=True)
+        declaration_problems = check_declaration(decl)
+        bad.extend(declaration_problems)
+        if isinstance(decl, dict):
+            if decl.get("method") != (name or cfg.get("name")):
+                bad.append("declaration.method must match the tool name")
+            if decl.get("group") != "tool":
+                bad.append("declaration.group must be 'tool'")
+            entries = decl.get("params")
+            defaults = cfg.get("params", {})
+            if not isinstance(defaults, dict):
+                bad.append("params must be a mapping of declared defaults")
+            elif isinstance(entries, dict):
+                if not declaration_problems:
+                    # Defaults can belong to fixed parameters, so validate them as defaults,
+                    # not overrides. Equality alone accepts True and 1.0 for an integer 1.
+                    manifest_decl = {
+                        **decl,
+                        "params": {
+                            key: {**entry, "default": defaults.get(key, entry["default"])}
+                            for key, entry in entries.items()
+                        },
+                    }
+                    bad.extend(check_declaration(manifest_decl))
+                for key, value in defaults.items():
+                    if key not in entries:
+                        bad.append(f"params.{key}: unknown parameter in declaration")
+                    elif isinstance(entries[key], dict) and value != entries[key].get("default"):
+                        bad.append(f"params.{key}: must equal declaration.params.{key}.default")
     unknown = sorted(set(cfg) - TOOL_FIELDS)
     if unknown:
         bad.append(f"unknown field(s) {unknown} — known: {sorted(TOOL_FIELDS)}")
     if name and cfg.get("name") != name:
         bad.append(f"name is {cfg.get('name')!r} but the file is {name}.yaml — they must match")
     if not cfg.get("version"):
-        bad.append("no `version` — a tool with no version cannot be pinned, and an unpinned "
-                   "tool cannot be reproduced or compared across runs")
+        bad.append(
+            "no `version` — a tool with no version cannot be pinned, and an unpinned "
+            "tool cannot be reproduced or compared across runs"
+        )
     licence = cfg.get("licence")
     if not licence or not isinstance(licence, str):
-        bad.append("no `licence` — every tool declares its SPDX licence expression, because a "
-                   "licence is often the reason a tool runs as a separate program")
+        bad.append(
+            "no `licence` — every tool declares its SPDX licence expression, because a "
+            "licence is often the reason a tool runs as a separate program"
+        )
     if not isinstance(cfg.get("commercial_use"), bool):
-        bad.append(f"commercial_use must be true or false, got {cfg.get('commercial_use')!r} — "
-                   f"it is declared, never derived from the licence")
+        bad.append(
+            f"commercial_use must be true or false, got {cfg.get('commercial_use')!r} — "
+            f"it is declared, never derived from the licence"
+        )
     elif licence in NON_COMMERCIAL_LICENCES and cfg["commercial_use"] is True:
         bad.append(f"licence {licence} forbids commercial use, so commercial_use cannot be true")
     elif cfg["commercial_use"] is False:
@@ -452,9 +573,40 @@ def check_tool(cfg: Any, name: Optional[str] = None) -> list[str]:
     if not isinstance(output, dict):
         bad.append("output must be a mapping")
         output = {}
+    if "mask" in output:
+        if not isinstance(output["mask"], str) or not output["mask"].strip():
+            bad.append("output.mask must name a non-empty obs column")
+        # A narrowing clears fitted outputs: accepting them here would make them stale
+        # the instant the runner applies the mask. Scalars still describe the tool run.
+        if any(key in output for key in ("obsm", "obs", "schema")) or cfg.get("produces"):
+            bad.append(
+                "output.mask is mask-only; remove output.obsm, output.obs, "
+                "output.schema and non-empty produces"
+            )
     schema = output.get("schema")
     if schema is not None and schema != RESULT_SCHEMA:
         bad.append(f"output.schema must be {RESULT_SCHEMA!r}, got {schema!r}")
+    if "tables" in output:
+        if schema != RESULT_SCHEMA:
+            bad.append("output.tables requires output.schema: result-v1")
+        tables = output["tables"]
+        if not isinstance(tables, dict):
+            bad.append("output.tables must map table names to required column lists")
+        else:
+            for name, columns in tables.items():
+                if (
+                    not isinstance(name, str)
+                    or not name
+                    or name in (".", "..")
+                    or any(c in name for c in "/\\")
+                ):
+                    bad.append(f"output.tables: {name!r} must be a non-empty file-safe name")
+                if not isinstance(columns, list) or any(
+                    not isinstance(c, str) or not c for c in columns
+                ):
+                    bad.append(
+                        f"output.tables.{name}: required columns must be a list of non-empty strings"
+                    )
     model = schema == RESULT_SCHEMA
     produces = cfg.get("produces") or []
     for fact in produces:
@@ -463,24 +615,37 @@ def check_tool(cfg: Any, name: Optional[str] = None) -> list[str]:
     if model:
         for key in ("obsm", "obs"):
             if key in output:
-                bad.append(f"output.{key} belongs to the .h5ad path; a {RESULT_SCHEMA} manifest "
-                           f"returns its facts in result.json")
+                bad.append(
+                    f"output.{key} belongs to the .h5ad path; a {RESULT_SCHEMA} manifest "
+                    f"returns its facts in result.json"
+                )
         allowed = [f for f in vocab.TOOL_OUTPUT_FACTS if f != "velocity"]
         for fact in produces:
             if isinstance(fact, str) and fact not in allowed:
-                bad.append(f"a {RESULT_SCHEMA} manifest cannot produce {fact!r} — seam facts are "
-                           f"{allowed}; velocity keeps the .h5ad path")
+                bad.append(
+                    f"a {RESULT_SCHEMA} manifest cannot produce {fact!r} — seam facts are "
+                    f"{allowed}; velocity keeps the .h5ad path"
+                )
     known = vocab.facts()
     for fact in cfg.get("needs") or []:
         if fact not in known:
             bad.append(f"needs: {fact!r} is not a fact the calculus names ({sorted(known)})")
 
     if mode == "precomputed":
-        for field in ("requires", "entrypoint", "selftest", "python", "input", "distribution",
-                      "call"):
+        for field in (
+            "requires",
+            "entrypoint",
+            "selftest",
+            "python",
+            "input",
+            "distribution",
+            "call",
+        ):
             if field in cfg:
-                bad.append(f"`{field}` is not allowed in mode: precomputed — manyruns starts "
-                           f"no interpreter for it and only reads its files")
+                bad.append(
+                    f"`{field}` is not allowed in mode: precomputed — manyruns starts "
+                    f"no interpreter for it and only reads its files"
+                )
         root = output.get("root")
         if not isinstance(root, str) or not root:
             bad.append("output.root must name the folder of the precomputed results")
@@ -494,8 +659,10 @@ def check_tool(cfg: Any, name: Optional[str] = None) -> list[str]:
         if not model:
             bad.append(f"mode: call needs output.schema: {RESULT_SCHEMA}")
         if "entrypoint" in cfg:
-            bad.append("`entrypoint` is not allowed in mode: call — manyruns's call adapter "
-                       "makes the call the `call` block describes")
+            bad.append(
+                "`entrypoint` is not allowed in mode: call — manyruns's call adapter "
+                "makes the call the `call` block describes"
+            )
         if "call" not in cfg:
             bad.append("mode: call needs a `call` block")
         else:
@@ -509,14 +676,24 @@ def check_tool(cfg: Any, name: Optional[str] = None) -> list[str]:
         if not cfg.get("selftest"):
             # Not decoration: `pyrovelocity==0.4.5` installs and does not import. A pin nobody
             # exercised is a pin nobody has checked.
-            bad.append("no `selftest` — a lock that has never been executed is not a working "
-                       "pin (measured: pyrovelocity 0.4.5 installs with exit 0 and fails to "
-                       "import)")
+            bad.append(
+                "no `selftest` — a lock that has never been executed is not a working "
+                "pin (measured: pyrovelocity 0.4.5 installs with exit 0 and fails to "
+                "import)"
+            )
     bad.extend(_pin_problems(cfg))
     io = cfg.get("input") or {}
     if not isinstance(io, dict) or io.get("kind") not in INPUT_KINDS:
         kind = io.get("kind") if isinstance(io, dict) else io
         bad.append(f"input.kind must be one of {INPUT_KINDS}, got {kind!r}")
+    if isinstance(io, dict) and "obs" in io:
+        if io.get("kind") != "state_frame":
+            bad.append("input.obs is allowed only with input.kind: state_frame")
+        roles = io["obs"]
+        if not isinstance(roles, list) or any(
+            role not in ("sample", "batch", "condition") for role in roles
+        ):
+            bad.append("input.obs must be a list drawn from sample, batch, condition")
     return bad
 
 
@@ -526,8 +703,9 @@ def load_tool(name: str, config_dir: Optional[Path | str] = None) -> dict:
 
     path = tool_dir(config_dir) / f"{name}.yaml"
     if not path.is_file():
-        raise ValueError(f"no tool named {name!r} at {path}. "
-                         f"Known: {discover_tools(config_dir) or '(none)'}")
+        raise ValueError(
+            f"no tool named {name!r} at {path}. Known: {discover_tools(config_dir) or '(none)'}"
+        )
     cfg = OmegaConf.to_container(OmegaConf.load(path), resolve=True)
     problems = check_tool(cfg, name)
     if problems:
@@ -540,9 +718,57 @@ def uv() -> Optional[str]:
     return shutil.which("uv")
 
 
-def build(name: str, config_dir: Optional[Path | str] = None,
-          timeout: int = 3600) -> dict:
-    """Realize the locked environment. THE ONLY function here that touches the disk.
+def lock_command(cfg: dict, in_file: Path, config_dir: Optional[Path | str] = None) -> list[str]:
+    """Compile for this platform, because a universal lock changes the tool's dependencies."""
+    exe = uv()
+    if exe is None:
+        raise ValueError("`uv` is not on PATH; install uv to compile a tool lock")
+    if tool_mode(cfg) == "precomputed":
+        raise ValueError(
+            "precomputed results have no requirements to lock; use manyruns tools list"
+        )
+    return [
+        exe,
+        "pip",
+        "compile",
+        "--generate-hashes",
+        "--python-version",
+        str(cfg.get("python") or "3.12"),
+        "--output-file",
+        str(lock_path(cfg, config_dir)),
+        str(in_file),
+    ]
+
+
+def lock(name: str, config_dir: Optional[Path | str] = None, timeout: int = 1800) -> dict:
+    """Write a hashed lock from the manifest; building its environment is a separate action."""
+    cfg = load_tool(name, config_dir)
+    if uv() is None:
+        raise ValueError("`uv` is not on PATH; install uv to compile a tool lock")
+    if tool_mode(cfg) == "precomputed":
+        raise ValueError(
+            "precomputed results have no requirements to lock; use manyruns tools list"
+        )
+    path = lock_path(cfg, config_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", suffix=".in", delete=False) as stream:
+        in_file = Path(stream.name)
+        try:
+            stream.write("\n".join(cfg["requires"]) + "\n")
+            stream.close()
+            proc = subprocess.run(
+                lock_command(cfg, in_file, config_dir),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            return {"lock": path, "returncode": proc.returncode, "stderr": proc.stderr}
+        finally:
+            in_file.unlink()
+
+
+def build(name: str, config_dir: Optional[Path | str] = None, timeout: int = 3600) -> dict:
+    """Realize the locked environment. THE ONLY function here that builds an environment.
 
     Called by `manyruns tools install` and by nothing on the run path — see the module header
     for why (2.4 GB, measured). `--require-hashes` is what makes this a reproduction rather than
@@ -561,8 +787,12 @@ def build(name: str, config_dir: Optional[Path | str] = None,
     env.parent.mkdir(parents=True, exist_ok=True)
     py = cfg.get("python") or "3.12"
     subprocess.run([exe, "venv", "--python", str(py), str(env)], check=True, timeout=timeout)
-    subprocess.run([exe, "pip", "sync", "--require-hashes", str(path)],
-                   check=True, timeout=timeout, env={**os.environ, "VIRTUAL_ENV": str(env)})
+    subprocess.run(
+        [exe, "pip", "sync", "--require-hashes", str(path)],
+        check=True,
+        timeout=timeout,
+        env={**os.environ, "VIRTUAL_ENV": str(env)},
+    )
     return {"env": env, "digest": digest, **selftest(cfg, env / "bin" / "python")}
 
 
@@ -576,10 +806,13 @@ def selftest(cfg: dict, python: Path, timeout: int = 600) -> dict:
     if not cmd:
         return {"selftest": "declared none", "ok": False}
     try:
-        proc = subprocess.run([str(python), "-c", str(cmd)], capture_output=True,
-                              text=True, timeout=timeout)
+        proc = subprocess.run(
+            [str(python), "-c", str(cmd)], capture_output=True, text=True, timeout=timeout
+        )
     except (OSError, subprocess.SubprocessError) as e:
         return {"selftest": f"could not run: {e}", "ok": False}
     tail = (proc.stderr or proc.stdout or "").strip().splitlines()
-    return {"selftest": "ok" if proc.returncode == 0 else (tail[-1] if tail else "failed"),
-            "ok": proc.returncode == 0}
+    return {
+        "selftest": "ok" if proc.returncode == 0 else (tail[-1] if tail else "failed"),
+        "ok": proc.returncode == 0,
+    }

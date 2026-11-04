@@ -11,6 +11,7 @@ substrate now — absent from `app.ENGINES` and from `serving.LocalServer.SERVES
 `real`. Nothing about the argument changed with the name: one loop, one state schema, one
 assembler, because the alternative was measured and it drifted.
 """
+
 from __future__ import annotations
 
 from manyruns.installation import REINSTALL
@@ -21,7 +22,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from manyruns import __version__
+from manyruns import __version__, env
 from manyruns import artifacts as _artifacts
 from manyruns import commercial as _commercial
 from manyruns.measurements import annotate
@@ -39,6 +40,18 @@ from manyruns.vocab import CATEGORICAL_KINDS, INPROC, STEP_GROUPS, STEP_PRODUCES
 from manyruns.watch import describe
 
 
+def tool_timeout() -> int:
+    """Read the external-tool deadline in seconds before any step runs."""
+    value = env.get("TOOL_TIMEOUT", "7200")
+    try:
+        timeout = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("MANYRUNS_TOOL_TIMEOUT must be a positive integer") from exc
+    if timeout <= 0:
+        raise ValueError("MANYRUNS_TOOL_TIMEOUT must be a positive integer")
+    return timeout
+
+
 class ComputeCancelled(Exception):
     """The caller abandoned a computation before its state could be committed."""
 
@@ -46,6 +59,7 @@ class ComputeCancelled(Exception):
 @dataclass(frozen=True)
 class _RetainedModel:
     """Parent-owned reference to a model whose Python graph cannot cross a spawn pipe."""
+
     token: int
 
 
@@ -65,19 +79,20 @@ def _compute_worker(connection, log_path=None):
     import sys
     import traceback
 
-    if os.name == 'posix':
+    if os.name == "posix":
         os.setsid()  # cancellation also reaches the engine's nested worker processes
     diagnostic_error = None
     try:
         if log_path is not None:
             Path(log_path).parent.mkdir(parents=True, exist_ok=True)
-        quiet = open(log_path or os.devnull, 'a', buffering=1)
+        quiet = open(log_path or os.devnull, "a", buffering=1)
     except OSError as exc:
         # Diagnostics are best-effort, just like persisted step arrays. Never let
         # an unwritable log stop compute or reconnect native output to the live TTY.
-        quiet = open(os.devnull, 'a', buffering=1)
-        diagnostic_error = (f'compute diagnostics unavailable at {log_path}: {exc}; '
-                            'child output discarded')
+        quiet = open(os.devnull, "a", buffering=1)
+        diagnostic_error = (
+            f"compute diagnostics unavailable at {log_path}: {exc}; child output discarded"
+        )
     with quiet:
         # Preserve both Python and native diagnostics outside Textual's capture.
         import faulthandler
@@ -90,23 +105,23 @@ def _compute_worker(connection, log_path=None):
         faulthandler.enable(file=quiet)
 
         def report(rec, steps):
-            connection.send_bytes(pickle.dumps(('progress', (rec, steps)), protocol=5))
+            connection.send_bytes(pickle.dumps(("progress", (rec, steps)), protocol=5))
 
         try:
             if diagnostic_error is not None:
-                connection.send_bytes(pickle.dumps(('diagnostic', diagnostic_error), protocol=5))
+                connection.send_bytes(pickle.dumps(("diagnostic", diagnostic_error), protocol=5))
             while True:
                 request = pickle.loads(connection.recv_bytes())
                 if request is None:
                     return
                 fn, args, kwargs, progress = request
                 if progress:
-                    kwargs['on_step'] = report
+                    kwargs["on_step"] = report
                 try:
                     result = fn(*args, **kwargs)
-                    response = pickle.dumps(('result', result), protocol=5)
+                    response = pickle.dumps(("result", result), protocol=5)
                 except BaseException:
-                    response = pickle.dumps(('error', traceback.format_exc()), protocol=5)
+                    response = pickle.dumps(("error", traceback.format_exc()), protocol=5)
                 connection.send_bytes(response)
         except (EOFError, BrokenPipeError):
             pass
@@ -150,7 +165,7 @@ class ComputeProcess:
             try:
                 if process.pid is None:
                     return
-                if os.name == 'posix':
+                if os.name == "posix":
                     os.killpg(process.pid, signal.SIGKILL if kill else signal.SIGTERM)
                 elif kill:
                     process.kill()
@@ -174,25 +189,25 @@ class ComputeProcess:
     def _raise_if_cancelled(self):
         if self._stopped.is_set() or self.cancelled():
             self.cancel()
-            raise ComputeCancelled('run abandoned: compute cancelled')
+            raise ComputeCancelled("run abandoned: compute cancelled")
 
     def _disconnected(self):
         self._raise_if_cancelled()
-        self.process.join(.2)
+        self.process.join(0.2)
         code = self.process.exitcode
-        detail = f'exit code {code}'
+        detail = f"exit code {code}"
         if code is not None and code < 0:
             import signal
 
-            detail += f' ({signal.Signals(-code).name})'
+            detail += f" ({signal.Signals(-code).name})"
         if self._diagnostic_error is not None:
-            detail += f'; {self._diagnostic_error}'
+            detail += f"; {self._diagnostic_error}"
         elif self.log_path is not None:
-            detail += f'; diagnostics: {self.log_path}'
+            detail += f"; diagnostics: {self.log_path}"
         # Cancellation can arrive during poll/recv, or during the diagnostic join.
         # All worker-loss paths must resolve it before recording a failed attempt.
         self._raise_if_cancelled()
-        return RuntimeError(f'compute process disconnected: {detail}')
+        return RuntimeError(f"compute process disconnected: {detail}")
 
     def call(self, fn, *args, on_step=None, **kwargs):
         import multiprocessing
@@ -200,10 +215,11 @@ class ComputeProcess:
 
         self._raise_if_cancelled()
         if self.process is None:
-            context = multiprocessing.get_context('spawn')
+            context = multiprocessing.get_context("spawn")
             self.connection, child = context.Pipe()
-            self.process = context.Process(target=_compute_worker, args=(child, self.log_path),
-                                           name='manyruns-compute')
+            self.process = context.Process(
+                target=_compute_worker, args=(child, self.log_path), name="manyruns-compute"
+            )
             # Not daemonic: manylatents can itself use multiprocessing for an algorithm.
             try:
                 self.process.start()
@@ -218,23 +234,24 @@ class ComputeProcess:
             finally:
                 child.close()
         try:
-            self.connection.send_bytes(pickle.dumps((fn, args, kwargs, on_step is not None),
-                                                    protocol=5))
+            self.connection.send_bytes(
+                pickle.dumps((fn, args, kwargs, on_step is not None), protocol=5)
+            )
             while True:
                 self._raise_if_cancelled()
-                if not self.connection.poll(.05):
+                if not self.connection.poll(0.05):
                     if not self.process.is_alive():
                         raise self._disconnected()
                     continue
                 kind, value = pickle.loads(self.connection.recv_bytes())
-                if kind == 'diagnostic':
+                if kind == "diagnostic":
                     import warnings
 
                     self._diagnostic_error = value
                     warnings.warn(value, RuntimeWarning, stacklevel=2)
-                elif kind == 'progress':
+                elif kind == "progress":
                     on_step(*value)
-                elif kind == 'error':
+                elif kind == "error":
                     raise RuntimeError(value)
                 else:
                     return value
@@ -258,13 +275,13 @@ class ComputeProcess:
             self.connection.close()
             self.connection = None
         if self.process is not None and self.process.pid is not None:
-            self.process.join(.2)
+            self.process.join(0.2)
             if self.process.is_alive():
                 self._signal()
-                self.process.join(.2)
+                self.process.join(0.2)
             # Reap nested engine workers too, including after their parent exited.
             self._signal(kill=True)
-            self.process.join(.2)
+            self.process.join(0.2)
             with self._process_lock:
                 process, self.process = self.process, None
             if process.is_alive():
@@ -276,8 +293,9 @@ class ComputeProcess:
                 # multiprocessing's exit handler otherwise joins this child again,
                 # defeating the daemon reaper and blocking interpreter shutdown.
                 _children.discard(process)
-                Thread(target=self._reap, args=(process,), daemon=True,
-                       name='manyruns-compute-reaper').start()
+                Thread(
+                    target=self._reap, args=(process,), daemon=True, name="manyruns-compute-reaper"
+                ).start()
             else:
                 process.close()
         self._stopped.set()
@@ -291,23 +309,31 @@ def compute_step(step, state, g, *, dispatch, ctx, index, carry, steps, on_step)
     remains authoritative, including when tuning rolls back to an earlier model. Probes
     resolve that token only in this same worker. All models are released at run close.
     """
-    model = state.get('model')
+    model = state.get("model")
     if isinstance(model, _RetainedModel):
-        state['model'] = _worker_models[model.token]
-    apply_step(step, state, g, dispatch=dispatch, ctx=ctx, index=index, carry=carry,
-               steps=steps, on_step=on_step)
-    model = state.get('model')
+        state["model"] = _worker_models[model.token]
+    apply_step(
+        step,
+        state,
+        g,
+        dispatch=dispatch,
+        ctx=ctx,
+        index=index,
+        carry=carry,
+        steps=steps,
+        on_step=on_step,
+    )
+    model = state.get("model")
     if model is not None:
         token = id(model)
         _worker_models[token] = model
-        state['model'] = _RetainedModel(token)
+        state["model"] = _RetainedModel(token)
     return state, g, ctx, carry, steps
 
 
 def step_group(step: dict) -> str | None:
     """The group a step declares, or None if it declares none (recorded as a loud skip)."""
     return step.get("group") or None
-
 
 
 # ── ONE step loop, ONE g-vector schema (shared by every engine) ──────────────
@@ -381,7 +407,7 @@ GVECTOR_SIZE = ("n_samples", "n_features", "n_embedded", "final_dim")
 #: excludes `X` because copying the scientist's data into an outputs folder is a data-handling
 #: decision (`artifacts.py` module docstring — "geometry leaves, the person's data does not"),
 #: and `counts` is MORE of the scientist's data than `X` is, not less. `_persist` iterates
-#: `PERSISTED`, so nothing here reaches disk; `test_the_gene_axis_is_never_written_to_disk`
+#: `PERSISTED`, so no raw gene-axis slot reaches disk; `test_the_gene_axis_is_never_written_to_disk`
 #: fails if that stops being true.
 #:
 #: `frame`/`rows`/`cols` are the second schema change, and they are what makes the seven keys
@@ -392,7 +418,7 @@ GVECTOR_SIZE = ("n_samples", "n_features", "n_embedded", "final_dim")
 #: frame (`steps._step_qc`, `steps._step_rank_genes`, `_finalize`), rewritten from the view by
 #: `_apply_transition`; new readers take `frame.view(...)`, which is the only form that cannot
 #: go stale. The frame is NOT persisted either, for the same reason `counts` is not — it is the
-#: same bytes, and `_persist` still iterates `artifacts.PERSISTED` alone.
+#: same bytes, and `_persist` does not save frame slots.
 #:   model  — the TRAINED OBJECT a lightning step produced, not its coordinates. The one slot
 #:            here that is CALLABLE: a transcript answers "what did the embedding look like",
 #:            a model
@@ -409,9 +435,28 @@ GVECTOR_SIZE = ("n_samples", "n_features", "n_embedded", "final_dim")
 #:   clusters, graph, trajectories — SUPPLIED by a model through the model seam
 #:            (`pipeline/external.py`), never computed here: a per-cell partition, the graph
 #:            interchange arrays, and the (B, T, d) trajectories. Derived, like `emb`.
-_STATE_KEYS = ("X", "emb", "pseudotime", "labels", "label_key", "seed", "counts", "genes",
-               "frame", "rows", "cols", "model", "layers", "velocity", "clusters", "graph",
-               "trajectories")
+#:   tables — paths to checked tool tables. The executor saves them; `_persist` records
+#:            new paths separately from the array slots.
+_STATE_KEYS = (
+    "X",
+    "emb",
+    "pseudotime",
+    "labels",
+    "label_key",
+    "seed",
+    "counts",
+    "genes",
+    "frame",
+    "rows",
+    "cols",
+    "model",
+    "layers",
+    "velocity",
+    "clusters",
+    "graph",
+    "trajectories",
+    "tables",
+)
 
 
 #: Re-exported from `steps`, which is where it has to be DEFINED (this module imports that
@@ -421,8 +466,16 @@ _StepSkipped = _steps._StepSkipped
 _StepUnsupported = _steps._StepUnsupported
 
 
-def _new_state(X: Any = None, labels: Any = None, seed: Any = None, emb: Any = None,
-               counts: Any = None, genes: Any = None, layers: "dict | None" = None) -> dict:
+def _new_state(
+    X: Any = None,
+    labels: Any = None,
+    seed: Any = None,
+    emb: Any = None,
+    counts: Any = None,
+    genes: Any = None,
+    layers: "dict | None" = None,
+    obs: dict | None = None,
+) -> dict:
     """The state a run starts from. `emb` is a PARAMETER, not always None.
 
     It was hardcoded to None, so `state["emb"]` could only ever be written by a latent step —
@@ -449,21 +502,35 @@ def _new_state(X: Any = None, labels: Any = None, seed: Any = None, emb: Any = N
     from manyruns.pipeline import frame as _frame
 
     shaped = counts if getattr(counts, "ndim", 0) == 2 else X
-    n_rows, n_cols = (shaped.shape if getattr(shaped, "ndim", 0) == 2 else (0, 0))
+    n_rows, n_cols = shaped.shape if getattr(shaped, "ndim", 0) == 2 else (0, 0)
     if getattr(shaped, "ndim", 0) != 2 and getattr(emb, "ndim", 0) == 2:
         n_rows = emb.shape[0]
-    return {"X": X, "emb": emb, "pseudotime": None, "labels": labels, "label_key": None, "seed": seed,
-            "counts": counts, "genes": genes, "model": None,
-            "layers": dict(layers or {}),
-            # SUPPLIED by a tool that ran elsewhere, never computed here. DERIVED, not frame:
-            # a field is fitted over a neighbourhood, so a narrowing invalidates the rows that
-            # remain — the same rule as `emb`, and the opposite of the `layers` it came from.
-            "velocity": None,
-            # SUPPLIED by a model through the model seam. Derived, for the same reason.
-            "clusters": None, "graph": None, "trajectories": None,
-            "frame": _frame.new_frame(counts=counts, genes=genes, labels=labels, layers=layers),
-            "rows": _frame.full_selection(n_rows),
-            "cols": _frame.full_selection(n_cols)}
+    return {
+        "X": X,
+        "emb": emb,
+        "pseudotime": None,
+        "labels": labels,
+        "label_key": None,
+        "seed": seed,
+        "counts": counts,
+        "genes": genes,
+        "model": None,
+        "layers": dict(layers or {}),
+        # SUPPLIED by a tool that ran elsewhere, never computed here. DERIVED, not frame:
+        # a field is fitted over a neighbourhood, so a narrowing invalidates the rows that
+        # remain — the same rule as `emb`, and the opposite of the `layers` it came from.
+        "velocity": None,
+        # SUPPLIED by a model through the model seam. Derived, for the same reason.
+        "clusters": None,
+        "graph": None,
+        "tables": {},
+        "trajectories": None,
+        "frame": _frame.new_frame(
+            counts=counts, genes=genes, labels=labels, layers=layers, obs=obs
+        ),
+        "rows": _frame.full_selection(n_rows),
+        "cols": _frame.full_selection(n_cols),
+    }
 
 
 # What a step attempt can come to is declared ONCE, in `watch.OUTCOMES` — the record's home,
@@ -528,8 +595,17 @@ def _attach_geometry(rec: dict, emb: Any, declared: list, previous: dict) -> dic
     return now
 
 
-def _persist(rec: dict, state: dict, ctx: dict, index: int, name: str, written: dict,
-             before: dict, before_extras: dict | None = None) -> None:
+def _persist(
+    rec: dict,
+    state: dict,
+    ctx: dict,
+    index: int,
+    name: str,
+    written: dict,
+    before: dict,
+    before_extras: dict | None = None,
+    before_tables: dict | None = None,
+) -> None:
     """Write this step's derived state to disk and record where it went.
 
     A slot is written only when this step actually REPLACED it — object identity, the same
@@ -574,6 +650,12 @@ def _persist(rec: dict, state: dict, ctx: dict, index: int, name: str, written: 
             rec.setdefault("artifacts", {})[slot] = (
                 f"not written: larger than {_artifacts.MAX_BYTES // (1024 * 1024)} MiB"
             )
+
+    for table_name, path in (state.get("tables") or {}).items():
+        if path == (before_tables or {}).get(table_name):
+            continue
+        rec.setdefault("artifacts", {})[table_name] = path
+        written[path] = {"step": name, "index": index, "slot": f"table:{table_name}"}
 
     # ENGINE BYPRODUCTS, written on the same terms as manyruns's own slots — see
     # `_collect_extras`. Kept in a separate dict rather than added to `PERSISTED` because
@@ -819,7 +901,8 @@ def _apply_transition(out: dict, state: dict, rec: dict, ctx: dict) -> None:
             # off by an unrecorded amount. A step that means to drop cells returns a mask.
             raise ValueError(
                 f"{rec.get('name')!r} returned a matrix with {new_x.shape[0]} rows for a "
-                f"selection of {len(rows)} — a prep step that removes cells returns a mask")
+                f"selection of {len(rows)} — a prep step that removes cells returns a mask"
+            )
         state["X"] = new_x
         if ctx.get("array") is not None:
             ctx["array"] = new_x
@@ -844,7 +927,8 @@ def _apply_transition(out: dict, state: dict, rec: dict, ctx: dict) -> None:
                 raise ValueError(
                     f"{rec.get('name')!r} filters genes, but {key!r} is "
                     f"{value.shape[0]} x {value.shape[1]} against a selection of {before} "
-                    f"genes — a gene filter has to run before the gene axis is reduced")
+                    f"genes — a gene filter has to run before the gene axis is reduced"
+                )
     state[axis] = _frame.narrow(state[axis], mask)
     remaining = int(state[axis].shape[0])
     # RECORDED even at zero, because "filter_cells dropped 0 cells" is a measurement — on
@@ -855,7 +939,11 @@ def _apply_transition(out: dict, state: dict, rec: dict, ctx: dict) -> None:
 
     view = _frame.view(state["frame"], state["rows"], state["cols"])
     state["counts"], state["genes"], state["labels"], state["layers"] = (
-        view["counts"], view["genes"], view["labels"], view["layers"])
+        view["counts"],
+        view["genes"],
+        view["labels"],
+        view["layers"],
+    )
     state["label_key"] = ctx.get("label_key")
     for holder, key, value in holders:
         if getattr(value, "ndim", 0) == 2 and value.shape[at] == before:
@@ -877,17 +965,27 @@ def _apply_transition(out: dict, state: dict, rec: dict, ctx: dict) -> None:
     # fully legal — and run time `invalidated: ['emb']` with mioflow recorded as
     # `skipped (mioflow needs an embedding to run on)`. `narrate.CLEARED_FACT` could not
     # explain it either, because `vocab.invalidated` is empty for a step that does not narrow.
-    invalidated = ([k for k in DERIVED_SLOTS if state.get(k) is not None]
-                   if remaining != before else [])
+    invalidated = (
+        [k for k in DERIVED_SLOTS if state.get(k) is not None] if remaining != before else []
+    )
     for key in invalidated:
         state[key] = None
     if invalidated:
         rec["invalidated"] = invalidated
 
 
-def apply_step(step: dict, state: dict, g: dict, *, dispatch: dict, ctx: dict,
-               index: int, carry: dict, on_step: Any = None,
-               steps: list | None = None) -> dict:
+def apply_step(
+    step: dict,
+    state: dict,
+    g: dict,
+    *,
+    dispatch: dict,
+    ctx: dict,
+    index: int,
+    carry: dict,
+    on_step: Any = None,
+    steps: list | None = None,
+) -> dict:
     """Apply ONE step — the unit the recipe loop and an interactive session both want.
 
     ``dispatch`` maps a step GROUP to an executor:
@@ -941,10 +1039,15 @@ def apply_step(step: dict, state: dict, g: dict, *, dispatch: dict, ctx: dict,
     # params are copied: an executor that mutates its params dict must not rewrite the
     # recipe's own record of what it was asked to do.
     rec: dict[str, Any] = {
-        "index": index, "name": name, "group": group,
+        "index": index,
+        "name": name,
+        "group": group,
         "params": dict(step.get("params") or {}),
+        **({"tool": step["tool"]} if "tool" in step else {}),
         "constraints": _bounds.resolved_constraints(step, _bounds.shape_of(state, ctx)),
-        "outcome": None, "detail": None, "seconds": 0.0,
+        "outcome": None,
+        "detail": None,
+        "seconds": 0.0,
     }
     lineage = steps if steps is not None else []
     lineage.append(rec)
@@ -1017,6 +1120,7 @@ def apply_step(step: dict, state: dict, g: dict, *, dispatch: dict, ctx: dict,
     # Diffed by identity like the slots above, so a step that only READS an extra another
     # step produced does not deposit a second copy of it under its own name.
     before_extras = dict(state.get("extras") or {})
+    before_tables = dict(state.get("tables") or {})
     started = time.perf_counter()
     try:
         before_labels = state.get("labels")
@@ -1025,6 +1129,8 @@ def apply_step(step: dict, state: dict, g: dict, *, dispatch: dict, ctx: dict,
         ctx["step_index"] = index
         before_traj = state.get("trajectories")
         try:
+            if step.get("tool"):
+                ctx["tool"] = step["tool"]
             override = fn(name, rec["params"], state, g, ctx)
             # A STEP THAT SET TRAJECTORIES draws them, over the embedding the step received
             # (the frame the paths start in), as `<step>.png`: the in-process MIOFlow route and
@@ -1034,6 +1140,7 @@ def apply_step(step: dict, state: dict, g: dict, *, dispatch: dict, ctx: dict,
                 base = before_obj if before_obj is not None else state.get("X")
                 _display_scatter(base, state, ctx, f"{name}.png", name, trajectories=traj)
         finally:
+            ctx.pop("tool", None)
             # Derived labels no longer name the source column. Keep provenance in
             # state so tune rollback restores it together with the labels themselves.
             if state.get("labels") is not before_labels:
@@ -1056,8 +1163,12 @@ def apply_step(step: dict, state: dict, g: dict, *, dispatch: dict, ctx: dict,
             # so `rec["emitted"]` comes back empty and the two agree.
             for key, value in (override.get("report") or {}).items():
                 g[key] = value
-                annotate(g, key, kind="setting" if key in _prep.REPORT_SETTINGS else "measurement",
-                         stage=f"step {index + 1}: {name}")
+                annotate(
+                    g,
+                    key,
+                    kind="setting" if key in _prep.REPORT_SETTINGS else "measurement",
+                    stage=f"step {index + 1}: {name}",
+                )
     except _StepSkipped as e:
         rec["outcome"], rec["detail"] = "skipped", str(e)
         # The flag, set at the ONE place both kinds of decline converge. Present-and-True only
@@ -1095,10 +1206,13 @@ def apply_step(step: dict, state: dict, g: dict, *, dispatch: dict, ctx: dict,
         # trajectory step the recipe exists for, reading as contributing nothing, because
         # phate and mioflow both leave (2700, 3) float32. `watch.py:136,176` sets `produced`
         # unconditionally, so this is also the parity the shared field claims.
-        rec["produced"] = (describe(state.get("emb"))
-                           if state.get("emb") is not before_obj else
-                           describe(state.get("clusters"))
-                           if state.get("clusters") is not before_slots.get("clusters") else None)
+        rec["produced"] = (
+            describe(state.get("emb"))
+            if state.get("emb") is not before_obj
+            else describe(state.get("clusters"))
+            if state.get("clusters") is not before_slots.get("clusters")
+            else None
+        )
         # Every new readout belongs to this step unless its producer already stated a more
         # specific stage. Punctuation is not evidence that a number was a parameter.
         declared_settings = {f"{name}.{p}" for p in rec["params"]}
@@ -1122,9 +1236,15 @@ def apply_step(step: dict, state: dict, g: dict, *, dispatch: dict, ctx: dict,
             # next run of this recipe overwrites it; `state/<run_id>/plots/` keeps this run's
             # png and spec files, and `run_plots` names them so a reader needs no layout rule.
             # Omitted, like `plots`, when the step drew nothing.
-            kept = ([] if ctx.get("out_dir") is None else
-                    [p for png in drew
-                     for p in _artifacts.save_figure(ctx["out_dir"], ctx.get("run_id"), png)])
+            kept = (
+                []
+                if ctx.get("out_dir") is None
+                else [
+                    p
+                    for png in drew
+                    for p in _artifacts.save_figure(ctx["out_dir"], ctx.get("run_id"), png)
+                ]
+            )
             if kept:
                 rec["run_plots"] = kept
         # Geometry goes on BEFORE the report, not after: `on_step` is how the live panel
@@ -1133,16 +1253,28 @@ def apply_step(step: dict, state: dict, g: dict, *, dispatch: dict, ctx: dict,
         # above `_settle` rather than beside `_finalize` — the whole point is that `lid`
         # exists while the run is still going, not once the last step has finished.
         if state.get("emb") is not before_obj:
-            carry["geometry"] = _attach_geometry(rec, state.get("emb"), carry["declared"],
-                                                 carry["geometry"])
-        _persist(rec, state, ctx, index, name, carry["written"], before_slots, before_extras)
+            carry["geometry"] = _attach_geometry(
+                rec, state.get("emb"), carry["declared"], carry["geometry"]
+            )
+        _persist(
+            rec,
+            state,
+            ctx,
+            index,
+            name,
+            carry["written"],
+            before_slots,
+            before_extras,
+            before_tables,
+        )
         _settle(rec)
         _report(on_step, rec, lineage)
     return rec
 
 
-def _run_steps(recipe: dict, state: dict, g: dict, *, dispatch: dict, ctx: dict,
-               on_step: Any = None) -> list:
+def _run_steps(
+    recipe: dict, state: dict, g: dict, *, dispatch: dict, ctx: dict, on_step: Any = None
+) -> list:
     """THE recipe loop: one `apply_step` per declared step, over one lineage.
 
     Returns the positional STEP RECORD — one entry per *attempt*, carrying index, name,
@@ -1156,8 +1288,17 @@ def _run_steps(recipe: dict, state: dict, g: dict, *, dispatch: dict, ctx: dict,
     steps: list[dict] = []
     carry = new_carry()
     for index, step in enumerate(recipe.get("steps", []) or []):
-        apply_step(step, state, g, dispatch=dispatch, ctx=ctx, index=index,
-                   carry=carry, on_step=on_step, steps=steps)
+        apply_step(
+            step,
+            state,
+            g,
+            dispatch=dispatch,
+            ctx=ctx,
+            index=index,
+            carry=carry,
+            on_step=on_step,
+            steps=steps,
+        )
     finish_carry(carry, ctx)
     return steps
 
@@ -1193,8 +1334,11 @@ def executed(recipe: dict, steps: "list | None") -> dict:
     questions asked ABOUT the execution.
     """
     declared = list(recipe.get("steps") or [])
-    ran = [step for step, rec in zip(declared, list(steps or []))
-           if rec.get("outcome") not in DID_NOT_RUN]
+    ran = [
+        step
+        for step, rec in zip(declared, list(steps or []))
+        if rec.get("outcome") not in DID_NOT_RUN
+    ]
     return {**recipe, "steps": ran}
 
 
@@ -1224,8 +1368,15 @@ def _report(on_step: Any, rec: dict, steps: list) -> None:
         pass
 
 
-def identity(recipe: dict, *, engine: str, seed: Any, dataset: Any,
-             dataset_name: str | None = None, data_kwargs: dict | None = None) -> tuple[str, str]:
+def identity(
+    recipe: dict,
+    *,
+    engine: str,
+    seed: Any,
+    dataset: Any,
+    dataset_name: str | None = None,
+    data_kwargs: dict | None = None,
+) -> tuple[str, str]:
     """`(run_id, spec_id)` — the two addresses a record needs, and they are not the same.
 
     Nothing could previously be said ABOUT a run because nothing named one. "B is the null
@@ -1244,9 +1395,18 @@ def identity(recipe: dict, *, engine: str, seed: Any, dataset: Any,
 
     spec = {
         "recipe": recipe.get("name"),
-        "steps": [{"name": s.get("name"), "group": s.get("group"),
-                   "params": s.get("params") or {}} for s in (recipe.get("steps") or [])],
-        "engine": engine, "seed": seed, "dataset": str(dataset) if dataset else None,
+        "steps": [
+            {
+                "name": s.get("name"),
+                "group": s.get("group"),
+                "params": s.get("params") or {},
+                **({"tool": s["tool"]} if "tool" in s else {}),
+            }
+            for s in (recipe.get("steps") or [])
+        ],
+        "engine": engine,
+        "seed": seed,
+        "dataset": str(dataset) if dataset else None,
     }
     # Keep legacy identities stable when no source contract was supplied. A named
     # variant or generator override is part of what was asked for, just like step params.
@@ -1311,19 +1471,35 @@ def _non_commercial_steps(recipe: dict, steps: list, g: dict) -> list:
     names = set()
     for rec in steps:
         name = rec.get("name")
-        if (_commercial.is_non_commercial(rec)
-                or any(_commercial.is_non_commercial(s) for s in declared.get(name, ()))
-                or g.get(f"{name}.tool_commercial_use") is False):
+        if (
+            _commercial.is_non_commercial(rec)
+            or any(_commercial.is_non_commercial(s) for s in declared.get(name, ()))
+            or g.get(f"{name}.tool_commercial_use") is False
+        ):
             names.add(name)
     return sorted(names)
 
 
-def _finalize(state: dict, g: dict, *, engine: str, recipe: dict, steps: list,
-              plots: list, seed: Any = None, dataset: Any = None,
-              dataset_name: str | None = None, data_kwargs: dict | None = None,
-              caveats: "list | None" = None, ident: "tuple | None" = None,
-              parent: Any = None, discarded: "list | None" = None,
-              abandoned: bool = False, not_run=(), compute_error: str | None = None) -> dict:
+def _finalize(
+    state: dict,
+    g: dict,
+    *,
+    engine: str,
+    recipe: dict,
+    steps: list,
+    plots: list,
+    seed: Any = None,
+    dataset: Any = None,
+    dataset_name: str | None = None,
+    data_kwargs: dict | None = None,
+    caveats: "list | None" = None,
+    ident: "tuple | None" = None,
+    parent: Any = None,
+    discarded: "list | None" = None,
+    abandoned: bool = False,
+    not_run=(),
+    compute_error: str | None = None,
+) -> dict:
     """THE g-vector assembler + result shape — identical for every engine.
 
     `trace` and `status` are derived from the step record rather than accumulated
@@ -1343,20 +1519,32 @@ def _finalize(state: dict, g: dict, *, engine: str, recipe: dict, steps: list,
     # unchanged and still the only place ids are minted.
     not_run = [dict(occurrence) for occurrence in not_run]
     for occurrence in not_run:
-        if (not isinstance(occurrence.get("index"), int)
-                or isinstance(occurrence["index"], bool) or occurrence["index"] < 0
-                or not isinstance(occurrence.get("name"), str) or not occurrence["name"]
-                or not isinstance(occurrence.get("reason"), str) or not occurrence["reason"]):
+        if (
+            not isinstance(occurrence.get("index"), int)
+            or isinstance(occurrence["index"], bool)
+            or occurrence["index"] < 0
+            or not isinstance(occurrence.get("name"), str)
+            or not occurrence["name"]
+            or not isinstance(occurrence.get("reason"), str)
+            or not occurrence["reason"]
+        ):
             raise ValueError("not_run entries require a nonnegative index, name and reason")
     caveats = list(caveats or [])
-    caveats.extend(f"step {entry['index']} ({entry['name']}): not run — {entry['reason']}"
-                   for entry in not_run)
+    caveats.extend(
+        f"step {entry['index']} ({entry['name']}): not run — {entry['reason']}" for entry in not_run
+    )
     if abandoned:
         caveats.append("run abandoned: final geometry was not measured")
     if compute_error:
         caveats.append(f"final geometry was not measured: {compute_error}")
-    run_id, spec_id = ident or identity(recipe, engine=engine, seed=seed, dataset=dataset,
-                                        dataset_name=dataset_name, data_kwargs=data_kwargs)
+    run_id, spec_id = ident or identity(
+        recipe,
+        engine=engine,
+        seed=seed,
+        dataset=dataset,
+        dataset_name=dataset_name,
+        data_kwargs=data_kwargs,
+    )
     trace = [f"{s['group']}:{s['name']}" for s in steps]
     status = {s["name"]: _status_line(s) for s in steps}
     X, emb = state.get("X"), state.get("emb")
@@ -1377,8 +1565,11 @@ def _finalize(state: dict, g: dict, *, engine: str, recipe: dict, steps: list,
     # no geometry. Merged last and never over a value the engine already produced.
     from manyruns import catalog
 
-    final = ({} if abandoned or compute_error
-             else _suite.measure(emb, X, catalog.load_suite(), already=g))
+    final = (
+        {}
+        if abandoned or compute_error
+        else _suite.measure(emb, X, catalog.load_suite(), already=g)
+    )
     g.update(final)
     for key in final:
         if not key.startswith("suite_") and not key.endswith("_note"):
@@ -1425,8 +1616,8 @@ def _finalize(state: dict, g: dict, *, engine: str, recipe: dict, steps: list,
         #
         # Read off the RECORDS, not off `status`: `status` is a lossy view (one key per name,
         # last write wins) so a recipe issuing a step twice could hide the failed one.
-        "ok": not compute_error and not any(
-            s["outcome"] == "error" or s.get("unsupported") for s in steps),
+        "ok": not compute_error
+        and not any(s["outcome"] == "error" or s.get("unsupported") for s in steps),
         # DID EVERY DECLARED STEP RUN — the question `ok` used to answer, kept as its own key
         # rather than dropped. A reader deciding "is this comparable to that other run" needs
         # it: two runs of one recipe where one skipped `filter_mito` are not the same analysis,
@@ -1444,8 +1635,13 @@ def _finalize(state: dict, g: dict, *, engine: str, recipe: dict, steps: list,
         # that did, and change what `executed()` prunes.
         "cancelled": bool(abandoned or discarded),
         "not_run": not_run,
-        "complete": (not any(s["outcome"] in DID_NOT_RUN for s in steps)
-                     and not discarded and not abandoned and not not_run and not compute_error),
+        "complete": (
+            not any(s["outcome"] in DID_NOT_RUN for s in steps)
+            and not discarded
+            and not abandoned
+            and not not_run
+            and not compute_error
+        ),
         "final_dim": int(g.get("final_dim") or fallback_dim),
         # what actually EXECUTED, positionally, with params and durations. `trace`/`status`
         # above are lossy views of this: `trace` cannot express an outcome and `status`
@@ -1459,8 +1655,8 @@ def _finalize(state: dict, g: dict, *, engine: str, recipe: dict, steps: list,
         # Identity. Without it a record cannot be referred to, and every capability that is
         # an EDGE between records — a null twin, a re-run of the same spec, "every run on
         # this cohort" — is inexpressible rather than merely unbuilt.
-        "run_id": run_id,        # this execution
-        "spec_id": spec_id,      # what was asked for; equal across re-runs of one spec
+        "run_id": run_id,  # this execution
+        "spec_id": spec_id,  # what was asked for; equal across re-runs of one spec
         # The lineage this one started from, or None — see `as_parent`. Deliberately NOT part
         # of `spec_id`: "same spec?" and "same starting state?" are two different questions a
         # comparison reader has to be able to ask separately. Two branches that issue the same
@@ -1529,8 +1725,10 @@ def _run_prep_step(name, params, state, g, ctx):
         # array (`bounds.shape_of` records the same limitation, and `run_manylatents` seeds
         # `X=None` on that route). `transform` would hand `np.log1p` a None and record a
         # TypeError; the honest answer is that there is nothing here to prep.
-        raise _StepSkipped("no data in this state to prep — the engine loads a named dataset "
-                           "itself, so manyruns never sees the matrix")
+        raise _StepSkipped(
+            "no data in this state to prep — the engine loads a named dataset "
+            "itself, so manyruns never sees the matrix"
+        )
     return fn(view, state.get("X"), params)
 
 
@@ -1565,9 +1763,10 @@ def _run_probe_step(name, params, state, g, ctx):
         raise _StepSkipped(
             f"no {slot} in this state — {name} reads what a trajectory step returned, and no "
             "step of this run wrote them (the in-process stand-in and the mock write none)"
-            if slot else
-            "no trained model in this state — a probe asks a question of a fitted object, and "
-            "the lightning step on this engine trains nothing")
+            if slot
+            else "no trained model in this state — a probe asks a question of a fitted object, and "
+            "the lightning step on this engine trains nothing"
+        )
     try:
         answer = fn(value, params or {})
     except _probes._NoAnswer as e:
@@ -1588,8 +1787,12 @@ def implicit_sample_ids(obj):
         return None
     names = np.asarray(names, dtype=str)
     if len(set(names.tolist())) != len(names):
-        warnings.warn("source observation IDs are duplicated; using positional alignment "
-                      "without persisted identities", UserWarning, stacklevel=2)
+        warnings.warn(
+            "source observation IDs are duplicated; using positional alignment "
+            "without persisted identities",
+            UserWarning,
+            stacklevel=2,
+        )
         return None
     return names.copy()
 
@@ -1609,7 +1812,10 @@ def display_context(state, color=None, sample_ids=None, label_key=None, declared
         n = n or len(labels)
     channels = []
     for channel in color or ():
-        if not isinstance(channel, dict) or channel.get("kind") not in ("categorical", "continuous"):
+        if not isinstance(channel, dict) or channel.get("kind") not in (
+            "categorical",
+            "continuous",
+        ):
             raise ValueError("color must contain named categorical or continuous channels")
         values = channel.get("values")
         if getattr(values, "ndim", 1) != 1 or values is None or len(values) != n:
@@ -1631,8 +1837,7 @@ def display_context(state, color=None, sample_ids=None, label_key=None, declared
     # owns the matrix. Those explicit values still establish an original sample axis.
     if not len(state["rows"]) and n and (channels or sample_ids is not None):
         state["rows"] = np.arange(n, dtype=np.int64)
-    return {"display_channels": tuple(channels), "sample_ids": sample_ids,
-            "label_key": label_key}
+    return {"display_channels": tuple(channels), "sample_ids": sample_ids, "label_key": label_key}
 
 
 def current_display(state, ctx):
@@ -1644,8 +1849,13 @@ def current_display(state, ctx):
     elif state.get("labels") is not None:
         categorical = state.get("label_kind") in CATEGORICAL_KINDS
         values = state["labels"] if categorical else _io._labels_to_numeric(state["labels"])
-        channels = [{"key": state.get("label_key"), "values": values,
-                     "kind": "categorical" if categorical else "continuous"}]
+        channels = [
+            {
+                "key": state.get("label_key"),
+                "values": values,
+                "kind": "categorical" if categorical else "continuous",
+            }
+        ]
     ids = ctx.get("sample_ids")
     return channels, ids[rows] if ids is not None else None
 
@@ -1677,26 +1887,39 @@ def _check_metadata_alignment(emb, state, ctx, returned_ids=None):
     if reason:
         ctx["metadata_aligned"] = False
         ctx.setdefault("caveats", []).append(
-            f"metadata alignment unavailable — {reason}; no proven mapping to source metadata")
+            f"metadata alignment unavailable — {reason}; no proven mapping to source metadata"
+        )
 
 
 def _display_scatter(emb, state, ctx, fname, title, *, trajectories=None):
     if getattr(emb, "ndim", 0) != 2 or emb.shape[1] < 2:
         ctx.setdefault("caveats", []).append(
-            f"{title}: no scatter — this result has fewer than two coordinate columns")
+            f"{title}: no scatter — this result has fewer than two coordinate columns"
+        )
         return []
     channels, ids = current_display(state, ctx) if ctx.get("metadata_aligned", True) else ([], None)
-    if (any(len(c["values"]) != len(emb) for c in channels)
-            or (ids is not None and len(ids) != len(emb))):
-        note = (f"{title}: metadata alignment unavailable — engine coordinates have "
-                f"{len(emb)} rows without a mapping to the input rows; displaying without metadata")
+    if any(len(c["values"]) != len(emb) for c in channels) or (
+        ids is not None and len(ids) != len(emb)
+    ):
+        note = (
+            f"{title}: metadata alignment unavailable — engine coordinates have "
+            f"{len(emb)} rows without a mapping to the input rows; displaying without metadata"
+        )
         ctx.setdefault("caveats", []).append(note)
         channels, ids = [], None
-    result = _io.save_display_scatter(emb, channels, ctx["out_dir"], fname, ctx["plots"],
-                                      title, obs_names=ids, trajectories=trajectories)
+    result = _io.save_display_scatter(
+        emb,
+        channels,
+        ctx["out_dir"],
+        fname,
+        ctx["plots"],
+        title,
+        obs_names=ids,
+        trajectories=trajectories,
+    )
     ctx.setdefault("caveats", []).extend(
-        f"skipping colour channel {key!r}: {reason}"
-        for key, reason in result.skipped_channels)
+        f"skipping colour channel {key!r}: {reason}" for key, reason in result.skipped_channels
+    )
     return result
 
 
@@ -1744,7 +1967,9 @@ class RunStepLogger:
         self.step = step
 
     def get_step_dir(self, create: bool = False) -> Path:
-        path = _artifacts.root(self.out_dir, self.run_id) / "engine" / f"{self.index:02d}-{self.step}"
+        path = (
+            _artifacts.root(self.out_dir, self.run_id) / "engine" / f"{self.index:02d}-{self.step}"
+        )
         if create:
             path.mkdir(parents=True, exist_ok=True)
         return path
@@ -1756,7 +1981,8 @@ class RunStepLogger:
         """`step_dir / "outputs.done"`, holding the ISO-8601 UTC time. Raises nothing."""
         try:
             (Path(step_dir) / self.MARKER).write_text(
-                _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds") + "\n")
+                _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds") + "\n"
+            )
         except OSError:
             return None
         return None
@@ -1784,9 +2010,13 @@ def _save_engine_outputs(name: str, out: dict, emb: Any, ctx: dict) -> None:
         from manylatents.callbacks.embedding.save_outputs import SaveOutputs
 
         logger = RunStepLogger(ctx["out_dir"], ctx["run_id"], ctx["step_index"], name)
-        SaveOutputs(save_dir=str(logger.get_step_dir(create=True)), save_format="npy",
-                    experiment_name=name, use_timestamp=False,
-                    step_logger=logger).on_latent_end(None, out)
+        SaveOutputs(
+            save_dir=str(logger.get_step_dir(create=True)),
+            save_format="npy",
+            experiment_name=name,
+            use_timestamp=False,
+            step_logger=logger,
+        ).on_latent_end(None, out)
     except Exception:  # noqa: BLE001 - the engine's record must never fail the step
         return
 
@@ -1838,7 +2068,7 @@ def _ml_latent(name, params, state, g, ctx):
             # array WITHOUT RAISING. Measured on pbmc3k, that is what the engine received.
             kwargs["input_data"] = np.ascontiguousarray(_dense(ctx["array"]))
         else:
-            kwargs["data"] = ctx.get("data_ref")          # a named manylatents dataset
+            kwargs["data"] = ctx.get("data_ref")  # a named manylatents dataset
             # Generation params go through the engine's `data_kwargs` channel, NOT spread into
             # the top-level call: `run(**kwargs)` routes its loose kwargs to the ALGORITHM, so
             # spreading them here dropped every one of them silently — two datasets differing
@@ -1860,8 +2090,10 @@ def _ml_latent(name, params, state, g, ctx):
         # embedding this step was built over, and a readout after it reads the summary that
         # `_collect_extras` flattens into the g-vector.
         if ctx.get("metrics"):
-            g[f"{name}.suite_note"] = ("geometry suite not measured: this step produces a "
-                                       "graph (node membership), not coordinates")
+            g[f"{name}.suite_note"] = (
+                "geometry suite not measured: this step produces a "
+                "graph (node membership), not coordinates"
+            )
         state.setdefault("extras", {})[f"{name}.membership"] = emb
         for k, v in (out.get("scores") or {}).items():
             g[f"{name}.{k}"] = v
@@ -1879,8 +2111,10 @@ def _ml_latent(name, params, state, g, ctx):
         state["emb"] = emb
         ctx["emb_from"] = name
     if ctx.get("metrics") and _label_valued(name):
-        g[f"{name}.suite_note"] = ("geometry suite not measured: this step produces a "
-                                   "partition (clusters), not coordinates")
+        g[f"{name}.suite_note"] = (
+            "geometry suite not measured: this step produces a "
+            "partition (clusters), not coordinates"
+        )
     for k, v in (out.get("scores") or {}).items():
         g[f"{name}.{k}"] = v
         if not k.endswith("_note"):
@@ -1903,7 +2137,8 @@ def _display_partition(name, state, ctx):
     emb = state.get("emb")
     if emb is None:
         ctx.setdefault("caveats", []).append(
-            f"{name}: no scatter — it partitioned the input matrix, which has no 2-D view")
+            f"{name}: no scatter — it partitioned the input matrix, which has no 2-D view"
+        )
         return []
     source = ctx.get("emb_from") or "the embedding"
     title = f"{name} clusters on {source} (first two columns)"
@@ -1911,8 +2146,9 @@ def _display_partition(name, state, ctx):
     _, ids = current_display(state, ctx) if ctx.get("metadata_aligned", True) else ([], None)
     if ids is not None and len(ids) != len(emb):
         ids = None
-    return _io.save_display_scatter(emb, [channel], ctx["out_dir"], f"{name}.png",
-                                    ctx["plots"], title, obs_names=ids)
+    return _io.save_display_scatter(
+        emb, [channel], ctx["out_dir"], f"{name}.png", ctx["plots"], title, obs_names=ids
+    )
 
 
 def _ml_lightning(name, params, state, g, ctx):
@@ -1932,7 +2168,8 @@ def _ml_lightning(name, params, state, g, ctx):
             raise _StepSkipped(
                 "the manylatents CLI path forwards no params, and this step declares "
                 f"{sorted(params)} — they would be silently dropped. Only `mioflow` has an "
-                "in-process route that carries them today")
+                "in-process route that carries them today"
+            )
         if not ctx.get("data_ref"):
             raise _StepSkipped("lightning step needs a named --dataset for the CLI")
         return _mioflow._run_lightning_cli(name, ctx["data_ref"], ctx["fast_dev_run"])
@@ -1956,8 +2193,12 @@ def _ml_lightning(name, params, state, g, ctx):
     # Read BEFORE the call, because `state["emb"]` is rebound to the flow's output below.
     base_emb = state["emb"]
     emb, scores, extras, model = _mioflow._run_mioflow_experiment(
-        state["emb"], ctx["seed"], ctx["fast_dev_run"], params,
-        labels=time_labels, device=ctx.get("device", "cpu"),
+        state["emb"],
+        ctx["seed"],
+        ctx["fast_dev_run"],
+        params,
+        labels=time_labels,
+        device=ctx.get("device", "cpu"),
     )
     if time_labels is not None:
         g["mioflow.n_timepoints"] = len(set(map(str, time_labels)))
@@ -2007,6 +2248,8 @@ def run_manylatents(
     sample_ids: Any = None,
     label_key: str | None = None,
     dataset_name: str | None = None,
+    source_path: Any = None,
+    obs: dict | None = None,
 ) -> dict:
     """Run the recipe against the real manylatents engine — one ``api.run`` call per
     latent/lightning step, embeddings chaining forward (phate → mioflow); analysis steps
@@ -2064,10 +2307,23 @@ def run_manylatents(
     # Validated at OPEN, before any compute: a malformed parent is the caller's bug, and
     # discovering it in `_finalize` would mean failing after the fit has already run.
     parent = as_parent(parent)
-    ident = identity(recipe, engine="manylatents", seed=seed, dataset=data_ref,
-                     dataset_name=dataset_name, data_kwargs=data_kwargs)
-    state = _new_state(X=array if getattr(array, "ndim", 0) == 2 else None, labels=labels,
-                       emb=embedding, counts=counts, genes=genes, layers=layers)
+    ident = identity(
+        recipe,
+        engine="manylatents",
+        seed=seed,
+        dataset=data_ref,
+        dataset_name=dataset_name,
+        data_kwargs=data_kwargs,
+    )
+    state = _new_state(
+        X=array if getattr(array, "ndim", 0) == 2 else None,
+        labels=labels,
+        emb=embedding,
+        counts=counts,
+        genes=genes,
+        layers=layers,
+        obs=obs,
+    )
     if counts is not None and state["X"] is not None:
         from manyruns.aligned import check_aligned
 
@@ -2077,9 +2333,18 @@ def run_manylatents(
     # `open_gvector`.
     g: dict[str, Any] = open_gvector(state)
     ctx = {
-        "out_dir": out_dir, "plots": plots, "target_dim": target_dim, "seed": seed,
-        "fast_dev_run": fast_dev_run, "device": device, "array": array,
-        "data_ref": data_ref, "data_kwargs": data_kwargs, "metrics": metrics,
+        "source_path": source_path,
+        "tool_timeout": tool_timeout(),
+        "out_dir": out_dir,
+        "plots": plots,
+        "target_dim": target_dim,
+        "seed": seed,
+        "fast_dev_run": fast_dev_run,
+        "device": device,
+        "array": array,
+        "data_ref": data_ref,
+        "data_kwargs": data_kwargs,
+        "metrics": metrics,
         "dataset_name": dataset_name,
         "declared_shape": declared_shape,
         "color": _io._labels_to_numeric(labels),  # colour embeddings by timepoint when we can
@@ -2090,17 +2355,28 @@ def run_manylatents(
     }
     ctx.update(display_context(state, color, sample_ids, label_key, declared_shape))
     with _numeric_quiet():
-        steps = _run_steps(recipe, state, g, dispatch=dispatch_for("manylatents"), ctx=ctx,
-                           on_step=on_step)
+        steps = _run_steps(
+            recipe, state, g, dispatch=dispatch_for("manylatents"), ctx=ctx, on_step=on_step
+        )
     # The provenance notes, folded over what RAN rather than over what was declared (`executed`
     # says why). PREPENDED, so the order a reader sees — route notes, then the bounds a step
     # was clamped by — is byte-identical to what computing them at open produced.
     caveats[:0] = _vocab.noncanonical(executed(recipe, steps), "unknown", provided=supplied)
-    return _finalize(state, g, engine="manylatents", recipe=recipe,
-                     steps=steps, plots=plots, seed=seed, dataset=data_ref,
-                     dataset_name=dataset_name, data_kwargs=data_kwargs,
-                     caveats=caveats, ident=ident, parent=parent)
-
+    return _finalize(
+        state,
+        g,
+        engine="manylatents",
+        recipe=recipe,
+        steps=steps,
+        plots=plots,
+        seed=seed,
+        dataset=data_ref,
+        dataset_name=dataset_name,
+        data_kwargs=data_kwargs,
+        caveats=caveats,
+        ident=ident,
+        parent=parent,
+    )
 
 
 # ── compute ──────────────────────────────────────────────────────────────────
@@ -2126,13 +2402,26 @@ def _inproc_step(name, params, state, g, ctx):
         ctx["plots"][before_plots:] = list(dict.fromkeys(ctx["plots"][before_plots:]))
 
 
-def run_inproc(matrix: Any, recipe: dict, out_dir: Path, target_dim: int = 3,
-                 labels: Any = None, label_kind: str | None = None,
-                 on_step: Any = None, seed: Any = None, dataset: Any = None,
-                 embedding: Any = None, parent: Any = None,
-                 counts: Any = None, genes: Any = None,
-                 color: Any = None, sample_ids: Any = None,
-                 label_key: str | None = None) -> dict:
+def run_inproc(
+    matrix: Any,
+    recipe: dict,
+    out_dir: Path,
+    target_dim: int = 3,
+    labels: Any = None,
+    label_kind: str | None = None,
+    on_step: Any = None,
+    seed: Any = None,
+    dataset: Any = None,
+    embedding: Any = None,
+    parent: Any = None,
+    counts: Any = None,
+    genes: Any = None,
+    color: Any = None,
+    sample_ids: Any = None,
+    label_key: str | None = None,
+    source_path: Any = None,
+    obs: dict | None = None,
+) -> dict:
     """Run the recipe on a 2-D array with real, public-only compute (no private stack).
 
     Thin wrapper: the step loop and the g-vector schema are shared with the manylatents
@@ -2200,24 +2489,44 @@ def run_inproc(matrix: Any, recipe: dict, out_dir: Path, target_dim: int = 3,
     from manyruns import vocab as _vocab
 
     supplied = {"embedding"} if getattr(embedding, "ndim", 0) == 2 else set()
-    caveats: list = []           # filled after the loop — see the same pair in `run_manylatents`
-    parent = as_parent(parent)   # at OPEN — see the same call in `run_manylatents`
+    caveats: list = []  # filled after the loop — see the same pair in `run_manylatents`
+    parent = as_parent(parent)  # at OPEN — see the same call in `run_manylatents`
     ident = identity(recipe, engine=INPROC, seed=seed, dataset=dataset)
-    state = _new_state(X=X, labels=labels, seed=seed, emb=embedding,
-                       counts=counts, genes=genes)
+    state = _new_state(
+        X=X, labels=labels, seed=seed, emb=embedding, counts=counts, genes=genes, obs=obs
+    )
     state["label_kind"] = label_kind
     # The size of the data that ENTERED, recorded before the loop can narrow it —
     # `open_gvector`.
     g: dict[str, Any] = open_gvector(state)
-    ctx = {"out_dir": Path(out_dir), "plots": plots, "target_dim": target_dim,
-           "run_id": ident[0], "caveats": caveats}
+    ctx = {
+        "source_path": source_path,
+        "tool_timeout": tool_timeout(),
+        "out_dir": Path(out_dir),
+        "plots": plots,
+        "target_dim": target_dim,
+        "run_id": ident[0],
+        "caveats": caveats,
+    }
     ctx.update(display_context(state, color, sample_ids, label_key))
     with _numeric_quiet():
-        steps = _run_steps(recipe, state, g, dispatch=dispatch_for(INPROC), ctx=ctx,
-                           on_step=on_step)
+        steps = _run_steps(
+            recipe, state, g, dispatch=dispatch_for(INPROC), ctx=ctx, on_step=on_step
+        )
     caveats[:0] = _vocab.noncanonical(executed(recipe, steps), "unknown", provided=supplied)
-    return _finalize(state, g, engine=INPROC, recipe=recipe, steps=steps, plots=plots,
-                     seed=seed, dataset=dataset, caveats=caveats, ident=ident, parent=parent)
+    return _finalize(
+        state,
+        g,
+        engine=INPROC,
+        recipe=recipe,
+        steps=steps,
+        plots=plots,
+        seed=seed,
+        dataset=dataset,
+        caveats=caveats,
+        ident=ident,
+        parent=parent,
+    )
 
 
 # ── mock: the dep-free stand-in, as an executor rather than a second loop ─────
@@ -2286,14 +2595,26 @@ _DISPATCH: dict[str, dict] = {
     # step that returns `trajectories` fills on manylatents and on the in-process loop alike.
     # NOT on `mock`: the mock writes no trajectories and trains nothing, so a probe there could
     # only ever decline — which is precisely what `dispatchable` exists to prevent.
-    "manylatents": {"latent": _ml_latent, "lightning": _ml_lightning,
-                    "analysis": _run_analysis_step, "prep": _run_prep_step,
-                    "probe": _run_probe_step},
-    INPROC: {"latent": _inproc_step, "lightning": _inproc_step,
-             "analysis": _run_analysis_step, "prep": _run_prep_step,
-             "probe": _run_probe_step},
-    "mock": {"latent": _mock_transform, "lightning": _mock_transform,
-             "analysis": _mock_measure, "prep": _run_prep_step},
+    "manylatents": {
+        "latent": _ml_latent,
+        "lightning": _ml_lightning,
+        "analysis": _run_analysis_step,
+        "prep": _run_prep_step,
+        "probe": _run_probe_step,
+    },
+    INPROC: {
+        "latent": _inproc_step,
+        "lightning": _inproc_step,
+        "analysis": _run_analysis_step,
+        "prep": _run_prep_step,
+        "probe": _run_probe_step,
+    },
+    "mock": {
+        "latent": _mock_transform,
+        "lightning": _mock_transform,
+        "analysis": _mock_measure,
+        "prep": _run_prep_step,
+    },
 }
 
 #: Executors that resolve a step by NAME from a table manyruns owns, so "can this engine run
@@ -2307,8 +2628,11 @@ _DISPATCH: dict[str, dict] = {
 #
 # `setdefault`, never assignment: a real implementation landing under the same name must win, and
 # must win silently rather than by someone remembering to delete a line in `stubs.py`.
-for _group, _table in (("analysis", _steps._ANALYSIS_STEPS), ("prep", _prep._PREP_STEPS),
-                       ("probe", _probes._PROBE_STEPS)):
+for _group, _table in (
+    ("analysis", _steps._ANALYSIS_STEPS),
+    ("prep", _prep._PREP_STEPS),
+    ("probe", _probes._PROBE_STEPS),
+):
     for _name, _fn in _stubs.for_group(_group).items():
         _table.setdefault(_name, _fn)
 

@@ -1,15 +1,12 @@
-# The standard single-cell workflow: reduce, embed, partition, then SAY SOMETHING about the
-# partition. The last part is why this is a recipe and not three algorithm calls — a run that
+# The standard single-cell workflow: reduce, partition, score, then embed for display. The
+# scoring step is why this is a recipe and not three algorithm calls — a run that
 # emits `pca.*` and `umap.*` keys and no statement about the clusters is a picture with no
 # readout.
 #
-# ORDERING CAVEAT, deliberate and measured. `leiden` consumes an embedding and produces a
-# 1-column LABEL vector, which it writes over `state["emb"]`. So `umap` must run BEFORE it, or
-# it embeds the labels rather than the coordinates. The scoping doc (§5.1) calls this option
-# (b) and names option (a) — leiden writing `state["clusters"]` instead of overwriting — as the
-# cleaner fix. (b) is what ships here because it is correct today with no engine change; the
-# `clusters` fact already exists in `vocab.STEP_PRODUCES`, so the calculus knows leiden is what
-# provides it either way.
+# ORDERING, deliberate. `leiden` partitions the 10-column PCA embedding and writes labels to
+# `state["clusters"]` without replacing `state["emb"]`. `cluster_quality` therefore scores the
+# partition in that same PCA embedding. `umap` then embeds the PCA coordinates in two columns
+# for display.
 #
 # NOT A FINDING. `cluster_quality` is computed from the embedding and reads no external label,
 # so `vocab.NULL_KIND` requires a `data` null that nothing implements. It ships as a
@@ -23,7 +20,7 @@ source:
   doi:   10.1186/s13059-017-1382-0
   url:   https://scanpy.readthedocs.io/en/stable/tutorials/basics/clustering.html
   verified: 2026-07-28
-  note:  "Step ORDER differs from the tutorial: umap precedes leiden here, because leiden overwrites the embedding. Cross-checked against Seurat's Guided Clustering Tutorial and OSCA (10.1038/s41592-019-0654-x)."
+  note:  "Step ORDER keeps leiden and cluster_quality in PCA space, then runs umap for display. Cross-checked against Seurat's Guided Clustering Tutorial and OSCA (10.1038/s41592-019-0654-x)."
 
 steps:
   # THE PREAMBLE, DECLARED. These ran on every counts-like load inside
@@ -37,9 +34,9 @@ steps:
   - {name: transform, group: prep,   params: {method: log1p},     via: manylatents}
   - {name: pca,             group: latent,   params: {n_components: 10},
      limits: {n_components: [n_samples, n_features]}, via: manylatents}
-  - {name: umap,            group: latent,   params: {n_components: 2},  via: manylatents}
   - {name: leiden,          group: latent,   params: {},                 via: manylatents}
   - {name: cluster_quality, group: analysis, params: {},                 via: manyruns}
+  - {name: umap,            group: latent,   params: {n_components: 2},  via: manylatents}
 
 question: "What groups are in here? — I'll partition the cells and tell you how well-separated they actually are"
 # NARROW ON PURPOSE. `suits` drives the RECOMMENDATION, and recommending a partition on

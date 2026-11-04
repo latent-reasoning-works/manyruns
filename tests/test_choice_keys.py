@@ -8,6 +8,7 @@ used. Plain `run` has the matching `--condition-key` flag.
 The runs here use the manylatents loading path with `modes.run` forwarded to the mock engine:
 the loader reads the real file, and no geometry is computed.
 """
+
 from __future__ import annotations
 
 import json
@@ -33,8 +34,9 @@ def _write_h5ad(path: Path) -> Path:
     import pandas as pd
 
     rng = np.random.default_rng(0)
-    obs = pd.DataFrame({"condition": CONDITION, "arm": ARM, "day": [0, 1] * 20},
-                       index=[f"c{i}" for i in range(40)])
+    obs = pd.DataFrame(
+        {"condition": CONDITION, "arm": ARM, "day": [0, 1] * 20}, index=[f"c{i}" for i in range(40)]
+    )
     anndata.AnnData(X=rng.poisson(3.0, size=(40, 6)).astype("float32"), obs=obs).write_h5ad(path)
     return path
 
@@ -48,7 +50,8 @@ def store(tmp_path, monkeypatch) -> Path:
     (configs / f"{DATASET}.yaml").write_text(
         f"name: {DATASET}\n"
         f"handle: {{kind: path, ref: {json.dumps(str(data))}}}\n"
-        "modality: scrna\nshape: case-control\ntopology: [clusters]\ndesign: case-control\n")
+        "modality: scrna\nshape: case-control\ntopology: [clusters]\ndesign: case-control\n"
+    )
     monkeypatch.setenv("MANYRUNS_DATASET_DIR", str(configs))
     home = tmp_path / "home"
     home.mkdir()
@@ -61,13 +64,23 @@ def store(tmp_path, monkeypatch) -> Path:
 
 def _choice(store: Path, **keys) -> dict:
     assert store.is_dir()
-    doc = json.loads(json.dumps(actions.enumerate_actions(
-        "ledger", dataset=DATASET, gate=False, seed=42, store=store)))
+    doc = json.loads(
+        json.dumps(
+            actions.enumerate_actions("ledger", dataset=DATASET, gate=False, seed=42, store=store)
+        )
+    )
     legal = [o["recipe"] for o in doc["offered"] if o["can_run"]]
     assert "embed" in legal, legal
-    return {"schema_version": 1, "surface": "ledger", "dataset": DATASET,
-            "offer_sha256": offer_sha256(doc), "chosen": {"recipe": "embed"},
-            "chooser": CHOOSER, "bound": "logits", **keys}
+    return {
+        "schema_version": 1,
+        "surface": "ledger",
+        "dataset": DATASET,
+        "offer_sha256": offer_sha256(doc),
+        "chosen": {"recipe": "embed"},
+        "chooser": CHOOSER,
+        "bound": "logits",
+        **keys,
+    }
 
 
 def _forward_to_mock(monkeypatch) -> list[dict]:
@@ -147,7 +160,7 @@ def _refused(choice: dict, store: Path, *texts: str) -> None:
         assert text in caught.value.message, (text, caught.value.message)
 
 
-@pytest.mark.parametrize("key", ["time_key", "condition_key"])
+@pytest.mark.parametrize("key", ["time_key", "condition_key", "sample_key", "batch_key"])
 def test_a_key_that_is_not_a_column_is_refused(store, key, capsys):
     choice = _choice(store, **{key: "nosuch"})
     _refused(choice, store, key, "nosuch", "arm")
@@ -159,7 +172,7 @@ def test_a_key_that_is_not_a_column_is_refused(store, key, capsys):
 
 
 @pytest.mark.parametrize("value", [3, "", ["arm"], None, True])
-@pytest.mark.parametrize("key", ["time_key", "condition_key"])
+@pytest.mark.parametrize("key", ["time_key", "condition_key", "sample_key", "batch_key"])
 def test_a_key_of_the_wrong_type_is_refused(store, key, value):
     _refused(_choice(store, **{key: value}), store, key)
 
@@ -168,14 +181,27 @@ def test_one_column_for_both_keys_is_refused(store):
     _refused(_choice(store, time_key="arm", condition_key="arm"), store, "arm")
 
 
-def test_a_key_on_a_dataset_without_columns_is_refused(store, monkeypatch):
+@pytest.mark.parametrize("key", ["condition_key", "sample_key", "batch_key"])
+def test_a_key_on_a_dataset_without_columns_is_refused(store, monkeypatch, key):
     monkeypatch.delenv("MANYRUNS_DATASET_DIR")
-    doc = json.loads(json.dumps(actions.enumerate_actions(
-        "ledger", dataset="swissroll", gate=True, seed=42, store=store)))
-    choice = {"schema_version": 1, "surface": "ledger", "dataset": "swissroll",
-              "offer_sha256": offer_sha256(doc), "chosen": {"recipe": "embed"},
-              "chooser": CHOOSER, "bound": "logits", "condition_key": "label"}
-    _refused(choice, store, "swissroll", "condition_key")
+    doc = json.loads(
+        json.dumps(
+            actions.enumerate_actions(
+                "ledger", dataset="swissroll", gate=True, seed=42, store=store
+            )
+        )
+    )
+    choice = {
+        "schema_version": 1,
+        "surface": "ledger",
+        "dataset": "swissroll",
+        "offer_sha256": offer_sha256(doc),
+        "chosen": {"recipe": "embed"},
+        "chooser": CHOOSER,
+        "bound": "logits",
+        key: "label",
+    }
+    _refused(choice, store, "swissroll", key)
 
 
 def test_review_keeps_the_keys(store):
@@ -207,7 +233,96 @@ def test_plain_run_takes_condition_key(store, monkeypatch):
     seen = _forward_to_mock(monkeypatch)
     data = store.parent / "twoarms.h5ad"
     assert data.is_file()
-    assert app.main(["run", str(data), "--recipe", "embed", "--engine", "manylatents",
-                     "--condition-key", "arm", "--project", "plain"]) == 0
+    assert (
+        app.main(
+            [
+                "run",
+                str(data),
+                "--recipe",
+                "embed",
+                "--engine",
+                "manylatents",
+                "--condition-key",
+                "arm",
+                "--project",
+                "plain",
+            ]
+        )
+        == 0
+    )
     (run,) = _runs(store)
     assert run["condition_key"] == "arm" and list(seen[0]["labels"]) == ARM
+
+
+@pytest.mark.parametrize("key", ["sample_key", "batch_key"])
+def test_role_cannot_name_the_time_column(store, key):
+    _refused(_choice(store, time_key="arm", **{key: "arm"}), store, "arm")
+
+
+def test_two_role_keys_may_not_name_one_column(store, monkeypatch):
+    _refused(_choice(store, sample_key="arm", batch_key="arm"), store, "sample_key", "batch_key")
+
+
+def test_plain_run_takes_sample_and_batch_keys(store, monkeypatch):
+    from manyruns import app
+
+    seen = _forward_to_mock(monkeypatch)
+    data = store.parent / "twoarms.h5ad"
+    assert (
+        app.main(
+            [
+                "run",
+                str(data),
+                "--recipe",
+                "embed",
+                "--engine",
+                "manylatents",
+                "--sample-key",
+                "arm",
+                "--batch-key",
+                "day",
+                "--project",
+                "roles",
+            ]
+        )
+        == 0
+    )
+    (run,) = _runs(store)
+    assert run["sample_key"] == "arm" and run["batch_key"] == "day"
+    assert list(seen[0]["obs"]["sample"]) == ARM
+
+
+def test_choice_roles_are_reviewed_recorded_and_forwarded(store, monkeypatch):
+    seen = _forward_to_mock(monkeypatch)
+    choice = _choice(store, sample_key="arm", batch_key="day")
+    reviewed = action_space.review(choice, ask=lambda c: "accept", human_id="a3")
+    assert reviewed["sample_key"] == "arm" and reviewed["batch_key"] == "day"
+    assert _run_choice(store, reviewed, "roles") == 0
+    (run,) = _runs(store)
+    assert run["sample_key"] == "arm" and run["batch_key"] == "day"
+    assert list(seen[0]["obs"]["sample"]) == ARM
+    assert list(seen[0]["obs"]["batch"]) == [0, 1] * 20
+
+
+@pytest.mark.parametrize("flag", ["--sample-key", "--batch-key"])
+def test_choice_refuses_role_flags(store, flag, capsys):
+    from manyruns import app
+
+    path = store.parent / "choice.json"
+    path.write_text(json.dumps(_choice(store)))
+    with pytest.raises(SystemExit) as caught:
+        app.main(["run", "--choice", str(path), flag, "arm"])
+    assert caught.value.code == 2
+    assert flag in capsys.readouterr().err
+    assert not (store / "outputs").exists()
+
+
+def test_mock_run_records_no_role_columns(store):
+    assert (
+        _run_choice(
+            store, _choice(store, sample_key="arm", batch_key="day"), "roles", engine="mock"
+        )
+        == 0
+    )
+    (run,) = _runs(store)
+    assert run["sample_key"] is None and run["batch_key"] is None
