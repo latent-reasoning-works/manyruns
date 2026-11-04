@@ -41,6 +41,7 @@ run is not `ok` — and the reason carries the exact command that fixes it. Noth
 environment: the realized env for one tool is 2.4 GB (measured), and a step that downloads that
 mid-run is an outage, not a step.
 """
+
 from __future__ import annotations
 
 import json
@@ -75,8 +76,9 @@ FACT_SLOTS: dict[str, tuple[str, str]] = {
 
 #: The caveat a precomputed step adds to its run. The `serving.MOCK_CAVEAT` pattern: the result
 #: says what it is in its own record, so a precomputed output never reads as one manyruns ran.
-PRECOMPUTED_CAVEAT = ("precomputed output: manyruns did not run this model; it read and checked "
-                      "its files only")
+PRECOMPUTED_CAVEAT = (
+    "precomputed output: manyruns did not run this model; it read and checked its files only"
+)
 
 #: Companion slot for a fact's per-cell uncertainty, when the manifest declares `output.obs`.
 UNCERTAINTY_SLOT = {"velocity": "velocity_uncertainty"}
@@ -92,14 +94,22 @@ UNCERTAINTY_SLOT = {"velocity": "velocity_uncertainty"}
 RESULT_SCHEMA_VERSION = 1
 
 #: The facts a model can return through the seam. `velocity` stays on the `.h5ad` path.
-SEAM_FACTS = ("embedding", "clusters", "pseudotime", "trajectories", "graph",
-              "class_probabilities")
+SEAM_FACTS = ("embedding", "clusters", "pseudotime", "trajectories", "graph", "class_probabilities")
 
 #: The seam facts with one row per cell.
 PER_CELL_FACTS = ("embedding", "clusters", "pseudotime")
 
 #: The top-level keys of a version 1 result. Closed.
-RESULT_KEYS = ("schema_version", "ok", "reason", "n_cells", "cells_sha256", "facts", "scalars")
+RESULT_KEYS = (
+    "schema_version",
+    "ok",
+    "reason",
+    "n_cells",
+    "cells_sha256",
+    "facts",
+    "scalars",
+    "tables",
+)
 
 #: The keys a declined result (`ok: false`) may hold.
 DECLINED_KEYS = ("schema_version", "ok", "reason", "scalars")
@@ -122,14 +132,15 @@ def _is_int(value: Any) -> bool:
 def _is_finite_number(value: Any) -> bool:
     import math
 
-    return (isinstance(value, (int, float)) and not isinstance(value, bool)
-            and math.isfinite(value))
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
-def _path_problem(fact: str, path: Any) -> "str | None":
-    suffix = ".npz" if fact == "graph" else ".npy"
+def _path_problem(fact: str, path: Any, *, suffix: str | None = None) -> "str | None":
+    suffix = suffix or (".npz" if fact == "graph" else ".npy")
     if not isinstance(path, str) or not path:
         return f"facts.{fact}.path must be a non-empty string, got {path!r}"
+    if "\x00" in path:
+        return f"facts.{fact}.path {path!r} holds a null character"
     if "\\" in path:
         return f"facts.{fact}.path {path!r} holds a backslash; use a relative POSIX path"
     if path.startswith("/"):
@@ -147,8 +158,9 @@ def _entry_problems(fact: str, entry: Any) -> list[str]:
     if not isinstance(entry, dict):
         return [f"facts.{fact} must be an object, got {type(entry).__name__}"]
     want = ("value",) if fact == "class_probabilities" else ("path", "sha256")
-    bad = [f"facts.{fact}: unknown key {k!r} (allowed: {list(want)})"
-           for k in entry if k not in want]
+    bad = [
+        f"facts.{fact}: unknown key {k!r} (allowed: {list(want)})" for k in entry if k not in want
+    ]
     bad += [f"facts.{fact}: missing key {k!r}" for k in want if k not in entry]
     if bad:
         return bad
@@ -162,29 +174,33 @@ def _entry_problems(fact: str, entry: Any) -> list[str]:
     value = entry["value"]
     if not isinstance(value, dict):
         return [f"facts.class_probabilities.value must be an object of {list(TOPOLOGIES)}"]
-    bad += [f"facts.class_probabilities.value: unknown name {k!r} (allowed: {list(TOPOLOGIES)})"
-            for k in value if k not in TOPOLOGIES]
-    bad += [f"facts.class_probabilities.value: missing name {k!r}"
-            for k in TOPOLOGIES if k not in value]
+    bad += [
+        f"facts.class_probabilities.value: unknown name {k!r} (allowed: {list(TOPOLOGIES)})"
+        for k in value
+        if k not in TOPOLOGIES
+    ]
+    bad += [
+        f"facts.class_probabilities.value: missing name {k!r}" for k in TOPOLOGIES if k not in value
+    ]
     for name in TOPOLOGIES:
         v = value.get(name)
         if name in value and not (_is_finite_number(v) and 0.0 <= v <= 1.0):
-            bad.append(f"facts.class_probabilities.value.{name} must be a finite number in "
-                       f"[0, 1], got {v!r}")
+            bad.append(
+                f"facts.class_probabilities.value.{name} must be a finite number in "
+                f"[0, 1], got {v!r}"
+            )
     return bad
 
 
 def _structure_problems(doc: Any, produces: Any) -> list[str]:
     if not isinstance(doc, dict):
         return [f"the result must be an object, got {type(doc).__name__}"]
-    bad = [f"unknown key {k!r} (allowed: {list(RESULT_KEYS)})" for k in doc
-           if k not in RESULT_KEYS]
+    bad = [f"unknown key {k!r} (allowed: {list(RESULT_KEYS)})" for k in doc if k not in RESULT_KEYS]
     version = doc.get("schema_version")
     if "schema_version" not in doc:
         bad.append("schema_version is required")
     elif not _is_int(version) or version != RESULT_SCHEMA_VERSION:
-        bad.append(f"schema_version must be the integer {RESULT_SCHEMA_VERSION}, "
-                   f"got {version!r}")
+        bad.append(f"schema_version must be the integer {RESULT_SCHEMA_VERSION}, got {version!r}")
     ok = doc.get("ok")
     if "ok" not in doc:
         bad.append("ok is required")
@@ -192,8 +208,11 @@ def _structure_problems(doc: Any, produces: Any) -> list[str]:
         bad.append(f"ok must be a boolean, got {ok!r}")
 
     if ok is False:
-        bad += [f"{k} is not allowed when ok is false" for k in doc
-                if k in RESULT_KEYS and k not in DECLINED_KEYS]
+        bad += [
+            f"{k} is not allowed when ok is false"
+            for k in doc
+            if k in RESULT_KEYS and k not in DECLINED_KEYS
+        ]
         reason = doc.get("reason")
         if not isinstance(reason, str) or not reason:
             bad.append(f"reason must be a non-empty string when ok is false, got {reason!r}")
@@ -207,22 +226,34 @@ def _structure_problems(doc: Any, produces: Any) -> list[str]:
             bad.append(f"n_cells must be an integer >= 1, got {n!r}")
         if "cells_sha256" in doc and not _is_hex64(doc["cells_sha256"]):
             bad.append("cells_sha256 must be 64 lowercase hex characters")
-        facts = doc.get("facts")
-        if not isinstance(facts, dict) or not facts:
+        facts = doc.get("facts", {})
+        table_only = (
+            isinstance(doc.get("tables"), dict)
+            and bool(doc["tables"])
+            and produces is not None
+            and not produces
+        )
+        if not isinstance(facts, dict) or (not facts and not table_only):
             bad.append(f"facts must be a non-empty object of seam facts {list(SEAM_FACTS)}")
         else:
             for fact, entry in facts.items():
                 if fact not in SEAM_FACTS:
-                    bad.append(f"facts: {fact!r} is not a seam fact (allowed: "
-                               f"{list(SEAM_FACTS)})")
+                    bad.append(f"facts: {fact!r} is not a seam fact (allowed: {list(SEAM_FACTS)})")
                 else:
                     bad += _entry_problems(fact, entry)
             if produces is not None:
                 declared = list(produces)
-                bad += [f"facts: {f!r} is not in the manifest's produces {declared}"
-                        for f in facts if f not in declared]
-                bad += [f"facts: {f!r} is in the manifest's produces {declared} and absent "
-                        f"from the result" for f in declared if f not in facts]
+                bad += [
+                    f"facts: {f!r} is not in the manifest's produces {declared}"
+                    for f in facts
+                    if f not in declared
+                ]
+                bad += [
+                    f"facts: {f!r} is in the manifest's produces {declared} and absent "
+                    f"from the result"
+                    for f in declared
+                    if f not in facts
+                ]
 
     if "scalars" in doc:
         scalars = doc["scalars"]
@@ -231,11 +262,15 @@ def _structure_problems(doc: Any, produces: Any) -> list[str]:
         else:
             for key, value in scalars.items():
                 if str(key).startswith("tool_"):
-                    bad.append(f"scalars: {key!r} starts with the reserved prefix tool_, "
-                               f"which manyruns writes for provenance")
+                    bad.append(
+                        f"scalars: {key!r} starts with the reserved prefix tool_, "
+                        f"which manyruns writes for provenance"
+                    )
                 elif not (isinstance(value, (bool, str)) or _is_finite_number(value)):
-                    bad.append(f"scalars: {key!r} must be a finite number, a boolean or a "
-                               f"string, got {value!r}")
+                    bad.append(
+                        f"scalars: {key!r} must be a finite number, a boolean or a "
+                        f"string, got {value!r}"
+                    )
     return bad
 
 
@@ -286,15 +321,19 @@ def _array_problems(fact: str, a: Any, n_cells: int, input_dim: Any) -> list[str
         if a.ndim != 3:
             return [f"facts.trajectories: must be 3-D (B, T, d), got shape {a.shape}"]
         if a.shape[0] < 2 or a.shape[1] < 1:
-            return [f"facts.trajectories: needs at least 2 time bins and 1 trajectory, got "
-                    f"shape {a.shape}"]
+            return [
+                f"facts.trajectories: needs at least 2 time bins and 1 trajectory, got "
+                f"shape {a.shape}"
+            ]
         if not floating:
             return [f"facts.trajectories: dtype {a.dtype} is not a floating dtype"]
         if not np.isfinite(a).all():
             return ["facts.trajectories: holds non-finite values"]
         if input_dim is not None and a.shape[2] != int(input_dim):
-            return [f"facts.trajectories: d is {a.shape[2]} and the input matrix has "
-                    f"{int(input_dim)} columns; a trajectory must be in the input's frame"]
+            return [
+                f"facts.trajectories: d is {a.shape[2]} and the input matrix has "
+                f"{int(input_dim)} columns; a trajectory must be in the input's frame"
+            ]
     return []
 
 
@@ -303,29 +342,43 @@ def _graph_problems(arrays: dict, n_cells: int) -> list[str]:
 
     unknown = [k for k in arrays if k not in GRAPH_ARRAYS + GRAPH_OPTIONAL]
     if unknown:
-        return [f"facts.graph: unknown array {k!r} (allowed: "
-                f"{list(GRAPH_ARRAYS + GRAPH_OPTIONAL)})" for k in unknown]
+        return [
+            f"facts.graph: unknown array {k!r} (allowed: {list(GRAPH_ARRAYS + GRAPH_OPTIONAL)})"
+            for k in unknown
+        ]
     missing = [k for k in GRAPH_ARRAYS if k not in arrays]
     if missing:
         return [f"facts.graph: missing array {k!r}" for k in missing]
     edges, weights = arrays["edges"], arrays["edge_weights"]
     nodes, coords = arrays["node_ids"], arrays["node_coordinates"]
     if edges.dtype != np.int64 or edges.ndim != 2 or edges.shape[1] != 2:
-        return [f"facts.graph: edges must be int64 of shape (E, 2), got {edges.dtype} "
-                f"{edges.shape}"]
-    if (not np.issubdtype(weights.dtype, np.floating) or weights.ndim != 1
-            or weights.shape[0] != edges.shape[0]):
-        return [f"facts.graph: edge_weights must be floating of shape ({edges.shape[0]},), got "
-                f"{weights.dtype} {weights.shape}"]
+        return [
+            f"facts.graph: edges must be int64 of shape (E, 2), got {edges.dtype} {edges.shape}"
+        ]
+    if (
+        not np.issubdtype(weights.dtype, np.floating)
+        or weights.ndim != 1
+        or weights.shape[0] != edges.shape[0]
+    ):
+        return [
+            f"facts.graph: edge_weights must be floating of shape ({edges.shape[0]},), got "
+            f"{weights.dtype} {weights.shape}"
+        ]
     if nodes.dtype != np.int64 or nodes.ndim != 1:
-        return [f"facts.graph: node_ids must be int64 of shape (M,), got {nodes.dtype} "
-                f"{nodes.shape}"]
+        return [
+            f"facts.graph: node_ids must be int64 of shape (M,), got {nodes.dtype} {nodes.shape}"
+        ]
     if len(np.unique(nodes)) != len(nodes):
         return ["facts.graph: node_ids are not unique"]
-    if (not np.issubdtype(coords.dtype, np.floating) or coords.ndim != 2
-            or coords.shape[0] != nodes.shape[0]):
-        return [f"facts.graph: node_coordinates must be floating of shape ({nodes.shape[0]}, D), "
-                f"got {coords.dtype} {coords.shape}"]
+    if (
+        not np.issubdtype(coords.dtype, np.floating)
+        or coords.ndim != 2
+        or coords.shape[0] != nodes.shape[0]
+    ):
+        return [
+            f"facts.graph: node_coordinates must be floating of shape ({nodes.shape[0]}, D), "
+            f"got {coords.dtype} {coords.shape}"
+        ]
     known = set(nodes.tolist())
     bad = []
     stray = sorted(set(edges.ravel().tolist()) - known)
@@ -334,22 +387,112 @@ def _graph_problems(arrays: dict, n_cells: int) -> list[str]:
     if "cell_node" in arrays:
         cell_node = arrays["cell_node"]
         if cell_node.dtype != np.int64 or cell_node.shape != (n_cells,):
-            bad.append(f"facts.graph: cell_node must be int64 of shape ({n_cells},), got "
-                       f"{cell_node.dtype} {cell_node.shape}")
+            bad.append(
+                f"facts.graph: cell_node must be int64 of shape ({n_cells},), got "
+                f"{cell_node.dtype} {cell_node.shape}"
+            )
         else:
             stray = sorted(set(cell_node.tolist()) - known)
             if stray:
-                bad.append(f"facts.graph: cell_node references node(s) {stray} that are not "
-                           f"in node_ids")
+                bad.append(
+                    f"facts.graph: cell_node references node(s) {stray} that are not in node_ids"
+                )
     return bad
 
 
-def _check_and_load(doc: Any, *, base: Any = None, n_cells: Any = None, cell_list: Any = None,
-                    input_dim: Any = None, produces: Any = None) -> tuple[list[str], dict]:
+def _table_problems(doc: dict, tables: Any) -> list[str]:
+    from manyruns import artifacts
+
+    entries = doc.get("tables", {})
+    if not isinstance(entries, dict):
+        return ["tables must be an object"]
+    declared = tables or {}
+    scalars = doc.get("scalars")
+    scalars = scalars if isinstance(scalars, dict) else {}
+    bad = []
+    for name, entry in entries.items():
+        # The record uses one namespace for tables and persisted state slots.
+        if name in artifacts.PERSISTED:
+            bad.append(f"tables.{name}: artifact name conflict; rename the table")
+        for suffix in ("rows", "columns", "sha256"):
+            key = f"{name}.{suffix}"
+            if key in scalars:
+                bad.append(f"scalars.{key}: table metadata conflict; rename the scalar")
+        if name not in declared:
+            bad.append(f"tables.{name}: undeclared table; declare it in output.tables")
+        if not isinstance(entry, dict) or set(entry) != {"path", "sha256"}:
+            bad.append(f"tables.{name}: must hold exactly path and sha256")
+            continue
+        # Reuse the array path rules, with the table's file suffix.
+        path = entry["path"]
+        problem = _path_problem(name, path, suffix=".tsv")
+        if problem:
+            bad.append(problem.replace("facts.", "tables.", 1))
+        if not _is_hex64(entry["sha256"]):
+            bad.append(f"tables.{name}.sha256 must be 64 lowercase hex characters")
+    for name in declared:
+        if name not in entries:
+            bad.append(f"tables.{name}: declared in output.tables but absent from result")
+    return bad
+
+
+def _load_tables(doc: dict, base: Path, tables: dict, genes: Any, loaded: dict) -> list[str]:
+    import hashlib
+
+    import pandas as pd
+    from manykinds import Table
+
+    bad = []
+    root = base.resolve()
+    for name, entry in doc.get("tables", {}).items():
+        try:
+            path = (base / entry["path"]).resolve()
+        except (OSError, RuntimeError, ValueError) as exc:
+            bad.append(f"tables.{name}: the path does not resolve ({exc}); write a plain TSV file")
+            continue
+        if root not in path.parents:
+            bad.append(f"tables.{name}: path resolves outside the result folder")
+            continue
+        try:
+            if hashlib.sha256(path.read_bytes()).hexdigest() != entry["sha256"]:
+                bad.append(f"tables.{name}: sha256 does not match the file; regenerate the result")
+                continue
+            df = pd.read_csv(
+                path, sep="\t", dtype={"gene": str}, keep_default_na=False, na_filter=False
+            )
+            table = Table(df, provenance=(name,)).require(*tables[name])
+            if "gene" in df and genes is not None:
+                stray = sorted(set(df["gene"]) - set(map(str, genes)))
+                if stray:
+                    bad.append(
+                        f"tables.{name}: gene identifiers {stray} are absent from the current frame; regenerate for the current genes"
+                    )
+                    continue
+            loaded[name] = table.df
+        except (OSError, ValueError) as exc:
+            bad.append(f"tables.{name}: {exc}; supply a readable TSV with the declared columns")
+    return bad
+
+
+def _check_and_load(
+    doc: Any,
+    *,
+    base: Any = None,
+    n_cells: Any = None,
+    cell_list: Any = None,
+    input_dim: Any = None,
+    produces: Any = None,
+    tables: Any = None,
+    check_files: bool = True,
+    genes: Any = None,
+    loaded_tables: Any = None,
+) -> tuple[list[str], dict]:
     """`check_result`, and the arrays it loaded. The merge uses the arrays that were checked."""
     import hashlib
 
     bad = _structure_problems(doc, produces)
+    if isinstance(doc, dict) and doc.get("ok") is True:
+        bad += _table_problems(doc, tables)
     if bad or base is None or doc.get("ok") is not True:
         return bad, {}
     base = Path(base)
@@ -359,11 +502,18 @@ def _check_and_load(doc: Any, *, base: Any = None, n_cells: Any = None, cell_lis
     if "cells_sha256" in doc and cell_list is not None:
         joined = "\n".join(str(c) for c in cell_list)
         if hashlib.sha256(joined.encode("utf-8")).hexdigest() != doc["cells_sha256"]:
-            return ["cells_sha256 does not match the run's cell list: the result describes "
-                    "other cells, or the same cells in another order"], {}
+            return [
+                "cells_sha256 does not match the run's cell list: the result describes "
+                "other cells, or the same cells in another order"
+            ], {}
+    if not check_files:
+        return bad, {}
+    bad += _load_tables(
+        doc, base, tables or {}, genes, loaded_tables if loaded_tables is not None else {}
+    )
     root = base.resolve()
     loaded: dict = {}
-    for fact, entry in doc["facts"].items():
+    for fact, entry in doc.get("facts", {}).items():
         if fact == "class_probabilities":
             loaded[fact] = dict(entry["value"])
             continue
@@ -382,16 +532,28 @@ def _check_and_load(doc: Any, *, base: Any = None, n_cells: Any = None, cell_lis
         if problem:
             bad.append(problem)
             continue
-        found = (_graph_problems(value, n) if fact == "graph"
-                 else _array_problems(fact, value, n, input_dim))
+        found = (
+            _graph_problems(value, n)
+            if fact == "graph"
+            else _array_problems(fact, value, n, input_dim)
+        )
         bad += found
         if not found:
             loaded[fact] = value
     return bad, loaded
 
 
-def check_result(doc: Any, *, base: Any = None, n_cells: Any = None, cell_list: Any = None,
-                 input_dim: Any = None, produces: Any = None) -> list[str]:
+def check_result(
+    doc: Any,
+    *,
+    base: Any = None,
+    n_cells: Any = None,
+    cell_list: Any = None,
+    input_dim: Any = None,
+    produces: Any = None,
+    tables: Any = None,
+    check_files: bool = True,
+) -> list[str]:
     """The problems of a version 1 result document. An empty list means valid.
 
     THE OPEN CONTRACT of `result.json`. Every rule is stated here:
@@ -404,7 +566,10 @@ def check_result(doc: Any, *, base: Any = None, n_cells: Any = None, cell_list: 
       n_cells         integer >= 1, required when ok is true; a boolean is refused
       cells_sha256    optional; 64 lowercase hex characters: sha256 of the cell ids joined by
                       "\\n", in UTF-8
-      facts           non-empty object, required when ok is true; each key is a seam fact
+      facts           object of seam facts; with ok true, may be empty or absent only when
+                      tables is non-empty and the manifest's produces is empty
+      tables          optional object of declared table names to {path, sha256} entries;
+                      each path is a relative .tsv path, each sha256 is 64 lowercase hex
       scalars         optional object; each value is a finite number, a boolean or a string;
                       no key starts with `tool_`, which `toolchain.provenance` writes
 
@@ -419,9 +584,13 @@ def check_result(doc: Any, *, base: Any = None, n_cells: Any = None, cell_list: 
     With `produces` given, the facts must equal it: an undeclared fact and a declared fact that
     is absent are both problems that name the fact and the word `produces`.
 
-    With `base` given (the folder of `result.json`), each payload file is checked too. It must
-    resolve inside `base`, match its sha256, and load with `allow_pickle=False`. `n_cells` must
-    equal the run's, and `cells_sha256`, when present and `cell_list` is given, must match it.
+    Tables must equal the names in the manifest's output.tables. Each TSV must contain its
+    declared columns, checked with manykinds.Table.require. Gene identifiers are literal strings.
+
+    With `base` given (the folder of `result.json`), each payload file must resolve inside
+    `base` and match its sha256. Arrays load with `allow_pickle=False`; tables load as TSV.
+    With `check_files=False`, file reads are skipped. `n_cells` must equal the run's, and
+    `cells_sha256`, when present and `cell_list` is given, must match it.
 
       embedding     2-D floating (n_cells, d >= 1), finite
       clusters      1-D integer (n_cells,)
@@ -432,37 +601,55 @@ def check_result(doc: Any, *, base: Any = None, n_cells: Any = None, cell_list: 
                     node_coordinates floating (M, D); every edge value is a node id; optional
                     cell_node int64 (n_cells,) of node ids; no other array
     """
-    return _check_and_load(doc, base=base, n_cells=n_cells, cell_list=cell_list,
-                           input_dim=input_dim, produces=produces)[0]
+    return _check_and_load(
+        doc,
+        base=base,
+        n_cells=n_cells,
+        cell_list=cell_list,
+        input_dim=input_dim,
+        produces=produces,
+        tables=tables,
+        check_files=check_files,
+    )[0]
 
 
 def _refuse_unbuilt(name: str, resolved: dict) -> None:
     fix = resolved.get("fix")
-    raise _StepUnsupported(
-        f"{resolved.get('reason')}"
-        + (f" — fix: {fix}" if fix else "")
-    )
+    raise _StepUnsupported(f"{resolved.get('reason')}" + (f" — fix: {fix}" if fix else ""))
 
 
-def _write_request(workdir: Path, cfg: dict, params: dict, seed: Any,
-                   input_path: Path, v1: "dict | None" = None) -> tuple[Path, Path, Path]:
+def _write_request(
+    workdir: Path, cfg: dict, params: dict, seed: Any, input_path: Path, v1: "dict | None" = None
+) -> tuple[Path, Path, Path]:
     """`request.json`. On the version 1 path (`v1` given) it also carries `result_schema`,
     `n_cells`, `input_dim`, the optional `time` file and, in call mode, the `call` block. It
     carries no cell list, so a run-mode adapter may omit `cells_sha256`."""
     workdir.mkdir(parents=True, exist_ok=True)
-    req_path, out_path, res_path = (workdir / "request.json", workdir / "output.h5ad",
-                                    workdir / "result.json")
+    req_path, out_path, res_path = (
+        workdir / "request.json",
+        workdir / "output.h5ad",
+        workdir / "result.json",
+    )
     merged = dict(cfg.get("params") or {})
     merged.update(params or {})
     request = {
-        "tool": cfg["name"], "version": cfg["version"],
-        "params": merged, "seed": int(seed) if seed is not None else 0,
-        "input": str(input_path), "output": str(out_path), "result": str(res_path),
+        "tool": cfg["name"],
+        "version": cfg["version"],
+        "params": merged,
+        "seed": int(seed) if seed is not None else 0,
+        "input": str(input_path),
+        "output": str(out_path),
+        "result": str(res_path),
         "workdir": str(workdir),
     }
     if v1 is not None:
-        request.update({"result_schema": _toolchain.RESULT_SCHEMA,
-                        "n_cells": v1["n_cells"], "input_dim": v1["input_dim"]})
+        request.update(
+            {
+                "result_schema": _toolchain.RESULT_SCHEMA,
+                "n_cells": v1["n_cells"],
+                "input_dim": v1["input_dim"],
+            }
+        )
         if v1.get("time") is not None:
             import numpy as np
 
@@ -494,9 +681,18 @@ def _input_shape(input_path: Path, state: dict) -> tuple[int, int]:
     if input_path.suffix == ".npy":
         shape = np.load(input_path, mmap_mode="r", allow_pickle=False).shape
         return int(shape[0]), int(shape[1]) if len(shape) > 1 else 1
-    rows, cols = state.get("rows"), state.get("cols")
-    return (int(len(rows)) if rows is not None else 0,
-            int(len(cols)) if cols is not None else 0)
+    if input_path.suffix == ".h5ad":
+        import anndata as ad
+
+        # The original file may still contain genes the current state has filtered out.
+        data = ad.read_h5ad(input_path, backed="r")
+        try:
+            return data.shape
+        finally:
+            data.file.close()
+    raise _StepUnsupported(
+        f"cannot read input dimensions from {input_path}; supply a .npy or .h5ad input"
+    )
 
 
 def _cell_list(state: dict, ctx: dict) -> Any:
@@ -514,6 +710,48 @@ def _cell_list(state: dict, ctx: dict) -> Any:
     return ids[rows]
 
 
+def _source_cell_count(path: Path) -> int:
+    """Count the file's cells independently of a frame rebuilt after filtering."""
+    try:
+        if path.suffix == ".h5ad":
+            import anndata
+
+            data = anndata.read_h5ad(path, backed="r")
+            try:
+                return int(data.n_obs)
+            finally:
+                data.file.close()
+        if path.suffix == ".npy":
+            import numpy as np
+
+            return int(np.load(path, mmap_mode="r").shape[0])
+    except (OSError, ValueError, EOFError, KeyError, IndexError, TypeError) as exc:
+        # A retained path may no longer be readable when a run is reopened.
+        raise _StepSkipped(
+            f"cannot count cells in source {path}; restore or replace the source file "
+            f"with a readable .npy or .h5ad file: {exc}"
+        ) from exc
+    raise _StepUnsupported(f"cannot count source cells from {path}; supply a .npy or .h5ad input")
+
+
+def _source_cell_ids(path: Path) -> "list[str] | None":
+    """The file's own cell ids in file order, or None for a format without ids (.npy)."""
+    if path.suffix != ".h5ad":
+        return None
+    import anndata
+
+    try:
+        data = anndata.read_h5ad(path, backed="r")
+    except (OSError, ValueError, KeyError) as exc:
+        raise _StepSkipped(
+            f"cannot read cell ids in source {path}; restore or replace the source file: {exc}"
+        ) from exc
+    try:
+        return [str(name) for name in data.obs_names]
+    finally:
+        data.file.close()
+
+
 def _input_path(cfg: dict, state: dict, ctx: dict, workdir: Path) -> Path:
     """Assemble what the tool reads — and refuse the compositions that would mislead it."""
     kind = (cfg.get("input") or {}).get("kind")
@@ -524,20 +762,37 @@ def _input_path(cfg: dict, state: dict, ctx: dict, workdir: Path) -> Path:
                 f"{cfg['name']} reads the original file (it needs "
                 f"{(cfg.get('input') or {}).get('layers') or 'fields'} that manyruns's frame "
                 f"does not carry), and this run has no file path — it was handed an array or a "
-                f"named engine dataset")
+                f"named engine dataset"
+            )
         # THE REFUSAL THAT MATTERS. The file still holds every cell; the run may not. A tool fed
         # the file after a filter reports on a population this run has already rejected, and the
         # numbers come back indexed to a different set of cells than `state` holds.
         rows = state.get("rows")
-        frame = state.get("frame") or {}
-        counts = frame.get("counts")
-        full_rows = rows is None or counts is None or len(rows) == getattr(counts, "shape", [0])[0]
-        if not full_rows:
+        # Reopening or branching can rebuild the frame from survivors. Only the file
+        # itself can establish how many cells a source-file tool will read.
+        n_cells = len(rows) if rows is not None else 0
+        counts = (state.get("frame") or {}).get("counts")
+        # An already narrowed selection can be refused even if its source is unavailable.
+        narrowed = counts is not None and n_cells != counts.shape[0]
+        if rows is None or narrowed or n_cells != _source_cell_count(Path(src)):
             raise _StepSkipped(
                 f"{cfg['name']} reads the ORIGINAL file, and this run has already narrowed "
-                f"({len(rows)} cells selected) — the file still holds the cells a filter "
+                f"({n_cells} cells selected) — the file still holds the cells a filter "
                 f"removed, so it would report on a population this run rejected. Put the tool "
-                f"step before the prep block")
+                f"step before the prep block"
+            )
+        # The count can agree while the cells do not: a reopened run is aligned to its saved
+        # ids, and the file may hold the same cells in another order. A tool reads the file's
+        # order, so its per-cell outputs would land on the wrong cells. Where both sides carry
+        # ids, they must match in order.
+        held = _cell_list(state, ctx)
+        file_ids = _source_cell_ids(Path(src))
+        if held is not None and file_ids is not None and [str(c) for c in held] != file_ids:
+            raise _StepSkipped(
+                f"{cfg['name']} reads the ORIGINAL file, and its cell ids or their order differ "
+                f"from the cells this run holds — reopen the run from that file, or put the "
+                f"tool step before any step that reorders or narrows the cells"
+            )
         return Path(src)
     if kind == "state_frame":
         # THE VIEW, not the file. This is what the frame's `layers` slot exists for: the tool
@@ -555,7 +810,8 @@ def _input_path(cfg: dict, state: dict, ctx: dict, workdir: Path) -> Path:
         if counts is None:
             raise _StepSkipped(
                 f"{cfg['name']} reads the run's frame and this state has none — the engine "
-                f"loads a named dataset itself, so manyruns never sees the matrix")
+                f"loads a named dataset itself, so manyruns never sees the matrix"
+            )
         want = list((cfg.get("input") or {}).get("layers") or ())
         have = view["layers"] or {}
         missing = [name for name in want if name not in have]
@@ -563,12 +819,45 @@ def _input_path(cfg: dict, state: dict, ctx: dict, workdir: Path) -> Path:
             raise _StepSkipped(
                 f"{cfg['name']} needs the {missing} layer(s) and this run carries "
                 f"{sorted(have)}. Declare them on the step (`layers: {want}`) and load data "
-                f"that has them")
+                f"that has them"
+            )
 
         def _dense(m):
-            return np.asarray(m.toarray() if hasattr(m, "toarray") else m, dtype="float32")
+            # Sparse stays sparse and the numeric dtype is kept: a float32 cast rounds counts
+            # above 2**24, and densifying 100k x 30k cells costs 12 GB before the tool starts.
+            # AnnData writes scipy sparse matrices to .h5ad natively.
+            return m if hasattr(m, "toarray") else np.asarray(m)
+
+        # Roles follow the selected cells, just like counts. Conditions use the run's
+        # labels only when their declared meaning is condition; guessing changes the analysis.
+        import pandas as pd
+
+        roles = {}
+        for role in (cfg.get("input") or {}).get("obs", []):
+            values = (
+                (state.get("labels") if state.get("label_kind") == "condition" else None)
+                if role == "condition"
+                else (view["obs"] or {}).get(role)
+            )
+            fix = f"supply --{role}-key naming a complete {role} column"
+            if values is None:
+                raise _StepSkipped(f"{cfg['name']} needs {role} labels — {fix}")
+            values = np.asarray(values)
+            if values.ndim != 1 or len(values) != counts.shape[0]:
+                raise _StepSkipped(
+                    f"{cfg['name']}: {role} labels must match the selected cells — {fix}"
+                )
+            missing = int(sum(pd.isna(value) or value == "" for value in values))
+            if missing:
+                cells = "cell has" if missing == 1 else "cells have"
+                raise _StepSkipped(f"{cfg['name']}: {missing} {cells} no {role} — {fix}")
+            roles[role] = values
 
         out = ad.AnnData(X=_dense(counts))
+        cells = _cell_list(state, ctx)
+        out.obs_names = [str(c) for c in (range(out.n_obs) if cells is None else cells)]
+        for role, values in roles.items():
+            out.obs[role] = values
         for name in want:
             out.layers[name] = _dense(have[name])
         if view["genes"] is not None:
@@ -585,12 +874,26 @@ def _input_path(cfg: dict, state: dict, ctx: dict, workdir: Path) -> Path:
             raise _StepSkipped(f"{cfg['name']} takes the working matrix and this state has none")
         path = workdir / "input.npy"
         workdir.mkdir(parents=True, exist_ok=True)
-        np.save(path, np.ascontiguousarray(np.asarray(X)))
+        # The loader keeps sparse counts sparse. np.asarray on a sparse matrix gives a 0-d
+        # object array, which np.load(allow_pickle=False) cannot read back: densify it here, as
+        # the state_frame export does, because a .npy input is a dense numeric matrix.
+        # The numeric dtype is kept: float32 stays float32, and int64 counts are not rounded.
+        if hasattr(X, "toarray"):
+            X = X.toarray()
+        X = np.asarray(X)
+        if X.dtype == object or not np.issubdtype(X.dtype, np.number):
+            raise _StepSkipped(
+                f"{cfg['name']} takes a numeric matrix and this state holds {X.dtype}; "
+                "load numeric counts or put a numeric embedding step first"
+            )
+        np.save(path, np.ascontiguousarray(X))
         return path
     raise _StepUnsupported(f"{cfg['name']}: unknown input.kind {kind!r}")
 
 
-def _merge(cfg: dict, out_path: Path, state: dict, g: dict, name: str) -> None:
+def _merge(
+    cfg: dict, out_path: Path, state: dict, g: dict, name: str, input_path: Path
+) -> dict | None:
     """Read what the tool wrote, CHECK it against the manifest, then merge. Never the reverse."""
     import anndata as ad
     import numpy as np
@@ -601,9 +904,42 @@ def _merge(cfg: dict, out_path: Path, state: dict, g: dict, name: str) -> None:
     n_cells = None
     for slot in ("emb", "X"):
         if state.get(slot) is not None:
-            n_cells = int(np.asarray(state[slot]).shape[0])
+            n_cells = int(state[slot].shape[0])
             break
     declared = cfg.get("output") or {}
+    if "mask" in declared:
+        key = declared["mask"]
+        if key not in out.obs:
+            raise _StepSkipped(f"{name}: write the declared mask column obs[{key!r}]")
+        keep = np.asarray(out.obs[key])
+        n_cells = len(state["rows"])
+        if keep.shape != (n_cells,):
+            raise _StepSkipped(
+                f"{name}: mask has shape {keep.shape} for {n_cells} cells; "
+                "write one mask value per current cell with matching cell ids"
+            )
+        # A mask is applied by position. Equal lengths cannot prove that each value
+        # describes the cell exported at that position.
+        if input_path.suffix == ".h5ad":
+            exported = ad.read_h5ad(input_path, backed="r")
+            try:
+                cells = list(exported.obs_names)
+            finally:
+                exported.file.close()
+        else:
+            cells = [str(i) for i in range(n_cells)]
+        if list(out.obs_names) != cells:
+            raise _StepSkipped(
+                f"{name}: mask cell ids differ from the exported cells; "
+                "write the exported cell ids in their original order"
+            )
+        if keep.dtype != np.dtype(bool):
+            raise _StepSkipped(f"{name}: mask must have bool dtype; write boolean values")
+        if not keep.any():
+            raise _StepSkipped(f"{name}: mask keeps no cell; revise the mask to retain cells")
+        # The runner owns narrowing and clearing fitted outputs. Returning the mask
+        # leaves the state untouched until all output checks have passed.
+        return {"mask": keep, "axis": "rows"}
     for key in declared.get("obsm") or []:
         if key not in out.obsm:
             raise _StepSkipped(f"{name} declares obsm[{key!r}] and did not write it")
@@ -613,7 +949,8 @@ def _merge(cfg: dict, out_path: Path, state: dict, g: dict, name: str) -> None:
             # per-cell number would be attributed to the wrong cell, with nothing to notice.
             raise _StepSkipped(
                 f"{name} returned {field.shape[0]} rows for {n_cells} cells — refusing to "
-                f"merge a field that is not indexed to this run's cells")
+                f"merge a field that is not indexed to this run's cells"
+            )
         slot, _ = FACT_SLOTS.get(key, (key, "obsm"))
         state[slot] = field
         g[f"{name}.{key}_shape"] = list(field.shape)
@@ -625,17 +962,94 @@ def _merge(cfg: dict, out_path: Path, state: dict, g: dict, name: str) -> None:
                 state[UNCERTAINTY_SLOT[fact]] = unc
 
 
-def _merge_v1(doc: dict, base: Path, state: dict, g: dict, name: str, *, n_cells: int,
-              cell_list: Any, input_dim: Any, produces: Any) -> None:
+def _merge_v1(
+    doc: dict,
+    base: Path,
+    state: dict,
+    g: dict,
+    name: str,
+    *,
+    n_cells: int,
+    cell_list: Any,
+    input_dim: Any,
+    produces: Any,
+    tables: Any = None,
+    ctx: Any = None,
+) -> None:
     """Merge a version 1 result. CHECK EVERYTHING, THEN ASSIGN: `_merge` assigns each key as it
     goes, and a result refused halfway would leave half a model in the state. Here a refused
     result changes no slot at all."""
-    problems, arrays = _check_and_load(doc, base=base, n_cells=n_cells, cell_list=cell_list,
-                                       input_dim=input_dim, produces=produces)
+    import hashlib
+
+    from manyruns import artifacts
+    from manyruns.pipeline import frame
+
+    loaded_tables = {}
+    genes = frame.view(state["frame"], state["rows"], state["cols"])["genes"] if tables else None
+    problems, arrays = _check_and_load(
+        doc,
+        base=base,
+        n_cells=n_cells,
+        cell_list=cell_list,
+        input_dim=input_dim,
+        produces=produces,
+        tables=tables,
+        genes=genes,
+        loaded_tables=loaded_tables,
+    )
     if problems:
         more = f" (and {len(problems) - 1} more)" if len(problems) > 1 else ""
-        raise _StepSkipped(f"{name} returned a result that check_result refuses: "
-                           f"{problems[0]}{more}")
+        raise _StepSkipped(
+            f"{name} returned a result that check_result refuses: {problems[0]}{more}"
+        )
+    # Byproducts share the record namespace too, including those in this result.
+    artifact_names = set(state.get("extras") or {})
+    for fact, value in arrays.items():
+        if FACT_SLOTS[fact][1] == "npz":
+            artifact_names.update(f"{name}.{fact}.{key}" for key in value)
+    for table_name, df in loaded_tables.items():
+        if table_name in artifact_names:
+            raise _StepSkipped(
+                f"{name}: table {table_name} has an artifact name conflict; rename the table"
+            )
+        if "gene" in df and genes is None:
+            raise _StepSkipped(f"{name}: supply current frame genes to check table {table_name}")
+    if loaded_tables and (not ctx or ctx.get("out_dir") is None or "step_index" not in ctx):
+        raise _StepSkipped(
+            f"{name}: supply out_dir and step_index in the step context to save tables"
+        )
+    saved = {}
+    for table_name, df in loaded_tables.items():
+        try:
+            saved[table_name] = artifacts.save_table(
+                ctx["out_dir"], ctx.get("run_id"), ctx["step_index"], name, table_name, df
+            )
+        except OSError as exc:
+            raise _StepSkipped(
+                f"{name}: cannot save table {table_name}; fix the output directory: {exc}"
+            ) from exc
+    # Hash BEFORE anything is written to g or state: a mid-write OSError must leave the step
+    # refusable (`_StepSkipped`), not half-measured. The declared sha256 describes the tool's
+    # original file; saving can reformat bytes (e.g. "1.000" -> "1.0"), so hash what was
+    # actually written.
+    digests: dict[str, str] = {}
+    for table_name, path in saved.items():
+        try:
+            digests[table_name] = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError as exc:
+            raise _StepSkipped(
+                f"{name}: cannot read saved table {table_name} back to hash it: {exc}"
+            ) from exc
+    if saved:
+        # Replace, never mutate in place: a shallow-copied state (tune.run_tune_loop's
+        # cancellation snapshot) must not see this attempt's paths land in its own dict.
+        tables_state = dict(state.get("tables") or {})
+        for table_name, path in saved.items():
+            tables_state[table_name] = str(path)
+            g[f"{name}.{table_name}.rows"] = len(loaded_tables[table_name])
+            g[f"{name}.{table_name}.columns"] = sorted(loaded_tables[table_name].columns)
+            g[f"{name}.{table_name}.sha256"] = digests[table_name]
+        state["tables"] = tables_state
     for fact, value in arrays.items():
         slot, form = FACT_SLOTS[fact]
         if form == "inline":
@@ -667,7 +1081,8 @@ def _run_precomputed(name: str, resolved: dict, state: dict, g: dict, ctx: dict)
     if cells is None:
         raise _StepSkipped(
             f"{name} is precomputed and is found by the run's cell list, and this run has no "
-            f"cell list (an array without cell names)")
+            f"cell list (an array without cell names)"
+        )
     cells = [str(c) for c in cells]
     want = hashlib.sha256("\n".join(cells).encode("utf-8")).hexdigest()
     root = _toolchain.precomputed_root(cfg)
@@ -682,20 +1097,32 @@ def _run_precomputed(name: str, resolved: dict, state: dict, g: dict, ctx: dict)
     if not found:
         raise _StepSkipped(
             f"{name}: no precomputed output under {root} describes this run's {len(cells)} "
-            f"cells (cells_sha256 {want})")
+            f"cells (cells_sha256 {want})"
+        )
     if len(found) > 1:
         raise _StepSkipped(
             f"{name}: {len(found)} precomputed outputs describe this run's cells, so the choice "
-            f"is ambiguous: {', '.join(p.parent.name for p in found)}")
+            f"is ambiguous: {', '.join(p.parent.name for p in found)}"
+        )
     raw = found[0].read_bytes()
     g[f"{name}.tool_result_sha256"] = hashlib.sha256(raw).hexdigest()
     doc = json.loads(raw)
     if doc.get("ok") is False:
         raise _StepSkipped(f"{name} declined: {doc.get('reason') or 'no reason given'}")
-    X = state.get("emb") if state.get("emb") is not None else state.get("X")
-    input_dim = int(X.shape[1]) if getattr(X, "ndim", 0) == 2 else None
-    _merge_v1(doc, found[0].parent, state, g, name, n_cells=len(cells), cell_list=cells,
-              input_dim=input_dim, produces=cfg.get("produces") or [])
+    _, input_dim = _precomputed_shape(state)
+    _merge_v1(
+        doc,
+        found[0].parent,
+        state,
+        g,
+        name,
+        n_cells=len(cells),
+        cell_list=cells,
+        input_dim=input_dim,
+        produces=cfg.get("produces") or [],
+        tables=(cfg.get("output") or {}).get("tables"),
+        ctx=ctx,
+    )
     caveats = ctx.get("caveats")
     if not isinstance(caveats, list):
         caveats = ctx["caveats"] = []
@@ -725,17 +1152,53 @@ def _adapter_path(cfg: dict) -> "Path | None":
         path = Path(str(resources.files("manyruns") / "adapters" / "call_adapter.py"))
         return path if path.is_file() else None
     entry = str(cfg["entrypoint"])
-    candidates = [Path(entry)] if Path(entry).is_absolute() else [
-        _tc.tool_dir() / entry,
-        Path(str(resources.files("manyruns") / "adapters" / entry)),
-    ]
+    candidates = (
+        [Path(entry)]
+        if Path(entry).is_absolute()
+        else [
+            _tc.tool_dir() / entry,
+            Path(str(resources.files("manyruns") / "adapters" / entry)),
+        ]
+    )
     return next((c for c in candidates if c.is_file()), None)
 
 
-def run_external_step(name: str, params: dict, state: dict, g: dict, ctx: dict) -> None:
+def _precomputed_shape(state: dict) -> tuple[int, "int | None"]:
+    """`(n_cells, n_features)` of a precomputed step's input — the embedding if there is one,
+    else `X`, never the frame's gene selection.
+
+    This is the same choice `_run_precomputed` makes for `input_dim`: a state carrying only an
+    embedding seeds `cols` empty (`runner._new_state`), so reading features off the gene
+    selection reports zero for a tool that never touches genes, and reading them off `counts`
+    reports a width the embedding may not share. `X` is kept in step with `rows` by
+    `_apply_transition`'s narrowing invariant, so its row count stands in for `len(rows)` too.
+    """
+    X = state.get("emb") if state.get("emb") is not None else state.get("X")
+    if getattr(X, "ndim", 0) != 2:
+        rows = state.get("rows")
+        return (len(rows) if rows is not None else 0, None)
+    return int(X.shape[0]), int(X.shape[1])
+
+
+def _check_step_parameters(name: str, cfg: dict, params: dict, shape: tuple[int, int]) -> None:
+    decl = cfg.get("declaration")
+    if decl is not None:
+        from manykinds.params import check
+
+        # Check only what the step asks to change: a fixed manifest default is not an override.
+        problems = check(decl, params, n_samples=shape[0], n_features=shape[1])
+        if problems:
+            raise _StepUnsupported(f"{name}: correct the step parameters: " + "; ".join(problems))
+
+
+def run_external_step(name: str, params: dict, state: dict, g: dict, ctx: dict) -> dict | None:
     """A `tool:` step: resolve the environment, hand it a file, read one back, record what ran."""
-    resolved = _toolchain.resolve(name)
+    tool = ctx.get("tool") or name
+    g[f"{name}.tool_name"] = tool
+    resolved = _toolchain.resolve(tool)
     if resolved["status"] == "precomputed":
+        # No input is written in this mode: the result must describe the current state.
+        _check_step_parameters(name, resolved["cfg"], params, _precomputed_shape(state))
         _run_precomputed(name, resolved, state, g, ctx)
         return
     if resolved["status"] not in ("ready", "overridden"):
@@ -744,23 +1207,34 @@ def run_external_step(name: str, params: dict, state: dict, g: dict, ctx: dict) 
     v1 = (cfg.get("output") or {}).get("schema") == _toolchain.RESULT_SCHEMA
     workdir = Path(ctx["out_dir"]) / f"tool-{name}"
     input_path = _input_path(cfg, state, ctx, workdir)
-    shape = _input_shape(input_path, state) if v1 else None
+    decl = cfg.get("declaration")
+    shape = _input_shape(input_path, state) if v1 or decl is not None else None
+    if decl is not None:
+        _check_step_parameters(name, cfg, params, shape)
     req_path, out_path, res_path = _write_request(
-        workdir, cfg, params, ctx.get("seed"), input_path,
-        v1={"n_cells": shape[0], "input_dim": shape[1], "time": _time_axis(state)}
-        if v1 else None)
+        workdir,
+        cfg,
+        params,
+        ctx.get("seed"),
+        input_path,
+        v1={"n_cells": shape[0], "input_dim": shape[1], "time": _time_axis(state)} if v1 else None,
+    )
 
     adapter = _adapter_path(cfg)
     if adapter is None:
         raise _StepUnsupported(
             f"{name}: adapter {cfg.get('entrypoint') or 'call_adapter.py'!r} is neither beside "
-            f"the manifest nor in this install's `manyruns/adapters/`")
+            f"the manifest nor in this install's `manyruns/adapters/`"
+        )
 
     started = time.time()
     try:
-        proc = subprocess.run([str(resolved["python"]), str(adapter), str(req_path)],
-                              capture_output=True, text=True, timeout=int(ctx.get("tool_timeout")
-                                                                          or 7200))
+        proc = subprocess.run(
+            [str(resolved["python"]), str(adapter), str(req_path)],
+            capture_output=True,
+            text=True,
+            timeout=int(ctx.get("tool_timeout") or 7200),
+        )
     except subprocess.TimeoutExpired:
         raise _StepSkipped(f"{name} exceeded its timeout") from None
     seconds = time.time() - started
@@ -779,10 +1253,21 @@ def run_external_step(name: str, params: dict, state: dict, g: dict, ctx: dict) 
     if not result.get("ok"):
         raise _StepSkipped(f"{name} declined: {result.get('reason') or 'no reason given'}")
     if v1:
-        _merge_v1(result, res_path.parent, state, g, name, n_cells=shape[0],
-                  cell_list=_cell_list(state, ctx), input_dim=shape[1],
-                  produces=cfg.get("produces") or [])
+        _merge_v1(
+            result,
+            res_path.parent,
+            state,
+            g,
+            name,
+            n_cells=shape[0],
+            cell_list=_cell_list(state, ctx),
+            input_dim=shape[1],
+            produces=cfg.get("produces") or [],
+            tables=(cfg.get("output") or {}).get("tables"),
+            ctx=ctx,
+        )
         return
-    _merge(cfg, out_path, state, g, name)
+    transition = _merge(cfg, out_path, state, g, name, input_path)
     for key, value in (result.get("scalars") or {}).items():
         g[f"{name}.{key}"] = value
+    return transition

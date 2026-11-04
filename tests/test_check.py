@@ -125,7 +125,8 @@ def test_no_bundled_prep_step_declares_a_parameter_its_executor_cannot_read():
     be the second home for a fact `prep.py` already states — a name that never appears in its
     executor's body cannot be read by it. Measured 2026-08-16: 19 bundled prep steps across 8
     recipes declare 20 params, and every one of the 20 is named by its executor. `branches`
-    (2026-10-30) adds the two preamble steps and their two params: 22.
+    (2026-10-30) adds the two preamble steps and their two params: 22. `traced` (2026-11-04)
+    gains the same preamble, `normalize` with `target_sum` and `transform` with `method`: 24.
     """
     import inspect
 
@@ -143,7 +144,7 @@ def test_no_bundled_prep_step_declares_a_parameter_its_executor_cannot_read():
                     f"{name}: {step['name']} declares {key!r} and its executor never names it — "
                     "a param nothing reads is a silent lie on the page")
                 checked += 1
-    assert checked == 22, "the bundled prep params moved; re-read the measurement above"
+    assert checked == 24, "the bundled prep params moved; re-read the measurement above"
 
 
 def test_the_preamble_asks_the_short_half_like_every_other_row():

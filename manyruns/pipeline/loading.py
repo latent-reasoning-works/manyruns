@@ -3,12 +3,16 @@
 Every reader manyruns owns lives here. This is the module a future `sources.resolve()`
 absorbs wholesale — it is deliberately the seam, not a permanent home.
 """
+
 from __future__ import annotations
 
 from manyruns.installation import REINSTALL
 
 from pathlib import Path
-from typing import Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable
+
+if TYPE_CHECKING:
+    import numpy as np
 
 from manyruns.aligned import check_aligned
 from manyruns.pipeline.io import quiet  # noqa: F401 - re-exported for callers
@@ -129,14 +133,17 @@ def load_array(path: Path, *, allow_scripts: bool = True) -> Any:
             return sc.read_10x_mtx(p)
         # a directory of per-sample sub-folders (10x timepoints) → concat into one AnnData
         samples = [
-            d for d in sorted(p.iterdir())
-            if d.is_dir() and (any(d.glob("matrix.mtx*")) or list(d.glob("*.h5ad")) or list(d.glob("*.h5")))
+            d
+            for d in sorted(p.iterdir())
+            if d.is_dir()
+            and (any(d.glob("matrix.mtx*")) or list(d.glob("*.h5ad")) or list(d.glob("*.h5")))
         ]
         if samples:
             import anndata
 
-            adata = anndata.concat([load_array(d, allow_scripts=allow_scripts) for d in samples],
-                                   join="outer")
+            adata = anndata.concat(
+                [load_array(d, allow_scripts=allow_scripts) for d in samples], join="outer"
+            )
             adata.obs_names_make_unique()
             return adata
         loadable = _TABLE_SUFFIXES | {".py", ".npy", ".h5ad", ".mtx"}
@@ -147,8 +154,10 @@ def load_array(path: Path, *, allow_scripts: bool = True) -> Any:
     suffix = p.suffix.lower()
     if suffix == ".py":
         if not allow_scripts:
-            raise ValueError("Python generator metadata cannot be read after the run "
-                             "because the original metadata was not saved.")
+            raise ValueError(
+                "Python generator metadata cannot be read after the run "
+                "because the original metadata was not saved."
+            )
         return _load_from_script(p)
     if suffix in _TABLE_SUFFIXES:
         return _load_table(p, sep="\t" if suffix in (".tsv", ".txt") else ",")
@@ -270,7 +279,8 @@ def _find_data_class(mod):
     import inspect
 
     own = [
-        c for _, c in inspect.getmembers(mod, inspect.isclass)
+        c
+        for _, c in inspect.getmembers(mod, inspect.isclass)
         if getattr(c, "__module__", None) == mod.__name__
     ]
     for c in own:  # DataModule-like: builds a dataset via setup()
@@ -396,7 +406,6 @@ def load_named_dataset(name: str) -> Any:
         raise RuntimeError(f"manylatents has no dataset named {name!r}: {e}") from e
 
 
-
 def as_matrix(obj: Any) -> Any:
     """Coerce a loaded object to a 2-D float numpy array (rows = samples).
 
@@ -412,11 +421,16 @@ def as_matrix(obj: Any) -> Any:
         # Numeric/boolean values are features even in object columns; text (including
         # numeric strings or mixed text/numbers) stays metadata. Preserve column order.
         numeric_dtypes = set(obj.select_dtypes(["number", "bool"]).dtypes)
-        numeric = [i for i, (_, column) in enumerate(obj.items())
-                   if column.dtype in numeric_dtypes or (
-                       column.dtype == object and infer_dtype(column, skipna=True) in {
-                           "integer", "floating", "mixed-integer-float", "boolean",
-                           "decimal", "complex"})]
+        numeric = [
+            i
+            for i, (_, column) in enumerate(obj.items())
+            if column.dtype in numeric_dtypes
+            or (
+                column.dtype == object
+                and infer_dtype(column, skipna=True)
+                in {"integer", "floating", "mixed-integer-float", "boolean", "decimal", "complex"}
+            )
+        ]
         obj = obj.iloc[:, numeric]
         if not obj.shape[0] or not obj.shape[1]:
             raise ValueError("table has no rows of data or no numeric features")
@@ -452,7 +466,9 @@ def _resolve_data_object(obj: Any) -> Any:
     if tname == "AnnData" or "anndata" in tmod:
         return _anndata_matrix(obj)
     # LightningDataModule-like → setup(), then stack the train dataset
-    if hasattr(obj, "setup") and (hasattr(obj, "train_dataloader") or hasattr(obj, "train_dataset")):
+    if hasattr(obj, "setup") and (
+        hasattr(obj, "train_dataloader") or hasattr(obj, "train_dataset")
+    ):
         try:
             obj.setup()
         except TypeError:
@@ -659,8 +675,7 @@ def _detect_group_key(adata: Any) -> "str | None":
     return find_group_key(adata.obs.columns)
 
 
-def load_labeled(path: Path, time_key: "str | None" = None,
-                 condition_key: "str | None" = None):
+def load_labeled(path: Path, time_key: "str | None" = None, condition_key: "str | None" = None):
     """Return ``(matrix, labels, kind)``: a 2-D array, optional per-row labels, and whether
     those labels are a ``"time"`` axis or a ``"condition"`` axis (or ``None`` if unlabelled).
 
@@ -678,8 +693,10 @@ def load_labeled(path: Path, time_key: "str | None" = None,
     p = Path(path)
     if p.is_dir():
         samples = [
-            d for d in sorted(p.iterdir())
-            if d.is_dir() and (any(d.glob("matrix.mtx*")) or list(d.glob("*.h5ad")) or list(d.glob("*.h5")))
+            d
+            for d in sorted(p.iterdir())
+            if d.is_dir()
+            and (any(d.glob("matrix.mtx*")) or list(d.glob("*.h5ad")) or list(d.glob("*.h5")))
         ]
         if samples:
             import anndata
@@ -710,8 +727,7 @@ def _is_anndata(obj: Any) -> bool:
     return type(obj).__name__ == "AnnData" or "anndata" in (type(obj).__module__ or "")
 
 
-def labels_of(obj: Any, time_key: "str | None" = None,
-              condition_key: "str | None" = None) -> tuple:
+def labels_of(obj: Any, time_key: "str | None" = None, condition_key: "str | None" = None) -> tuple:
     """Per-row ``(labels, kind)`` from a loaded object — WITHOUT touching the matrix.
 
     Split out of :func:`load_labeled` so the stackless engine can have labels without also
@@ -738,6 +754,22 @@ def labels_of(obj: Any, time_key: "str | None" = None,
     return (np.asarray(obj.obs[key].values), kind) if key is not None else (None, None)
 
 
+def obs_roles_of(
+    obj: Any, sample_key: str | None = None, batch_key: str | None = None
+) -> dict[str, np.ndarray]:
+    """Read explicitly named sample and batch columns; never infer these roles."""
+    import numpy as np
+
+    roles = {}
+    for role, key in (("sample", sample_key), ("batch", batch_key)):
+        if key is None:
+            continue
+        if not _is_anndata(obj) or key not in obj.obs.columns:
+            raise ValueError(f"{role}_key {key!r} is not a column; supply an existing column")
+        roles[role] = np.asarray(obj.obs[key].values)
+    return roles
+
+
 def obs_columns(path: Path) -> "list[str] | None":
     """The per-row metadata column names of a data source, or None when it is not AnnData.
 
@@ -757,8 +789,9 @@ def obs_columns(path: Path) -> "list[str] | None":
     return [str(c) for c in obj.obs.columns] if _is_anndata(obj) else None
 
 
-def label_key_of(obj: Any, time_key: "str | None" = None,
-                 condition_key: "str | None" = None) -> tuple:
+def label_key_of(
+    obj: Any, time_key: "str | None" = None, condition_key: "str | None" = None
+) -> tuple:
     """Return ``(key, analysis_kind)`` with exactly :func:`labels_of`'s precedence.
 
     A given key comes before name detection: the given time key, then the given condition
@@ -832,15 +865,27 @@ def color_column_info(series: Any) -> dict:
     reason = ""
     if len(series) == nonfinite:
         reason = "all values are missing or nonfinite"
-    elif (str(series.name).lower() in {"barcode", "barcodes", "cell_id", "cell_ids", "obs_names"}
-          and distinct == len(series) and len(series) > 1):
+    elif (
+        str(series.name).lower() in {"barcode", "barcodes", "cell_id", "cell_ids", "obs_names"}
+        and distinct == len(series)
+        and len(series) > 1
+    ):
         reason = "unique value for every row — uninformative for colouring"
     levels = distinct + int(nonfinite > 0)
-    warning = (f"legend suppressed above {LEGEND_MAX} categories"
-               if kind == "categorical" and levels > LEGEND_MAX else "")
-    return {"kind": kind, "n_distinct": int(distinct), "n_missing": missing,
-            "n_nonfinite": nonfinite, "available": not reason, "reason": reason,
-            "warning": warning}
+    warning = (
+        f"legend suppressed above {LEGEND_MAX} categories"
+        if kind == "categorical" and levels > LEGEND_MAX
+        else ""
+    )
+    return {
+        "kind": kind,
+        "n_distinct": int(distinct),
+        "n_missing": missing,
+        "n_nonfinite": nonfinite,
+        "available": not reason,
+        "reason": reason,
+        "warning": warning,
+    }
 
 
 def color_columns_of(obj: Any) -> list[dict]:
@@ -885,8 +930,10 @@ def color_values_of(series: Any, kind: str) -> Any:
     missing_label = MISSING_COLOR
     while missing_label in levels:
         missing_label += "*"
-    return np.asarray([missing_label if absent else str(value)
-                       for value, absent in zip(series, missing)], dtype=str)
+    return np.asarray(
+        [missing_label if absent else str(value) for value, absent in zip(series, missing)],
+        dtype=str,
+    )
 
 
 def color_channel_of(obj: Any, key: str) -> dict:
@@ -904,13 +951,17 @@ def color_channel_of(obj: Any, key: str) -> dict:
     if obs is None or not len(obs.columns):
         raise ValueError("no metadata columns to colour by; available columns: none")
     if key not in obs.columns:
-        raise ValueError(f"unknown colour column {key!r}; available columns: "
-                         + ", ".join(map(str, obs.columns)))
+        raise ValueError(
+            f"unknown colour column {key!r}; available columns: " + ", ".join(map(str, obs.columns))
+        )
     info = color_column_info(obs[key])
     if not info["available"]:
         raise ValueError(f"{key}: {info['reason']}")
-    values = (color_values_of(obs[key], "continuous") if info["kind"] == "continuous"
-              else obs[key].array.copy())
+    values = (
+        color_values_of(obs[key], "continuous")
+        if info["kind"] == "continuous"
+        else obs[key].array.copy()
+    )
     return {"key": key, "values": values, **info}
 
 

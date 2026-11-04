@@ -11,6 +11,7 @@ request is upgraded to a one-call Anthropic router only when the `[agents]` extr
 both present. The rich/questionary imports are lazy, so the module imports (and tests, with an
 injected prompter + console) without a terminal or those packages installed.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -83,7 +84,7 @@ class PlainPrompter:
             return default
         if raw.isdigit() and 1 <= int(raw) <= len(choices):
             return choices[int(raw) - 1][1]
-        for title, v in choices:                       # accept a substring of a choice's label
+        for title, v in choices:  # accept a substring of a choice's label
             if raw.lower() in title.lower():
                 return v
         return default
@@ -158,8 +159,11 @@ def state_rows() -> list[tuple[str, str]]:
         return str(p).replace(str(Path.home()), "~")
 
     where = _short(ddir)
-    also = [_short(p) for p in folders if not p.samefile(ddir)] if ddir.is_dir() else \
-        [_short(p) for p in folders]
+    also = (
+        [_short(p) for p in folders if not p.samefile(ddir)]
+        if ddir.is_dir()
+        else [_short(p) for p in folders]
+    )
     data = f"{len(found)} in {where}" if found else f"empty — drop files into {where}"
     if also:
         data += f"  (+ {', '.join(also)})"
@@ -167,8 +171,9 @@ def state_rows() -> list[tuple[str, str]]:
     # None when nothing is installed — `_default_engine` no longer falls back to a dev engine,
     # so the header says "install one" rather than naming a backend that invents numbers.
     engine = app._default_engine()
-    missing = [n for n in app.ENGINE_NAMES
-               if n not in app.DEV_ENGINES and not app.engine_available(n)]
+    missing = [
+        n for n in app.ENGINE_NAMES if n not in app.DEV_ENGINES and not app.engine_available(n)
+    ]
     if engine is None:
         how = "[yellow]none installed[/yellow] — reinstall: the compute ships with manyruns"
     else:
@@ -232,17 +237,34 @@ def render_result(console: Any, results: dict) -> None:
     top.add_column(ratio=1)
     finding = "\n".join(line.strip() for line in narrate.narrate(results).splitlines())
     top.add_row(
-        Panel(_steps_body(results, narrate), title="steps", title_align="left",
-              border_style="cyan", padding=(1, 1)),
-        Panel(finding, title="[bold]what it means[/bold]", title_align="left",
-              border_style="green", padding=(1, 2)),
+        Panel(
+            _steps_body(results, narrate),
+            title="steps",
+            title_align="left",
+            border_style="cyan",
+            padding=(1, 1),
+        ),
+        Panel(
+            finding,
+            title="[bold]what it means[/bold]",
+            title_align="left",
+            border_style="green",
+            padding=(1, 2),
+        ),
     )
     console.print(Panel(top, title=title, title_align="left", border_style="dim", padding=(0, 0)))
 
     geometry = _geometry_panel(g)
     if geometry is not None:
-        console.print(Panel(geometry, title="what this run recorded", title_align="left",
-                            border_style="magenta", padding=(1, 2)))
+        console.print(
+            Panel(
+                geometry,
+                title="what this run recorded",
+                title_align="left",
+                border_style="magenta",
+                padding=(1, 2),
+            )
+        )
 
     _render_plots(console, results)
 
@@ -334,30 +356,38 @@ def _progress_panel(declared: list, records: list, title: str) -> Any:
         name = str(step.get("name") or "?")
         if rec is None:
             glyph, colour, word = _PENDING
-            grid.add_row(f"[{colour}]{glyph}[/{colour}]", name,
-                         f"[{colour}]{word}[/{colour}]", "")
+            grid.add_row(f"[{colour}]{glyph}[/{colour}]", name, f"[{colour}]{word}[/{colour}]", "")
         elif rec.get("state") == "running":
             # a live spinner and a live clock, both animated by Live's own refresh thread
             from rich.spinner import Spinner
 
-            grid.add_row(Spinner("dots", style="cyan"), f"[cyan]{name}[/cyan]",
-                         "[cyan]running…[/cyan]", _RunningFor(rec.get("started") or time.monotonic()))
+            grid.add_row(
+                Spinner("dots", style="cyan"),
+                f"[cyan]{name}[/cyan]",
+                "[cyan]running…[/cyan]",
+                _RunningFor(rec.get("started") or time.monotonic()),
+            )
         else:
             glyph, colour = _OUTCOME_STYLE.get(rec.get("outcome"), ("?", "white"))
-            grid.add_row(f"[{colour}]{glyph}[/{colour}]", name,
-                         f"[{colour}]{rec.get('outcome')}[/{colour}]",
-                         f"{float(rec.get('seconds') or 0.0):.2f}s")
+            grid.add_row(
+                f"[{colour}]{glyph}[/{colour}]",
+                name,
+                f"[{colour}]{rec.get('outcome')}[/{colour}]",
+                f"{float(rec.get('seconds') or 0.0):.2f}s",
+            )
             if rec is newest:
                 for row in narrate.geometry_delta_rows(rec):
-                    grid.add_row("", f"  [dim]{row.label}[/dim]",
-                                 f"[magenta]{row.value}[/magenta]", "")
+                    grid.add_row(
+                        "", f"  [dim]{row.label}[/dim]", f"[magenta]{row.value}[/magenta]", ""
+                    )
 
     done = sum(1 for r in records if r.get("state") != "running" and r.get("outcome"))
     footer = f"\n[dim]{done} of {len(declared)} complete[/dim]"
     from rich.console import Group
 
-    return Panel(Group(grid, footer), title=title, title_align="left",
-                 border_style="cyan", padding=(1, 2))
+    return Panel(
+        Group(grid, footer), title=title, title_align="left", border_style="cyan", padding=(1, 2)
+    )
 
 
 def _steps_body(results: dict, narrate: Any) -> Any:
@@ -374,8 +404,11 @@ def _steps_body(results: dict, narrate: Any) -> Any:
     if steps:
         for s in steps:
             glyph, colour = _OUTCOME_STYLE.get(s.get("outcome"), ("?", "white"))
-            body.add_row(f"[{colour}]{glyph}[/{colour}]", str(s.get("name") or "?"),
-                         f"{float(s.get('seconds') or 0.0):.2f}s")
+            body.add_row(
+                f"[{colour}]{glyph}[/{colour}]",
+                str(s.get("name") or "?"),
+                f"{float(s.get('seconds') or 0.0):.2f}s",
+            )
             if s.get("detail"):
                 body.add_row("", f"[dim]{narrate._clip(s['detail'], 24)}[/dim]", "")
             # what the step actually contributed — a step can report "ok" and produce
@@ -385,8 +418,9 @@ def _steps_body(results: dict, narrate: Any) -> Any:
             if made:
                 body.add_row("", f"[dim]→ {narrate._clip(made, 24)}[/dim]", "")
             if emitted:
-                body.add_row("", f"[dim]+ {len(emitted)} value"
-                                 f"{'s' if len(emitted) != 1 else ''}[/dim]", "")
+                body.add_row(
+                    "", f"[dim]+ {len(emitted)} value{'s' if len(emitted) != 1 else ''}[/dim]", ""
+                )
             elif not made and s.get("outcome") == "ok":
                 body.add_row("", "[yellow]produced nothing[/yellow]", "")
             # what the step did to the GEOMETRY, which `produced` cannot say: a shape can be
@@ -402,7 +436,9 @@ def _steps_body(results: dict, narrate: Any) -> Any:
         # an engine that reports no outcomes must not look like one that ran cleanly
         for entry in results.get("trace") or []:
             body.add_row("[dim]·[/dim]", entry, "")
-        footer = "\n[yellow]no per-step outcome from\nthis engine — not evidence\nanything ran[/yellow]"
+        footer = (
+            "\n[yellow]no per-step outcome from\nthis engine — not evidence\nanything ran[/yellow]"
+        )
     if results.get("seed") is None and steps:
         footer += "\n[yellow]⚠[/yellow] [dim]no seed — not\nreproducible[/dim]"
     return Group(body, footer)
@@ -449,8 +485,11 @@ def _geometry_panel(g: dict) -> Any:
             else:
                 # escaped: an absence's reason can be an exception message, and
                 # `raised KeyError: ['x']` would otherwise be parsed as markup by rich
-                grid.add_row(row.label, "[yellow]—[/yellow]",
-                             f"[yellow]not measured[/yellow] [dim]— {escape(row.value)}[/dim]")
+                grid.add_row(
+                    row.label,
+                    "[yellow]—[/yellow]",
+                    f"[yellow]not measured[/yellow] [dim]— {escape(row.value)}[/dim]",
+                )
         blocks.extend([head, grid])
     return Group(*blocks)
 
@@ -471,8 +510,15 @@ def _render_plots(console: Any, results: dict) -> None:
     lines = [f"[bold]{p.name}[/bold]  [dim]{p}[/dim]" for p in plots]
     if not shown:
         lines.append(f"[dim]{_no_inline_hint()}[/dim]")
-    console.print(Panel("\n".join(lines), title="figure", title_align="left",
-                        border_style="yellow", padding=(1, 2)))
+    console.print(
+        Panel(
+            "\n".join(lines),
+            title="figure",
+            title_align="left",
+            border_style="yellow",
+            padding=(1, 2),
+        )
+    )
 
 
 #: The inline-image machinery lives in `manyruns.figures` — it is a feature in its own right
@@ -535,6 +581,33 @@ def _home(prompter: Any) -> Optional[str]:
 
 
 # ── explore: read → offer → run → narrate ──────────────────────────────────────────────────────
+def _role_facts(args: Any, obs: Any, console: Any) -> "frozenset | None":
+    """`obs.provides()` plus `samples`/`batch` for each role key the person named and the data has.
+
+    A named, present column IS the declaration a recipe's `needs: [samples]` asks for; without
+    it the menu refuses the recipe the flag was given for. A named column the data lacks is
+    refused here, before a recipe is picked, rather than after it has been run. None means
+    refused.
+    """
+    provided = set(obs.provides())
+    names = {str(c[0]) for c in (getattr(obs, "columns", None) or [])}
+    for flag, attr, fact in (
+        ("--sample-key", "sample_key", "samples"),
+        ("--batch-key", "batch_key", "batch"),
+    ):
+        key = getattr(args, attr, None)
+        if key is None:
+            continue
+        if key not in names:
+            console.print(
+                f"[yellow]{flag} {key!r} is not a column of this data.[/yellow] "
+                "Name an .obs column of the loaded file."
+            )
+            return None
+        provided.add(fact)
+    return frozenset(provided)
+
+
 def _explore(args: Any, prompter: Any, console: Any) -> None:
     from manyruns import intent, narrate
     from manyruns.catalog import discover_recipes, load_recipe
@@ -553,11 +626,17 @@ def _explore(args: Any, prompter: Any, console: Any) -> None:
     # `obs.provides()` is the shell's supplier of dataset-level facts — the counterpart to a
     # declaration's `handle`, which this surface does not have. Without it, dropping an .h5ad
     # in would refuse every step that reads the gene axis it demonstrably has.
-    legal = [n for n in discover_recipes()
-             if not unmet(load_recipe(n), obs.shape, provided=obs.provides())]
+    provided = _role_facts(args, obs, console)
+    if provided is None:
+        return
+    legal = [
+        n for n in discover_recipes() if not unmet(load_recipe(n), obs.shape, provided=provided)
+    ]
     if not legal:
-        console.print("[yellow]No recipe can run on this data as described.[/yellow] "
-                      "Try `check` to see what each recipe needs.")
+        console.print(
+            "[yellow]No recipe can run on this data as described.[/yellow] "
+            "Try `check` to see what each recipe needs."
+        )
         return
 
     recipe_name = _pick_recipe(prompter, console, obs, legal, allow_llm=intent.llm_available())
@@ -570,12 +649,23 @@ def _explore(args: Any, prompter: Any, console: Any) -> None:
 
     results = _run(args, console, data_folder, dataset, modality, recipe_name, obs, engine)
     if results is not None:
-        _record(console, results, obs, modality)
+        _record(
+            console,
+            results,
+            obs,
+            modality,
+            keys={
+                "sample_key": getattr(args, "sample_key", None),
+                "batch_key": getattr(args, "batch_key", None),
+            },
+        )
         console.print("")
         render_result(console, results)
 
 
-def _record(console: Any, results: dict, obs: Observation, modality: str) -> None:
+def _record(
+    console: Any, results: dict, obs: Observation, modality: str, keys: Optional[dict] = None
+) -> None:
     """Append this run to the store — the front door's missing half of §4.3 P1.
 
     `store.append` had exactly ONE product caller (`app._explore_project`, the `run` /
@@ -597,7 +687,14 @@ def _record(console: Any, results: dict, obs: Observation, modality: str) -> Non
     from manyruns import store as _store
 
     try:
-        index = _store.append(results, extra={"source": str(obs.source), "modality": modality})
+        index = _store.append(
+            results,
+            extra={
+                "source": str(obs.source),
+                "modality": modality,
+                **(keys or {}),
+            },
+        )
     except OSError as e:  # noqa: BLE001 - a read-only cwd must not lose a completed run
         console.print(f"[dim](run not recorded: {e})[/dim]")
         return
@@ -644,16 +741,18 @@ def _pick_engine(prompter: Any, console: Any, args: Any) -> Optional[str]:
         from rich.markup import escape
         from manyruns.installation import REINSTALL
 
-        console.print("[yellow]no compute backend installed[/yellow] — "
-                      f"reinstall with `{escape(REINSTALL)}`")
+        console.print(
+            f"[yellow]no compute backend installed[/yellow] — reinstall with `{escape(REINSTALL)}`"
+        )
         return None
     picked = prompter.select("How should I run it?", options, default=default)
     if picked is None or picked == "__back__":
         return None
     if isinstance(picked, str) and picked.startswith("__missing__"):
         name = picked.removeprefix("__missing__")
-        console.print(f"[yellow]{name} isn't installed here.[/yellow] "
-                      "Install it, or pick another way to run.")
+        console.print(
+            f"[yellow]{name} isn't installed here.[/yellow] Install it, or pick another way to run."
+        )
         return None
     return picked
 
@@ -881,8 +980,10 @@ def _pick_source(
         choices.append(("← back", ("back", None)))
 
         if not dropped:
-            console.print(f"[dim]drop your data into {ddir.resolve()}, then pick “rescan” — "
-                          f"or choose a sample below.[/dim]")
+            console.print(
+                f"[dim]drop your data into {ddir.resolve()}, then pick “rescan” — "
+                f"or choose a sample below.[/dim]"
+            )
 
         kind, val = prompter.select("Which data?", choices) or ("back", None)
         if kind == "back":
@@ -893,9 +994,9 @@ def _pick_source(
             ds = load_dataset(val)
             if missing_dataset_file(ds) and datasetfetch.can_fetch(ds):
                 _say_where_the_file_should_be(console, val)
-                choice = prompter.select("Download this sample?", [("Fetch", "fetch"),
-                                                                   ("Back", "back")],
-                                         default="back")
+                choice = prompter.select(
+                    "Download this sample?", [("Fetch", "fetch"), ("Back", "back")], default="back"
+                )
                 if choice != "fetch":
                     console.print("  Download declined. Select the sample again to retry.")
                     continue
@@ -907,8 +1008,10 @@ def _pick_source(
                     bucket = min(10, done * 10 // total)
                     if bucket > last_bucket:
                         last_bucket = bucket
-                        console.print(f"  downloading {escape(Path(ds['handle']['ref']).name)}: "
-                                      f"{done:,}/{total:,} bytes ({done * 100 // total}%)")
+                        console.print(
+                            f"  downloading {escape(Path(ds['handle']['ref']).name)}: "
+                            f"{done:,}/{total:,} bytes ({done * 100 // total}%)"
+                        )
 
                 try:
                     datasetfetch.fetch_dataset(ds, progress=progress)
@@ -917,18 +1020,18 @@ def _pick_source(
                     _say_where_the_file_should_be(console, val)
                     continue
             if not _say_where_the_file_should_be(console, val):
-                continue                                # explained; re-show the menu
+                continue  # explained; re-show the menu
             return _resolve_dataset(val)
 
         p = val
-        if p is None:                                       # "a file or folder path…"
+        if p is None:  # "a file or folder path…"
             raw = prompter.text("Path to a file or folder:").strip()
             if not raw:
                 continue
             p = Path(raw).expanduser()
         resolved = _resolve_path_source(Path(p), console)
         if resolved is not None:
-            return resolved                                 # else: re-show the menu
+            return resolved  # else: re-show the menu
 
 
 def where_the_file_should_be(name: str, ds: dict) -> list[str]:
@@ -942,9 +1045,11 @@ def where_the_file_should_be(name: str, ds: dict) -> list[str]:
         return []
     handle = ds.get("handle") or {}
     target = data_dir().resolve() / Path(ref).name
-    lines = [f"{name} is declared here, but its data is not on this machine.",
-             f"looked for {Path(ref).name} at {ref} and in "
-             f"{', '.join(str(d) for d in data_dirs()) or '(no drop folder yet)'}"]
+    lines = [
+        f"{name} is declared here, but its data is not on this machine.",
+        f"looked for {Path(ref).name} at {ref} and in "
+        f"{', '.join(str(d) for d in data_dirs()) or '(no drop folder yet)'}",
+    ]
     url = handle.get("url") or (ds.get("source") or {}).get("url")
     if url:
         lines.append(f"download {Path(ref).name} from {url}")
@@ -1021,9 +1126,16 @@ def _resolve_dataset(name: str) -> tuple[Optional[Path], Optional[str], str, Obs
         #
         # Same shape of defect as the gene axis at `3bc84f3`, and the same fix: a DECLARED fact
         # outranks a sniff for that fact alone, and the sniff fills in everything else.
-        return found, None, modality, replace(
-            narrate.read_data(found, modality, source=name),
-            shape=ds.get("shape") or "unknown", declared=tuple(narrate.declared_facts(ds)))
+        return (
+            found,
+            None,
+            modality,
+            replace(
+                narrate.read_data(found, modality, source=name),
+                shape=ds.get("shape") or "unknown",
+                declared=tuple(narrate.declared_facts(ds)),
+            ),
+        )
     return None, handle.get("ref", name), modality, narrate.declared_observation(ds, name)
 
 
@@ -1090,8 +1202,10 @@ def _pick_recipe(
         if pick == "__recipes__":
             # The dropdown is the whole legal set, suited ones included — someone who opened it
             # to compare should not have to back out to find the recommended one again.
-            sub = [(f"{o['recipe']} — {o['label']}" + ("  ★" if o["recommended"] else ""),
-                    o["recipe"]) for o in offered]
+            sub = [
+                (f"{o['recipe']} — {o['label']}" + ("  ★" if o["recommended"] else ""), o["recipe"])
+                for o in offered
+            ]
             sub.append(("← back", "__back__"))
             chosen = prompter.select("Which recipe?", sub, default=recommended)
             if chosen in (None, "__back__"):
@@ -1113,8 +1227,14 @@ def _pick_recipe(
 
 
 def _run(
-    args: Any, console: Any, data_folder: Optional[Path], dataset: Optional[str],
-    modality: str, recipe_name: str, obs: Observation, engine: Optional[str] = None,
+    args: Any,
+    console: Any,
+    data_folder: Optional[Path],
+    dataset: Optional[str],
+    modality: str,
+    recipe_name: str,
+    obs: Observation,
+    engine: Optional[str] = None,
 ) -> Optional[dict]:
     """Execute one recipe. A steppable engine shows a live per-step trace; a non-steppable one runs as
     one blocking call. Returns the results dict, or None on setup failure."""
@@ -1140,10 +1260,13 @@ def _run(
             if handle.get("kind") == "manylatents" and handle.get("ref") == dataset:
                 dataset_name = obs.source
         proj_like = {
-            "project": _slugish(obs.source), "engine": engine, "dataset": dataset,
+            "project": _slugish(obs.source),
+            "engine": engine,
+            "dataset": dataset,
             "dataset_name": dataset_name,
             "data_folder": str(data_folder) if data_folder else None,
-            "modality": modality, "recipe": recipe,
+            "modality": modality,
+            "recipe": recipe,
         }
         session = app._build_session(proj_like, args)
         session.source = obs.source
@@ -1156,18 +1279,27 @@ def _run(
     live, on_step = (None, None)
     if getattr(console, "is_terminal", False):
         live, on_step = live_dashboard(
-            console, recipe, f"[bold]{recipe_name}[/bold] · {engine} · {obs.source}")
+            console, recipe, f"[bold]{recipe_name}[/bold] · {engine} · {obs.source}"
+        )
     try:
         if live is not None:
             live.start()
         results = app.explore_once(
-            data_folder=data_folder, dataset=dataset, modality=modality, recipe_name=recipe_name,
-            engine=engine, seed=getattr(args, "seed", 42), fast_dev_run=app._smoke(args),
+            data_folder=data_folder,
+            dataset=dataset,
+            modality=modality,
+            recipe_name=recipe_name,
+            engine=engine,
+            seed=getattr(args, "seed", 42),
+            fast_dev_run=app._smoke(args),
             time_key=getattr(args, "time_key", None),
+            sample_key=getattr(args, "sample_key", None),
+            batch_key=getattr(args, "batch_key", None),
             # `None` default — the shim overrides a recipe's DECLARED method, so defaulting to
             # log1p here would silently rewrite a recipe that asked for `sqrt`.
             transform=getattr(args, "transform", None),
-            device=getattr(args, "device", None), out_dir=Path("outputs") / _slugish(obs.source),
+            device=getattr(args, "device", None),
+            out_dir=Path("outputs") / _slugish(obs.source),
             on_step=on_step,
         )
     except RuntimeError as e:

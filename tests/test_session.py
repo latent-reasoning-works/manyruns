@@ -18,6 +18,7 @@ throughout so the file runs with no private stack — `_suite.measure` names eve
 metric whether or not it can compute it, which is exactly why the KEY SET is the comparable
 thing and the values are not.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -25,30 +26,103 @@ from pathlib import Path
 import pytest
 
 from manyruns import app, catalog
-from manyruns.session import (UNOFFERED_GROUPS, Session, available_actions, catalog_steps,
-                               resolve_step)
+from manyruns.session import (
+    UNOFFERED_GROUPS,
+    Session,
+    available_actions,
+    catalog_steps,
+    resolve_step,
+)
 
 np = pytest.importorskip("numpy")
 
 
-EMBED = {"name": "embed", "steps": [{"name": "phate", "group": "latent",
-                                     "params": {"n_components": 3}}]}
+EMBED = {
+    "name": "embed",
+    "steps": [{"name": "phate", "group": "latent", "params": {"n_components": 3}}],
+}
 
 
 def _data(n=150, d=12, seed=0):
     return np.asarray(np.random.default_rng(seed).normal(size=(n, d)))
 
 
+TOOL_RECIPE = {
+    "name": "seam",
+    "steps": [
+        {"name": "dbl", "group": "prep", "tool": "masker", "params": {}},
+        {"name": "de", "group": "analysis", "tool": "detab", "params": {}},
+    ],
+}
+
+
+@pytest.mark.parametrize("name, tool", [("dbl", "masker"), ("de", "detab")])
+def test_a_typed_tool_step_resolves_from_the_recipe(name, tool):
+    from manyruns.pipeline import runner
+
+    engine = next(name for name in runner._DISPATCH if runner.steppable(name))
+    step = resolve_step(name, recipe=TOOL_RECIPE, engine=engine)
+    assert step is not None and step["tool"] == tool
+
+
+def test_a_typed_step_without_a_tool_still_requires_command_resolution():
+    # Only tool declarations bypass the command catalog; mock accepting a group
+    # must not make an unknown built-in name typeable.
+    recipe = {
+        "name": "unknown",
+        "steps": [{"name": "nope", "group": "latent", "params": {}}],
+    }
+    assert resolve_step("nope", recipe=recipe, engine="mock") is None
+
+
+def test_known_steps_keeps_a_declared_tool(tmp_path, monkeypatch):
+    import yaml
+
+    # Discovery is enough to validate the declaration; no tool environment is needed.
+    monkeypatch.setattr("manyruns.toolchain.discover_tools", lambda: ["masker", "detab"])
+    (tmp_path / "seam.yaml").write_text(yaml.safe_dump(TOOL_RECIPE))
+    monkeypatch.setenv("MANYRUNS_RECIPE_DIR", str(tmp_path))
+    assert catalog.check_recipe(TOOL_RECIPE, "seam") == []
+    assert catalog.known_steps()["dbl"]["tool"] == "masker"
+
+
+def test_a_typed_tool_step_reaches_the_tool_seam(tmp_path, monkeypatch):
+    calls = []
+
+    # Record the executor call so this checks routing without launching another interpreter.
+    def run_external_step(name, params, state, g, ctx):
+        calls.append((name, params))
+        return None
+
+    monkeypatch.setattr("manyruns.pipeline.external.run_external_step", run_external_step)
+    session = _mock(recipe=TOOL_RECIPE, out_dir=tmp_path)
+    session.step("dbl")
+    assert calls and calls[0][0] == "dbl"
+
+
 def _mock(recipe=None, **kw):
-    return Session(project="p", engine="mock", modality="scrna",
-                   recipe=recipe if recipe is not None else app.load_recipe("cflows"), **kw)
+    return Session(
+        project="p",
+        engine="mock",
+        modality="scrna",
+        recipe=recipe if recipe is not None else app.load_recipe("cflows"),
+        **kw,
+    )
 
 
 def _real(tmp_path, recipe=EMBED, **kw):
     pytest.importorskip("sklearn")
     pytest.importorskip("phate")
-    return Session(project="p", engine="_inproc", out_dir=tmp_path, modality="scrna",
-                   recipe=recipe, array=_data(), seed=0, **kw)
+    return Session(
+        project="p",
+        engine="_inproc",
+        out_dir=tmp_path,
+        modality="scrna",
+        recipe=recipe,
+        array=_data(),
+        seed=0,
+        **kw,
+    )
 
 
 # ── the payload: one record, not two ─────────────────────────────────────────────────────
@@ -69,8 +143,8 @@ def test_a_session_and_a_recipe_produce_the_same_record(tmp_path):
     got = session.close()
     want = runner.run_inproc(_data(), EMBED, tmp_path / "run", seed=0)
 
-    assert set(got) == set(want)                                  # 18 keys, both sides
-    assert set(got["g_vector"]) == set(want["g_vector"])          # the comparability core
+    assert set(got) == set(want)  # 18 keys, both sides
+    assert set(got["g_vector"]) == set(want["g_vector"])  # the comparability core
     assert got["trace"] == want["trace"] and got["status"] == want["status"]
     assert got["recipe"] == want["recipe"] == "embed"
     assert got["ok"] is want["ok"] is True
@@ -104,8 +178,10 @@ def test_a_session_that_ran_the_recipe_hashes_to_the_recipe_s_spec(tmp_path):
     session = _real(tmp_path / "sess")
     session.run_recipe()
 
-    assert session.close()["spec_id"] == runner.run_inproc(
-        _data(), EMBED, tmp_path / "run", seed=0)["spec_id"]
+    assert (
+        session.close()["spec_id"]
+        == runner.run_inproc(_data(), EMBED, tmp_path / "run", seed=0)["spec_id"]
+    )
 
 
 def test_declared_params_reach_the_fit_so_final_dim_is_what_the_recipe_asked_for(tmp_path):
@@ -130,8 +206,10 @@ def test_declared_params_reach_the_fit_so_final_dim_is_what_the_recipe_asked_for
     assert session.state["emb"].shape[1] == 3
 
     # a recipe that disagrees with the catalog default: the RECIPE has to win
-    odd = {"name": "odd", "steps": [{"name": "phate", "group": "latent",
-                                     "params": {"n_components": 4}}]}
+    odd = {
+        "name": "odd",
+        "steps": [{"name": "phate", "group": "latent", "params": {"n_components": 4}}],
+    }
     other = _real(tmp_path / "odd", recipe=odd)
     other.run_recipe()
 
@@ -166,13 +244,21 @@ def test_the_declared_metric_suite_reaches_the_engine(tmp_path):
     suite = catalog.load_suite()
     assert suite, "the shipped suite is empty — this test would assert nothing"
 
-    session = Session(project="p", engine="manylatents", out_dir=tmp_path, modality="scrna",
-                      recipe=EMBED, array=_data(), seed=0)
+    session = Session(
+        project="p",
+        engine="manylatents",
+        out_dir=tmp_path,
+        modality="scrna",
+        recipe=EMBED,
+        array=_data(),
+        seed=0,
+    )
     assert session.ctx["metrics"] == suite
 
     seen: dict = {}
     session.dispatch["latent"] = lambda name, params, state, g, ctx: seen.update(
-        metrics=ctx.get("metrics"))
+        metrics=ctx.get("metrics")
+    )
     session.step("phate")
     assert seen["metrics"] == suite
 
@@ -221,13 +307,14 @@ def test_init_opens_the_prompt_on_a_public_install(tmp_path, monkeypatch, capsys
     np.save(tmp_path / "toy.npy", _data(40, 6))
     monkeypatch.setattr("builtins.input", lambda *a, **k: "quit")
 
-    rc = app.main(["init", "--project", "demo", "--data", str(tmp_path / "toy.npy"),
-                   "--engine", "mock"])
+    rc = app.main(
+        ["init", "--project", "demo", "--data", str(tmp_path / "toy.npy"), "--engine", "mock"]
+    )
     out = capsys.readouterr().out
 
     assert rc == 0
-    assert "interactive mode is" not in out          # the deleted refusal
-    assert "✓ initialized" in out                    # the prompt actually opened
+    assert "interactive mode is" not in out  # the deleted refusal
+    assert "✓ initialized" in out  # the prompt actually opened
 
 
 # ── the lineage: index, artifacts, deltas, COMPLETE ──────────────────────────────────────
@@ -250,7 +337,7 @@ def test_running_one_step_twice_keeps_both_embeddings(tmp_path):
 
     assert (first["index"], second["index"]) == (0, 1)
     assert first["artifacts"]["emb"] != second["artifacts"]["emb"]
-    assert artifacts.load_array(first["artifacts"]["emb"]).shape[1] == 3    # not clobbered
+    assert artifacts.load_array(first["artifacts"]["emb"]).shape[1] == 3  # not clobbered
     assert artifacts.load_array(second["artifacts"]["emb"]).shape[1] == 2
 
 
@@ -261,14 +348,15 @@ def test_a_geometry_delta_survives_across_actions(tmp_path):
     admit the difference."""
     session = _real(tmp_path, recipe={"name": "adhoc", "steps": []})
     first = session.step("phate")["record"]
-    second = session.step({"name": "phate", "group": "latent",
-                           "params": {"n_components": 2}})["record"]
+    second = session.step({"name": "phate", "group": "latent", "params": {"n_components": 2}})[
+        "record"
+    ]
 
     if not first.get("geometry"):
         pytest.skip("no live metric backend here — the delta has nothing to carry")
     metric = next(iter(first["geometry"]))
-    assert first["geometry"][metric][0] is None            # an appearance
-    assert second["geometry"][metric][0] is not None       # a change, against the first
+    assert first["geometry"][metric][0] is None  # an appearance
+    assert second["geometry"][metric][0] is not None  # a change, against the first
 
 
 def test_complete_appears_only_when_the_session_closes(tmp_path):
@@ -281,7 +369,7 @@ def test_complete_appears_only_when_the_session_closes(tmp_path):
     session.step("phate")
     folder = artifacts.root(tmp_path, session.run_id)
 
-    assert artifacts.complete(folder) is False     # mid-session
+    assert artifacts.complete(folder) is False  # mid-session
     session.close()
     assert artifacts.complete(folder) is True
 
@@ -300,7 +388,7 @@ def test_a_discarded_step_makes_a_run_incomplete_without_making_it_failed(tmp_pa
     session = _real(tmp_path, recipe=EMBED)
     session.run_recipe()
     kept = session.results()
-    assert kept["complete"] is True and kept["ok"] is True     # the control: nothing discarded
+    assert kept["complete"] is True and kept["ok"] is True  # the control: nothing discarded
 
     session.discarded.append("phate")
     out = session.results()
@@ -308,7 +396,8 @@ def test_a_discarded_step_makes_a_run_incomplete_without_making_it_failed(tmp_pa
     assert out["ok"] is True, "an abandoned run is not a failed one"
     assert out["complete"] is False, "the declared recipe did not get through"
     assert [s["name"] for s in out["steps"] if s["outcome"] == "ok"] == ["phate"], (
-        "the attempt's own record must still say it ran — it did")
+        "the attempt's own record must still say it ran — it did"
+    )
     assert any("phate: discarded" in c for c in out["caveats"]), out["caveats"]
 
 
@@ -341,20 +430,31 @@ def test_the_suite_is_re_measured_each_time_not_pinned_by_the_first_call(tmp_pat
     from manyruns.pipeline import suite
 
     # stand in for manylatents' registry, so this runs with no private stack: lid == emb[0, 0]
-    monkeypatch.setattr(suite, "_compute_metric", lambda: (
-        lambda name, embeddings=None, dataset=None: float(embeddings[0, 0])))
+    monkeypatch.setattr(
+        suite,
+        "_compute_metric",
+        lambda: (lambda name, embeddings=None, dataset=None: float(embeddings[0, 0])),
+    )
 
-    session = Session(project="p", engine="_inproc", out_dir=tmp_path, modality="scrna",
-                      recipe={"name": "adhoc", "steps": []}, array=_data(), seed=0)
+    session = Session(
+        project="p",
+        engine="_inproc",
+        out_dir=tmp_path,
+        modality="scrna",
+        recipe={"name": "adhoc", "steps": []},
+        array=_data(),
+        seed=0,
+    )
     session.dispatch["latent"] = lambda name, params, state, g, ctx: state.update(
-        emb=np.full((8, 2), float(params["v"])))
+        emb=np.full((8, 2), float(params["v"]))
+    )
 
     session.step({"name": "a", "group": "latent", "params": {"v": 1}})
     assert session.results()["g_vector"]["lid"] == 1.0
 
     session.step({"name": "a", "group": "latent", "params": {"v": 2}})
-    assert session.results()["g_vector"]["final_dim"] == 2   # true under the mutation too
-    assert session.results()["g_vector"]["lid"] == 2.0       # this is the one that goes stale
+    assert session.results()["g_vector"]["final_dim"] == 2  # true under the mutation too
+    assert session.results()["g_vector"]["lid"] == 2.0  # this is the one that goes stale
 
 
 def test_the_run_id_is_minted_at_open_because_step_zero_writes_with_it(tmp_path):
@@ -376,7 +476,7 @@ def test_a_session_that_deviates_stops_claiming_the_recipe_s_name():
     other than what `cflows` declares is adaptive, and `None` is what both readers already
     render as "(adaptive)"."""
     session = _mock()
-    assert session.results()["recipe"] == "cflows"        # nothing issued yet: still a prefix
+    assert session.results()["recipe"] == "cflows"  # nothing issued yet: still a prefix
 
     # The prefix starts at the PREAMBLE now, not at `phate`: since the cutover `cflows`
     # declares `normalize -> transform -> pca(50)` ahead of it (five steps, not two), so a
@@ -385,10 +485,10 @@ def test_a_session_that_deviates_stops_claiming_the_recipe_s_name():
     # (archetypes' `pca`, first alphabetically) and deviate on params alone.
     for declared in session.recipe["steps"][:3]:
         session.step(dict(declared))
-    session.step("phate")                                 # cflows' FOURTH step, typed by name
+    session.step("phate")  # cflows' FOURTH step, typed by name
     assert session.results()["recipe"] == "cflows"
 
-    session.step("separation")                            # cflows' fifth step is mioflow
+    session.step("separation")  # cflows' fifth step is mioflow
     assert session.results()["recipe"] is None
 
 
@@ -407,8 +507,14 @@ def test_run_recipe_no_longer_refuses_to_re_run_a_step():
     # indices, because `run_recipe` de-duplicates against nothing.
     assert [r["name"] for r in again] == ["normalize", "transform", "pca", "phate", "mioflow"]
     assert [s["index"] for s in session.steps] == [0, 1, 2, 3, 4, 5]
-    assert session.trace == ["latent:phate", "prep:normalize", "prep:transform", "latent:pca",
-                             "latent:phate", "lightning:mioflow"]
+    assert session.trace == [
+        "latent:phate",
+        "prep:normalize",
+        "prep:transform",
+        "latent:pca",
+        "latent:phate",
+        "lightning:mioflow",
+    ]
 
 
 # ── views over the record, never a second accumulator ────────────────────────────────────
@@ -419,7 +525,7 @@ def test_trace_and_status_are_derived_from_the_step_record():
     fact. `trace` appended BEFORE the step ran, so it reported an attempt as an execution."""
     session = _mock()
     session.step("phate")
-    session.step("nope")                       # unknown: never reaches the lineage
+    session.step("nope")  # unknown: never reaches the lineage
 
     assert session.trace == ["latent:phate"]
     assert session.status == {"phate": "ok"}
@@ -433,8 +539,8 @@ def test_an_unknown_action_is_reported_and_the_session_survives():
     r = session.step("definitely-not-a-step")
 
     assert not r["ok"] and "unknown action" in r["error"]
-    assert "phate" in r["error"]               # it says what IS available
-    assert session.step("phate")["ok"]         # still usable
+    assert "phate" in r["error"]  # it says what IS available
+    assert session.step("phate")["ok"]  # still usable
 
 
 def test_a_step_that_raises_is_a_record_not_an_exception(tmp_path, monkeypatch):
@@ -450,7 +556,7 @@ def test_a_step_that_raises_is_a_record_not_an_exception(tmp_path, monkeypatch):
 
     assert r["ok"] is False and "kaboom" in r["error"]
     assert session.steps[0]["outcome"] == "error"
-    assert session.results()["ok"] is False    # and the row is not read as data
+    assert session.results()["ok"] is False  # and the row is not read as data
 
 
 def test_results_reports_ok_so_a_failed_session_is_not_recorded_as_data(tmp_path):
@@ -458,7 +564,7 @@ def test_results_reports_ok_so_a_failed_session_is_not_recorded_as_data(tmp_path
     whose every step errored produced a row the sweep table read as successful. Same definition
     as the recipe path's, derived from the same records."""
     session = _real(tmp_path, recipe={"name": "adhoc", "steps": []})
-    assert session.results()["ok"] is True     # nothing has failed yet
+    assert session.results()["ok"] is True  # nothing has failed yet
 
     session.dispatch["latent"] = lambda *a: (_ for _ in ()).throw(ValueError("x"))
     session.step("phate")
@@ -470,14 +576,16 @@ def test_a_live_observer_sees_each_step_as_it_runs(tmp_path):
     because `apply` passes `steps=self.steps` — the observer gets the lineage list, growing,
     with the running record already in it."""
     seen: list = []
-    session = _real(tmp_path, recipe={"name": "adhoc", "steps": []},
-                    on_step=lambda rec, steps: seen.append((rec["name"], rec.get("state"),
-                                                            len(steps))))
+    session = _real(
+        tmp_path,
+        recipe={"name": "adhoc", "steps": []},
+        on_step=lambda rec, steps: seen.append((rec["name"], rec.get("state"), len(steps))),
+    )
     session.step("phate")
     session.step("phate")
 
     running = [s for s in seen if s[1] == "running"]
-    assert [s[2] for s in running] == [1, 2]   # 1,1 would mean the record joined late
+    assert [s[2] for s in running] == [1, 2]  # 1,1 would mean the record joined late
 
 
 # ── the step vocabulary is derived, not listed ───────────────────────────────────────────
@@ -502,9 +610,11 @@ def test_available_actions_comes_from_the_catalog_not_a_literal(tmp_path, monkey
         for step in catalog.load_recipe(name).get("steps") or []:
             if step["group"] in UNOFFERED_GROUPS:
                 assert step["name"] not in actions, (
-                    f"{name} declares {step['name']} in an unoffered group, yet it is a move")
+                    f"{name} declares {step['name']} in an unoffered group, yet it is a move"
+                )
                 assert resolve_step(step["name"]) is not None, (
-                    f"{name} declares {step['name']}, unoffered AND untypeable")
+                    f"{name} declares {step['name']}, unoffered AND untypeable"
+                )
                 continue
             assert step["name"] in actions, f"{name} declares {step['name']}, not offerable"
 
@@ -527,18 +637,20 @@ def test_a_step_no_executor_can_run_is_not_offered(tmp_path, monkeypatch):
     )
     monkeypatch.setenv("MANYRUNS_RECIPE_DIR", str(tmp_path))
 
-    assert available_actions("_inproc") == ["phate"]     # umap has no in-process implementation
-    assert available_actions() == ["phate", "umap"]   # but it does exist in the catalog
+    assert available_actions("_inproc") == ["phate"]  # umap has no in-process implementation
+    assert available_actions() == ["phate", "umap"]  # but it does exist in the catalog
     assert resolve_step("umap", engine="_inproc") is None
     assert resolve_step("umap")["group"] == "latent"
 
 
-def test_a_broken_recipe_file_drops_out_of_the_menu_instead_of_taking_it_down(tmp_path,
-                                                                             monkeypatch):
+def test_a_broken_recipe_file_drops_out_of_the_menu_instead_of_taking_it_down(
+    tmp_path, monkeypatch
+):
     """`load_recipe` is strict and must stay strict — a recipe being RUN has to refuse. The
     MENU is a view, and a view never fails the thing it is a view of."""
     (tmp_path / "good.yaml").write_text(
-        "name: good\nsteps:\n  - {name: phate, group: latent, params: {}}\n")
+        "name: good\nsteps:\n  - {name: phate, group: latent, params: {}}\n"
+    )
     (tmp_path / "bad.yaml").write_text("name: bad\nsteps: []\n")
     monkeypatch.setenv("MANYRUNS_RECIPE_DIR", str(tmp_path))
 
@@ -563,7 +675,7 @@ def test_aliases_still_resolve_and_a_deleted_step_is_not_kept_as_one():
     from manyruns.pipeline import stubs
 
     assert resolve_step("MIIOFlow")["name"] == "mioflow"
-    assert resolve_step("MII OFlow")["name"] == "mioflow"      # spacing
+    assert resolve_step("MII OFlow")["name"] == "mioflow"  # spacing
     assert resolve_step("Granger Causality") is None
     assert resolve_step("nope") is None
 
@@ -602,9 +714,14 @@ def test_the_mock_engine_is_a_dispatch_table_not_a_second_step_method():
     # the preamble used to run unannounced, so it must now decline ANNOUNCED. Asserted on the
     # substring, as at `test_a_prep_step_that_never_RAN…`, so the wording can still improve.
     assert all("no data in this state" in (s["detail"] or "") for s in res["steps"][:2])
-    assert res["trace"] == ["prep:normalize", "prep:transform", "latent:pca", "latent:phate",
-                            "lightning:mioflow"]
-    assert res["steps"][3]["params"] == {"n_components": 3}   # phate is step 3 now, not 0
+    assert res["trace"] == [
+        "prep:normalize",
+        "prep:transform",
+        "latent:pca",
+        "latent:phate",
+        "lightning:mioflow",
+    ]
+    assert res["steps"][3]["params"] == {"n_components": 3}  # phate is step 3 now, not 0
     assert [(s["name"], s["detail"]) for s in res["steps"] if s["outcome"] == "error"] == []
 
 
@@ -625,8 +742,9 @@ def test_the_mock_writes_no_state_folder_because_it_has_no_arrays(tmp_path):
 def test_the_repl_loop_drives_the_session(tmp_path, monkeypatch):
     """The REPL end to end, on the dep-free engine: steps, then a summary on disk."""
     monkeypatch.chdir(tmp_path)
-    inputs = iter(["phate", "accept", "MIIOFlow", "accept", "separation", "accept",
-                   "summary", "quit"])
+    inputs = iter(
+        ["phate", "accept", "MIIOFlow", "accept", "separation", "accept", "summary", "quit"]
+    )
     out: list = []
     session = _mock(out_dir=tmp_path)
     session.source = "data"
@@ -667,12 +785,17 @@ def test_a_prep_step_that_never_RAN_does_not_rewrite_the_runs_provenance(tmp_pat
     """
     from manyruns import vocab
 
-    recipe = {"name": "filtered", "steps": [
-        {"name": "phate", "group": "latent", "params": {}},
-        {"name": "filter_cells", "group": "prep", "params": {"min_genes": 200}},
-        {"name": "mioflow", "group": "lightning", "params": {}}]}
-    session = _mock(recipe=recipe, out_dir=tmp_path, shape="time-course",
-                    embedding=np.zeros((60, 3)))
+    recipe = {
+        "name": "filtered",
+        "steps": [
+            {"name": "phate", "group": "latent", "params": {}},
+            {"name": "filter_cells", "group": "prep", "params": {"min_genes": 200}},
+            {"name": "mioflow", "group": "lightning", "params": {}},
+        ],
+    }
+    session = _mock(
+        recipe=recipe, out_dir=tmp_path, shape="time-course", embedding=np.zeros((60, 3))
+    )
     session.run_recipe()
     res = session.results()
 
@@ -705,7 +828,8 @@ def test_a_typed_step_carries_THIS_recipe_s_params_not_the_alphabet_s(tmp_path):
     declared = next(s for s in cflows["steps"] if s["name"] == "pca")["params"]
     assert declared != catalog_steps()["pca"]["params"], (
         "this test is only meaningful while two bundled recipes declare `pca` differently; "
-        "if that stopped being true, find another colliding name or delete this test")
+        "if that stopped being true, find another colliding name or delete this test"
+    )
 
     assert resolve_step("pca", recipe=cflows)["params"] == declared
     # …and a name THIS recipe does not declare still resolves, or mix-and-match breaks
@@ -724,7 +848,7 @@ def test_a_session_walking_its_recipe_by_hand_still_claims_the_recipe(tmp_path):
     session = _mock(recipe=cflows, out_dir=tmp_path)
 
     for declared in cflows["steps"]:
-        session.step(declared["name"])          # typed BY NAME, as a person would
+        session.step(declared["name"])  # typed BY NAME, as a person would
 
     assert [s["name"] for s in session.steps] == [s["name"] for s in cflows["steps"]]
     assert session.results()["recipe"] == "cflows"
@@ -736,8 +860,15 @@ def test_embedding_only_identity_survives_continuation_and_branch(tmp_path):
     embedding = np.arange(8, dtype=float).reshape(4, 2)
     ids = ["cell-c", "cell-a", "cell-d", "cell-b"]
     labels = np.array(["A", "A", "B", "B"])
-    session = Session("derived", engine="_inproc", out_dir=tmp_path,
-                      embedding=embedding, labels=labels, sample_ids=ids, metrics=[])
+    session = Session(
+        "derived",
+        engine="_inproc",
+        out_dir=tmp_path,
+        embedding=embedding,
+        labels=labels,
+        sample_ids=ids,
+        metrics=[],
+    )
     np.testing.assert_array_equal(session.state["rows"], np.arange(4))
     assert len(session.state["cols"]) == 0  # embedding dimensions are not genes
 
@@ -757,12 +888,16 @@ def test_embedding_only_identity_survives_continuation_and_branch(tmp_path):
     np.testing.assert_array_equal(branch.state["emb"], embedding + 10)
 
 
-@pytest.mark.parametrize("ids, labels, message", [
-    (["a", "b", "c"], ["A"] * 4, "match the input rows"),
-    (["a", "b", "c", "c"], ["A"] * 4, "unique"),
-    (["a", "b", "c", "d"], ["A"] * 3, "labels must match"),
-])
+@pytest.mark.parametrize(
+    "ids, labels, message",
+    [
+        (["a", "b", "c"], ["A"] * 4, "match the input rows"),
+        (["a", "b", "c", "c"], ["A"] * 4, "unique"),
+        (["a", "b", "c", "d"], ["A"] * 3, "labels must match"),
+    ],
+)
 def test_embedding_only_identity_validation(tmp_path, ids, labels, message):
     with pytest.raises(ValueError, match=message):
-        Session("derived", out_dir=tmp_path, embedding=np.zeros((4, 2)),
-                sample_ids=ids, labels=labels)
+        Session(
+            "derived", out_dir=tmp_path, embedding=np.zeros((4, 2)), sample_ids=ids, labels=labels
+        )

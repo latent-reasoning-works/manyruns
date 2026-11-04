@@ -16,6 +16,7 @@ The DIRECTORY is the registry for both — adding one is adding a file. `$MANYRU
 and `$MANYRUNS_DATASET_DIR` override the bundled sets, which is how a sweep's many
 experimental arms stay out of the shipped product.
 """
+
 from __future__ import annotations
 
 import re
@@ -131,19 +132,23 @@ def load_dataset(name: str, config_dir: Optional[Path | str] = None) -> dict:
 def load_recipes(
     names: Optional[Iterable[str]] = None, config_dir: Optional[Path | str] = None
 ) -> list[dict]:
-    return [load_recipe(n, config_dir) for n in (names if names is not None
-                                                 else discover_recipes(config_dir))]
+    return [
+        load_recipe(n, config_dir)
+        for n in (names if names is not None else discover_recipes(config_dir))
+    ]
 
 
 def load_datasets(
     names: Optional[Iterable[str]] = None, config_dir: Optional[Path | str] = None
 ) -> list[dict]:
-    return [load_dataset(n, config_dir) for n in (names if names is not None
-                                                  else discover_datasets(config_dir))]
+    return [
+        load_dataset(n, config_dir)
+        for n in (names if names is not None else discover_datasets(config_dir))
+    ]
 
 
 def known_steps(config_dir: Optional[Path | str] = None) -> dict[str, dict]:
-    """Every step the catalog declares: ``name -> {"name", "group", "params"[, "via"]}``.
+    """Every declared step: ``name -> {"name", "group", "params"[, "via", "tool"]}``.
 
     DERIVED, because there were three hand-kept copies of this list — `session._ACTIONS`
     (5 aliases → 4 steps), `session.available_actions()` (the same 4 as a second literal) and
@@ -188,10 +193,16 @@ def known_steps(config_dir: Optional[Path | str] = None) -> dict[str, dict]:
             name = step.get("name")
             if not name or name in out:
                 continue
-            out[name] = {"name": name, "group": step.get("group"),
-                         "params": dict(step.get("params") or {})}
+            out[name] = {
+                "name": name,
+                "group": step.get("group"),
+                "params": dict(step.get("params") or {}),
+            }
             if step.get("via"):
                 out[name]["via"] = step["via"]
+            # A typed tool step needs its executor declaration just as a recipe step does.
+            if step.get("tool"):
+                out[name]["tool"] = step["tool"]
     return out
 
 
@@ -232,8 +243,10 @@ def _check_source(source: Any, *, require_kind: bool = True) -> list[str]:
     # ONLY one: every other kind names something a reader can go and check, so it must carry
     # an identifier. Without this the convention is decorative.
     if kind != "none" and not (source.get("doi") or source.get("url")):
-        bad.append("source needs a `doi` or a `url` unless `kind: none` — a citation nobody "
-                   "can resolve is not provenance")
+        bad.append(
+            "source needs a `doi` or a `url` unless `kind: none` — a citation nobody "
+            "can resolve is not provenance"
+        )
     return bad
 
 
@@ -254,8 +267,10 @@ def check_recipe(cfg: Mapping[str, Any], name: Optional[str] = None) -> list[str
         bad.append(f"name is {cfg.get('name')!r} but the file is {name}.yaml — they must match")
     rid = cfg.get("id")
     if rid is not None and not (isinstance(rid, str) and _ID_RE.match(rid)):
-        bad.append(f"id must be dotted lowercase, <domain>.<verb>.<method> "
-                   f"(matching {_ID_RE.pattern}), got {rid!r}")
+        bad.append(
+            f"id must be dotted lowercase, <domain>.<verb>.<method> "
+            f"(matching {_ID_RE.pattern}), got {rid!r}"
+        )
     if cfg.get("source") is not None:
         bad.extend(_check_source(cfg["source"]))
     bad.extend(check_claims(cfg.get("claims")))
@@ -278,8 +293,10 @@ def check_recipe(cfg: Mapping[str, Any], name: Optional[str] = None) -> list[str
         if not s.get("name"):
             bad.append(f"step {i} has no name")
         if s.get("group") not in STEP_GROUPS:
-            bad.append(f"step {s.get('name', i)!r}: group must be one of {STEP_GROUPS}, "
-                       f"got {s.get('group')!r}")
+            bad.append(
+                f"step {s.get('name', i)!r}: group must be one of {STEP_GROUPS}, "
+                f"got {s.get('group')!r}"
+            )
         # `via` is advisory — it never picks an executor — but `vocab.standins` compares it to
         # the engine name, so a list or a number there would make a real caveat silently
         # unreachable rather than loudly wrong. Not in §3.4's four; added because the field is
@@ -296,21 +313,28 @@ def check_recipe(cfg: Mapping[str, Any], name: Optional[str] = None) -> list[str
             if not isinstance(tool, str) or not tool.strip():
                 bad.append(f"step {s.get('name', i)!r}: `tool` must be a tool name, got {tool!r}")
             elif tool not in _toolchain.discover_tools():
-                bad.append(f"step {s.get('name', i)!r}: no tool manifest named {tool!r} "
-                           f"(known: {_toolchain.discover_tools() or '(none)'})")
+                bad.append(
+                    f"step {s.get('name', i)!r}: no tool manifest named {tool!r} "
+                    f"(known: {_toolchain.discover_tools() or '(none)'})"
+                )
         # `layers:` — which second matrices this step reads (`app.declared_layers` unions them,
         # `loading.layers_of` supplies exactly those). A string here would be iterated as
         # characters and load nothing, silently.
         want = s.get("layers")
-        if want is not None and (isinstance(want, str)
-                                 or not isinstance(want, (list, tuple))
-                                 or not all(isinstance(x, str) for x in want)):
-            bad.append(f"step {s.get('name', i)!r}: `layers` must be a list of layer names, "
-                       f"got {want!r}")
+        if want is not None and (
+            isinstance(want, str)
+            or not isinstance(want, (list, tuple))
+            or not all(isinstance(x, str) for x in want)
+        ):
+            bad.append(
+                f"step {s.get('name', i)!r}: `layers` must be a list of layer names, got {want!r}"
+            )
         via = s.get("via")
         if via is not None and not (isinstance(via, str) and via.strip()):
-            bad.append(f"step {s.get('name', i)!r}: `via` must be the name of the canonical "
-                       f"implementation, got {via!r}")
+            bad.append(
+                f"step {s.get('name', i)!r}: `via` must be the name of the canonical "
+                f"implementation, got {via!r}"
+            )
         # `limits` is where a step declares what its own parameters are capped by, in terms of
         # the data's shape — the field that keeps the METHOD's contract out of manyruns's
         # source (see `pipeline/bounds.py`). Absent-is-legal like the four above; a typo'd
@@ -339,12 +363,19 @@ def _check_download_handle(handle: Mapping[str, Any]) -> list[str]:
     if "url" in handle:
         url = handle["url"]
         valid_url = False
-        if (isinstance(url, str) and url.isascii()
-                and not any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in url)):
+        if (
+            isinstance(url, str)
+            and url.isascii()
+            and not any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in url)
+        ):
             try:
                 parsed = urlsplit(url)
-                valid_url = (parsed.scheme == "https" and bool(parsed.hostname)
-                             and parsed.username is None and parsed.password is None)
+                valid_url = (
+                    parsed.scheme == "https"
+                    and bool(parsed.hostname)
+                    and parsed.username is None
+                    and parsed.password is None
+                )
                 if parsed.hostname:
                     # urllib encodes the host this way before connecting. Reject empty
                     # or oversized DNS labels here instead of crashing on selection.
@@ -355,16 +386,26 @@ def _check_download_handle(handle: Mapping[str, Any]) -> list[str]:
             except ValueError:
                 valid_url = False
         if not valid_url:
-            bad.append("handle `url` must be ASCII HTTPS with a valid hostname and no credentials; "
-                       "percent-encode non-ASCII paths")
+            bad.append(
+                "handle `url` must be ASCII HTTPS with a valid hostname and no credentials; "
+                "percent-encode non-ASCII paths"
+            )
         for pin in ("sha256", "bytes"):
             if pin not in handle:
                 bad.append(f"handle `url` requires `{pin}`")
         ref = handle.get("ref")
-        if (handle.get("kind") != "path" or not isinstance(ref, str) or not ref
-                or ref.startswith(("/", "~")) or ref.endswith("/")
-                or ":" in ref or "\\" in ref or "\x00" in ref
-                or ".." in Path(ref).parts or Path(ref).name in ("", ".", "..")):
+        if (
+            handle.get("kind") != "path"
+            or not isinstance(ref, str)
+            or not ref
+            or ref.startswith(("/", "~"))
+            or ref.endswith("/")
+            or ":" in ref
+            or "\\" in ref
+            or "\x00" in ref
+            or ".." in Path(ref).parts
+            or Path(ref).name in ("", ".", "..")
+        ):
             bad.append("handle `url` requires a relative, non-generated path to a file")
     return bad
 
@@ -410,8 +451,10 @@ def check_dataset(cfg: Any, name: Optional[str] = None) -> list[str]:
                 if type(value) is not int or value <= 0:
                     bad.append(f"dims `{key}` must be a positive integer (not bool)")
     if not isinstance(cfg.get("shape"), str) or cfg.get("shape") not in SHAPES:
-        bad.append(f"shape must be one of {SHAPES}, got {cfg.get('shape')!r} — this is the "
-                   "ground-truth label the metric-separation experiment scores against")
+        bad.append(
+            f"shape must be one of {SHAPES}, got {cfg.get('shape')!r} — this is the "
+            "ground-truth label the metric-separation experiment scores against"
+        )
     if "topology" in cfg and not isinstance(cfg["topology"], list):
         bad.append("`topology` must be a list of topology labels")
     else:

@@ -117,6 +117,25 @@ def test_leiden_keeps_the_coordinates_it_partitioned(tmp_path, monkeypatch):
     assert g["final_dim"] == 2
 
 
+def test_cluster_quality_records_the_dimension_it_scored_in(tmp_path, monkeypatch):
+    out = _pca_then_leiden(tmp_path, monkeypatch)
+    by_name = {s["name"]: s for s in out["steps"]}
+    emb_cols = int(by_name["pca"]["produced"].split(",")[1].split(")")[0].strip())
+    assert out["g_vector"]["cluster_quality_dims"] == emb_cols
+
+
+def test_the_bundled_cluster_recipe_partitions_before_umap():
+    from manyruns import catalog
+
+    names = [s["name"] for s in catalog.load_recipe("cluster")["steps"]]
+    assert (
+        names.index("pca")
+        < names.index("leiden")
+        < names.index("cluster_quality")
+        < names.index("umap")
+    )
+
+
 def test_leiden_draws_its_clusters_on_the_kept_coordinates(tmp_path, monkeypatch):
     """`leiden.png` with a spec whose colour channel is the raw labels, categorical."""
     from manyruns import figspec

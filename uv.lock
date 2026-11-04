@@ -1024,18 +1024,11 @@ wheels = [
 
 [[package]]
 name = "manykinds"
-version = "0.1.1"
+version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numba", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "numpy", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "sparse", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "xarray", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "zarr", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/74/85/8cd4d08c6a31f9c1c08ce80e78f62950709c52bceaf4d1f40f3fbf92f77d/manykinds-0.1.1.tar.gz", hash = "sha256:154e0f9a3bf008b01a3ba5b161e423d678f493d5cb582532ffe9527c18bb0de5", size = 16458, upload-time = "2026-07-15T19:02:19.001Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/97/04/093ccf5bff1beb186fc80f7fb9ce22e8dbb87e2adf2cf7806ff4880aadbb/manykinds-0.1.2.tar.gz", hash = "sha256:869f0bd0a744979cdcf517103c92903f4a34a2fb0b94901d4239137cdb9e5b61", size = 41745, upload-time = "2026-10-31T07:13:48.137Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b8/e8/f6f1660e6dda86db23fcd4d060680b2f71b9a7bcbd942f9e17ac7a853158/manykinds-0.1.1-py3-none-any.whl", hash = "sha256:5efbb8874b86857dbcee5d06706c73dfdfee3285d0acb5dc68261c151eb20742", size = 15094, upload-time = "2026-07-15T19:02:17.773Z" },
+    { url = "https://files.pythonhosted.org/packages/4d/15/ad961f9d1903feda9752216c474f9e1795f5f839c04e6c811c53c42a1ad5/manykinds-0.1.2-py3-none-any.whl", hash = "sha256:e621d9caa3ed3a711effb6aafc1ac091ad6555a71e763fe1494cb78a1d4f7d76", size = 28224, upload-time = "2026-10-31T07:13:46.592Z" },
 ]
 
 [[package]]
@@ -1117,6 +1110,7 @@ source = { editable = "." }
 dependencies = [
     { name = "anndata", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "hydra-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "manykinds", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "manylatents", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "manylatents-omics", extra = ["singlecell"], marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "matplotlib", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -1168,6 +1162,7 @@ requires-dist = [
     { name = "click", marker = "extra == 'harness'", specifier = ">=8.0" },
     { name = "hydra-core", specifier = ">=1.3.0" },
     { name = "manyagents", marker = "extra == 'agents'", specifier = ">=0.0.1" },
+    { name = "manykinds", specifier = ">=0.1.2" },
     { name = "manylatents", specifier = ">=0.1.9" },
     { name = "manylatents", extras = ["omics"], marker = "extra == 'harness'" },
     { name = "manylatents-omics", extras = ["singlecell"], specifier = ">=0.1.3" },

@@ -81,12 +81,14 @@ jobs:
       # `UV_TORCH_BACKEND` (measured on uv 0.11.8: the flag is rejected, the env var is
       # silently ignored) — a CPU-only torch needs `uv venv` + `uv pip install
       # --torch-backend=cpu`, or CI pulls ~3.3 GB of CUDA wheels it never executes.
+      # The tool seam's declaration checks import manykinds.
       - name: Test
         run: >-
           PYTHONPATH=. uv run --no-project --python ${{ matrix.python-version }}
           --with pytest --with numpy --with scikit-learn --with hydra-core --with omegaconf
           --with pyyaml --with click --with rich --with pillow --with matplotlib
           --with textual --with textual-image --with phate
+          --with "manykinds>=0.1.2"
           --with anndata --with scanpy
           pytest tests/ -q
 
