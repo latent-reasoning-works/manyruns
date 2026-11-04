@@ -92,6 +92,14 @@ def test_runners_put_obs_in_the_frame(tmp_path, monkeypatch, engine):
         if engine == "inproc":
             runner.run_inproc(matrix, {"name": "r", "steps": []}, tmp_path, obs=obs)
         else:
+            # The base CI job has no manylatents; only the import check needs it here.
+            import sys
+            import types
+
+            monkeypatch.setitem(sys.modules, "manylatents", types.ModuleType("manylatents"))
+            api = types.ModuleType("manylatents.api")
+            api.run = lambda **kw: None
+            monkeypatch.setitem(sys.modules, "manylatents.api", api)
             runner.run_manylatents(
                 {"name": "r", "steps": []}, array=matrix, out_dir=tmp_path, obs=obs
             )

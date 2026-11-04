@@ -130,6 +130,8 @@ def test_a_mask_on_other_cells_is_refused(tmp_path, monkeypatch, mask):
     from manyruns import pipeline
 
     _tool(tmp_path, monkeypatch)
+    # The base CI job has no manylatents; the stub engine stands in, as in the tests above.
+    _engine(monkeypatch, [])
     X = np.arange(16, dtype=float).reshape(8, 2)
     out = pipeline.run_manylatents(
         {
