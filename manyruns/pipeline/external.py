@@ -979,10 +979,7 @@ def _merge_v1(
     """Merge a version 1 result. CHECK EVERYTHING, THEN ASSIGN: `_merge` assigns each key as it
     goes, and a result refused halfway would leave half a model in the state. Here a refused
     result changes no slot at all."""
-    import hashlib
-
-    from manyruns import artifacts
-    from manyruns.pipeline import frame
+    from manyruns.pipeline import frame, tables as run_tables
 
     loaded_tables = {}
     genes = frame.view(state["frame"], state["rows"], state["cols"])["genes"] if tables else None
@@ -1003,53 +1000,17 @@ def _merge_v1(
             f"{name} returned a result that check_result refuses: {problems[0]}{more}"
         )
     # Byproducts share the record namespace too, including those in this result.
-    artifact_names = set(state.get("extras") or {})
+    artifact_names = set()
     for fact, value in arrays.items():
         if FACT_SLOTS[fact][1] == "npz":
             artifact_names.update(f"{name}.{fact}.{key}" for key in value)
     for table_name, df in loaded_tables.items():
-        if table_name in artifact_names:
-            raise _StepSkipped(
-                f"{name}: table {table_name} has an artifact name conflict; rename the table"
-            )
         if "gene" in df and genes is None:
             raise _StepSkipped(f"{name}: supply current frame genes to check table {table_name}")
-    if loaded_tables and (not ctx or ctx.get("out_dir") is None or "step_index" not in ctx):
-        raise _StepSkipped(
-            f"{name}: supply out_dir and step_index in the step context to save tables"
-        )
-    saved = {}
-    for table_name, df in loaded_tables.items():
-        try:
-            saved[table_name] = artifacts.save_table(
-                ctx["out_dir"], ctx.get("run_id"), ctx["step_index"], name, table_name, df
-            )
-        except OSError as exc:
-            raise _StepSkipped(
-                f"{name}: cannot save table {table_name}; fix the output directory: {exc}"
-            ) from exc
-    # Hash BEFORE anything is written to g or state: a mid-write OSError must leave the step
-    # refusable (`_StepSkipped`), not half-measured. The declared sha256 describes the tool's
-    # original file; saving can reformat bytes (e.g. "1.000" -> "1.0"), so hash what was
-    # actually written.
-    digests: dict[str, str] = {}
-    for table_name, path in saved.items():
-        try:
-            digests[table_name] = hashlib.sha256(path.read_bytes()).hexdigest()
-        except OSError as exc:
-            raise _StepSkipped(
-                f"{name}: cannot read saved table {table_name} back to hash it: {exc}"
-            ) from exc
-    if saved:
-        # Replace, never mutate in place: a shallow-copied state (tune.run_tune_loop's
-        # cancellation snapshot) must not see this attempt's paths land in its own dict.
-        tables_state = dict(state.get("tables") or {})
-        for table_name, path in saved.items():
-            tables_state[table_name] = str(path)
-            g[f"{name}.{table_name}.rows"] = len(loaded_tables[table_name])
-            g[f"{name}.{table_name}.columns"] = sorted(loaded_tables[table_name].columns)
-            g[f"{name}.{table_name}.sha256"] = digests[table_name]
-        state["tables"] = tables_state
+    run_tables.publish(
+        name, loaded_tables, required=tables, state=state, g=g, ctx=ctx,
+        reserved=artifact_names,
+    )
     for fact, value in arrays.items():
         slot, form = FACT_SLOTS[fact]
         if form == "inline":
