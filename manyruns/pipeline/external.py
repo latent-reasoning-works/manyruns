@@ -620,7 +620,7 @@ def _refuse_unbuilt(name: str, resolved: dict) -> None:
 
 def _write_request(
     workdir: Path, cfg: dict, params: dict, seed: Any, input_path: Path | None, v1: "dict | None" = None,
-    tables: dict | None = None
+    tables: dict | None = None, resources: dict | None = None
 ) -> tuple[Path, Path, Path]:
     """`request.json`. On the version 1 path (`v1` given) it also carries `result_schema`,
     `n_cells`, `input_dim`, the optional `time` file and, in call mode, the `call` block. It
@@ -659,6 +659,8 @@ def _write_request(
             request["time"] = str(time_path)
         if _toolchain.tool_mode(cfg) == "call":
             request["call"] = cfg["call"]
+    if resources:
+        request["resources"] = resources
     if tables:
         request["tables"] = {k: str(v) for k, v in tables.items()}
     req_path.write_text(json.dumps(request, indent=2))
@@ -1138,7 +1140,7 @@ def _run_precomputed(name: str, resolved: dict, state: dict, g: dict, ctx: dict)
     caveats.append(f"step {name}: {PRECOMPUTED_CAVEAT}")
 
 
-def _adapter_path(cfg: dict) -> "Path | None":
+def _adapter_path(cfg: dict, config_dir=None) -> "Path | None":
     """Where the adapter lives — BESIDE THE MANIFEST FIRST, then the bundled set.
 
     That order is what makes a third-party tool possible without forking the wheel. A user
@@ -1165,7 +1167,7 @@ def _adapter_path(cfg: dict) -> "Path | None":
         [Path(entry)]
         if Path(entry).is_absolute()
         else [
-            _tc.tool_dir() / entry,
+            _tc.tool_dir(config_dir) / entry,
             Path(str(resources.files("manyruns") / "adapters" / entry)),
         ]
     )
@@ -1226,6 +1228,22 @@ def run_external_step(name: str, params: dict, state: dict, g: dict, ctx: dict) 
     shape = _input_shape(input_path, state, ctx) if v1 or decl is not None else None
     if decl is not None:
         _check_step_parameters(name, cfg, params, shape)
+    from manyruns import resources
+
+    resource_paths = {}
+    merged_params = {**(cfg.get("params") or {}), **params}
+    for resource, block in (cfg.get("resource") or {}).items():
+        if resource == "gene_ids":
+            continue
+        key = merged_params.get(block["key"]) if block.get("key") else None
+        try:
+            found = resources.resolve(resource, block, key, tool)
+        except ValueError as exc:
+            raise _StepSkipped(f"{name}: {exc}") from exc
+        if found["status"] != "ready":
+            raise _StepUnsupported(f"{name}: resource {resource} {found['status']}; {found['fix']}")
+        resource_paths[resource] = found["path"]
+        g.update(resources.provenance(name, resource, block, key, found["sha256"]))
     req_path, out_path, res_path = _write_request(
         workdir,
         cfg,
@@ -1234,6 +1252,7 @@ def run_external_step(name: str, params: dict, state: dict, g: dict, ctx: dict) 
         input_path,
         v1={"n_cells": shape[0], "input_dim": shape[1], "time": _time_axis(state)} if v1 else None,
         tables=bound,
+        resources=resource_paths,
     )
 
     adapter = _adapter_path(cfg)

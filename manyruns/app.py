@@ -75,7 +75,7 @@ _SUBCOMMANDS = (
 )
 
 
-_TOOLS_ACTIONS = ("list", "install", "check", "verify", "lock")
+_TOOLS_ACTIONS = ("build-resource", "list", "install", "check", "verify", "lock")
 
 
 def _load_dotenv() -> None:
@@ -367,6 +367,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "compile the manifest's requirements into a hashed lock",
     )
     p_tools.add_argument("name", nargs="?", help="the tool (required for install, verify and lock)")
+    p_tools.add_argument("--param", action="append", metavar="KEY=VALUE")
     p_tools.set_defaults(func=cmd_tools)
 
     p_shell = sub.add_parser(
@@ -3160,6 +3161,28 @@ def cmd_tools(args: Any, parser: Any = None) -> int:
 
     action = getattr(args, "action", "list") or "list"
     names = _tc.discover_tools()
+    if action == "build-resource":
+        import subprocess
+
+        from manyruns import resources
+
+        if not args.name:
+            print("which resource?")
+            return 2
+        params = {}
+        for pair in getattr(args, "param", None) or []:
+            key, sep, value = pair.partition("=")
+            if not sep or not key:
+                print("--param must be KEY=VALUE")
+                return 2
+            params[key] = value
+        try:
+            built = resources.build(args.name, params)
+        except (ValueError, OSError, subprocess.SubprocessError) as exc:
+            print(f"could not build {args.name}: {exc}")
+            return 1
+        print(f"{built['path']} {built['sha256']}")
+        return 0
     if action == "lock":
         if not args.name:
             print("which tool? " + (", ".join(names) or "(none declared)"))

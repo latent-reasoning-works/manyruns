@@ -124,3 +124,18 @@ result = {'schema_version': 1, 'ok': True, 'n_cells': req['n_cells'], 'facts': {
           'tables': {'genes': {'path': path.name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}}}
 Path(req['result']).write_text(json.dumps(result))
 """
+
+
+def make_resource(tmp_path, monkeypatch, tool, name, rows, key=None):
+    """Write a tiny prepared resource and the digest that resolution checks."""
+    import hashlib
+    import pandas as pd
+    from manyruns import resources
+
+    monkeypatch.setenv('MANYRUNS_RESOURCE_HOME', str(tmp_path / 'resources'))
+    cfg = toolchain.load_tool(tool)
+    path = resources.path_for(name, cfg['resource'][name], key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(rows).to_csv(path, sep='\t', index=False)
+    path.with_suffix('.tsv.sha256').write_text(hashlib.sha256(path.read_bytes()).hexdigest())
+    return path
