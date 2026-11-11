@@ -1021,7 +1021,16 @@ def _dense_like(m):
     return m.toarray() if hasattr(m, "toarray") else m
 
 
+def _step_dataset_features(state, g, params, ctx):
+    from manyruns.pipeline import features
+
+    return features.step(state, g, params, ctx)
+
+
+_CTX_ANALYSIS_STEPS: frozenset[str] = frozenset({"dataset_features"})
+
 _ANALYSIS_STEPS = {
+    "dataset_features": _step_dataset_features,
     "separation": _step_separation,
     "composition": _step_composition,
     "cluster_quality": _step_cluster_quality,

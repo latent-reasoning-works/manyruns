@@ -879,6 +879,7 @@ def _build_session(args_proj: dict, args: argparse.Namespace, *, resume: bool = 
         modality=args_proj["modality"],
         recipe=args_proj["recipe"],
         source_path=_loaded.get("source_path"),
+        original_input=_loaded.get("original_input"),
         obs=_loaded.get("obs"),
         array=array,
         labels=labels,
@@ -2474,6 +2475,7 @@ def _explore_project(
             "obs_names": loaded.get("obs_names"),
             "label_key": loaded.get("label_key"),
             "source_path": loaded.get("source_path"),
+            "original_input": loaded.get("original_input"),
             "obs": loaded.get("obs"),
         },
         device=device,
@@ -3179,6 +3181,7 @@ _EMPTY_INPUTS: dict = {
     "obs_names": None,
     "label_key": None,
     "source_path": None,
+    "original_input": None,
     "obs": None,
 }
 
@@ -3465,6 +3468,11 @@ def _read_inputs(
         return {
             "source_path": str(data_folder) if Path(data_folder).is_file() else None,
             "obs": obs,
+            "original_input": {
+                "object": obj,
+                "role_keys": {"sample": sample_key, "batch": batch_key,
+                              "condition": condition_key, "time": time_key},
+            },
             "sample_key": sample_key,
             "batch_key": batch_key,
             "array": array,
@@ -3581,6 +3589,7 @@ def run_explorations(
     obs: dict | None = None,
     sample_key: Optional[str] = None,
     batch_key: Optional[str] = None,
+    original_input: dict | None = None,
 ) -> dict:
     """#12 — run the exploration via the serving backend.
 
@@ -3635,6 +3644,8 @@ def run_explorations(
         label_key = loaded.get("label_key") if label_key is None else label_key
         source_path = loaded.get("source_path") if source_path is None else source_path
         obs = loaded.get("obs") if obs is None else obs
+        if original_input is None:
+            original_input = loaded.get("original_input")
     elif color_by:
         raise ColorSelectionError(
             "cannot inspect metadata for this preloaded matrix or generator; "
@@ -3661,6 +3672,7 @@ def run_explorations(
     if recipe:
         inputs = {
             "source_path": source_path,
+            "original_input": original_input,
             "obs": obs,
             "data": label,
             "modality": modality,

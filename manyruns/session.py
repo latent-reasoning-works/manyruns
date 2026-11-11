@@ -40,6 +40,7 @@ from typing import Any, Optional
 
 from manyruns import trace as _trace
 from manyruns.pipeline import runner as _runner
+from manyruns.pipeline import steps as _steps
 
 
 def catalog_steps(config_dir: Optional[Path | str] = None) -> dict[str, dict]:
@@ -296,6 +297,7 @@ class Session:
         agent_id: str = _trace.HUMAN,
         source_path: Any = None,
         obs: dict | None = None,
+        original_input: dict | None = None,
     ):
         from manyruns.pipeline import bounds
 
@@ -323,6 +325,8 @@ class Session:
         self.agent_id = agent_id
         self.measure = True
         self.compute = None  # Optional execution placement; never an engine selection.
+        # Keep the complete input in the parent; ordinary compute calls only need ctx.
+        self.original_input = original_input
         # A caller-supplied embedding is a fact the CALLER provided, which is what
         # `vocab.noncanonical` needs to say "legal and unusual" rather than nothing at all.
         self.provided = {"embedding"} if getattr(embedding, "ndim", 0) == 2 else set()
@@ -411,6 +415,12 @@ class Session:
         record is appended inside `apply_step` (that is what gives a live observer the list it
         renders), so appending it again here would double-count and break the index.
         """
+        # Inspect the issued step, since the TUI can add analysis after opening a session.
+        step_input = (
+            {"original_input": self.original_input}
+            if _runner.step_group(step) == "analysis" and step.get("name") in _steps._CTX_ANALYSIS_STEPS
+            else {}
+        )
         if self.compute is not None:
             index = len(self.steps)
 
@@ -431,6 +441,7 @@ class Session:
                     carry=self.carry,
                     steps=self.steps,
                     on_step=reported,
+                    **step_input,
                 )
             except _runner.ComputeCancelled:
                 # A progress message is provisional: no returned snapshot means this
@@ -469,19 +480,23 @@ class Session:
             self.steps[:] = steps
             _runner._report(self.on_step, self.steps[index], self.steps)
             return self._emit_step(self.steps[index])
-        return self._emit_step(
-            _runner.apply_step(
-                step,
-                self.state,
-                self.g,
-                dispatch=self.dispatch,
-                ctx=self.ctx,
-                index=len(self.steps),
-                carry=self.carry,
-                on_step=self.on_step,
-                steps=self.steps,
+        self.ctx.update(step_input)
+        try:
+            return self._emit_step(
+                _runner.apply_step(
+                    step,
+                    self.state,
+                    self.g,
+                    dispatch=self.dispatch,
+                    ctx=self.ctx,
+                    index=len(self.steps),
+                    carry=self.carry,
+                    on_step=self.on_step,
+                    steps=self.steps,
+                )
             )
-        )
+        finally:
+            self.ctx.pop("original_input", None)
 
     def _emit_step(self, rec: dict) -> dict:
         """The `step` trace event for one returned record, then the record itself, unchanged.
@@ -644,6 +659,7 @@ class Session:
             array=self.ctx["array"],
             labels=self.state.get("labels"),
             source_path=self.ctx.get("source_path"),
+            original_input=self.original_input,
             obs={
                 name: values[self.state["rows"]]
                 for name, values in self.state["frame"]["obs"].items()

@@ -86,6 +86,7 @@ def _infer(req: dict, *, device: Optional[str]) -> dict:
         color_by=req.get("color_by"),
         array=req.get("array"),
         source_path=req.get("source_path"),
+        original_input=req.get("original_input"),
         obs=req.get("obs"),
         out_dir=req.get("out_dir", "."),
         seed=req.get("seed", 42),
