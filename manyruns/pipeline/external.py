@@ -619,7 +619,8 @@ def _refuse_unbuilt(name: str, resolved: dict) -> None:
 
 
 def _write_request(
-    workdir: Path, cfg: dict, params: dict, seed: Any, input_path: Path, v1: "dict | None" = None
+    workdir: Path, cfg: dict, params: dict, seed: Any, input_path: Path | None, v1: "dict | None" = None,
+    tables: dict | None = None
 ) -> tuple[Path, Path, Path]:
     """`request.json`. On the version 1 path (`v1` given) it also carries `result_schema`,
     `n_cells`, `input_dim`, the optional `time` file and, in call mode, the `call` block. It
@@ -637,7 +638,7 @@ def _write_request(
         "version": cfg["version"],
         "params": merged,
         "seed": int(seed) if seed is not None else 0,
-        "input": str(input_path),
+        "input": str(input_path) if input_path is not None else None,
         "output": str(out_path),
         "result": str(res_path),
         "workdir": str(workdir),
@@ -658,6 +659,8 @@ def _write_request(
             request["time"] = str(time_path)
         if _toolchain.tool_mode(cfg) == "call":
             request["call"] = cfg["call"]
+    if tables:
+        request["tables"] = {k: str(v) for k, v in tables.items()}
     req_path.write_text(json.dumps(request, indent=2))
     return req_path, out_path, res_path
 
@@ -674,10 +677,13 @@ def _time_axis(state: dict) -> Any:
         return None
 
 
-def _input_shape(input_path: Path, state: dict) -> tuple[int, int]:
+def _input_shape(input_path: Path | None, state: dict, ctx: dict | None = None) -> tuple[int, int | None]:
     """`(n_cells, input_dim)` of what the tool reads: the rows and columns of the input."""
     import numpy as np
 
+    if input_path is None:
+        cells = _cell_list(state, ctx or {})
+        return len(cells) if cells is not None else len(state["rows"]), None
     if input_path.suffix == ".npy":
         shape = np.load(input_path, mmap_mode="r", allow_pickle=False).shape
         return int(shape[0]), int(shape[1]) if len(shape) > 1 else 1
@@ -752,9 +758,51 @@ def _source_cell_ids(path: Path) -> "list[str] | None":
         data.file.close()
 
 
-def _input_path(cfg: dict, state: dict, ctx: dict, workdir: Path) -> Path:
+def _bind_tables(name: str, cfg: dict, ctx: dict, workdir: Path) -> dict[str, Path]:
+    import shutil
+    import pandas as pd
+    from manykinds import Table
+
+    bound = {}
+    for table, columns in _toolchain.input_tables(cfg).items():
+        source = (ctx.get("input_tables") or {}).get(table)
+        if source is None:
+            raise _StepSkipped(f"{name}: input table {table} is not bound")
+        path = workdir / "tables" / f"{table}.tsv"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, path)
+            df = pd.read_csv(path, sep="\t", dtype=str, keep_default_na=False, na_filter=False)
+            Table(df, provenance=(table,)).require(*columns)
+        except (OSError, ValueError) as exc:
+            raise _StepSkipped(f"{name}: input table {table}: {exc}") from exc
+        bound[table] = path
+    return bound
+
+
+def _check_selection(name: str, df, obs_names: list[str]) -> None:
+    from manykinds import Table
+
+    try:
+        Table(df, provenance=("selection",)).require("cell", "group")
+    except ValueError as exc:
+        raise _StepSkipped(f"{name}: selection: {exc}") from exc
+    if obs_names is None:
+        raise _StepSkipped(f"{name}: selection requires recorded cell ids")
+    if df.empty:
+        raise _StepSkipped(f"{name}: selection is empty")
+    if df["cell"].duplicated().any():
+        raise _StepSkipped(f"{name}: selection has duplicate cells")
+    absent = sorted(set(df["cell"]) - set(map(str, obs_names)))
+    if absent:
+        raise _StepSkipped(f"{name}: selection cells {absent} are absent from the frame")
+
+
+def _input_path(cfg: dict, state: dict, ctx: dict, workdir: Path) -> Path | None:
     """Assemble what the tool reads — and refuse the compositions that would mislead it."""
     kind = (cfg.get("input") or {}).get("kind")
+    if kind == "none":
+        return None
     if kind == "source_file":
         src = ctx.get("source_path")
         if not src:
@@ -1168,8 +1216,14 @@ def run_external_step(name: str, params: dict, state: dict, g: dict, ctx: dict) 
     v1 = (cfg.get("output") or {}).get("schema") == _toolchain.RESULT_SCHEMA
     workdir = Path(ctx["out_dir"]) / f"tool-{name}"
     input_path = _input_path(cfg, state, ctx, workdir)
+    bound = _bind_tables(name, cfg, ctx, workdir)
+    if "selection" in bound:
+        import pandas as pd
+
+        selection = pd.read_csv(bound["selection"], sep="\t", dtype=str, keep_default_na=False, na_filter=False)
+        _check_selection(name, selection, _cell_list(state, ctx))
     decl = cfg.get("declaration")
-    shape = _input_shape(input_path, state) if v1 or decl is not None else None
+    shape = _input_shape(input_path, state, ctx) if v1 or decl is not None else None
     if decl is not None:
         _check_step_parameters(name, cfg, params, shape)
     req_path, out_path, res_path = _write_request(
@@ -1179,6 +1233,7 @@ def run_external_step(name: str, params: dict, state: dict, g: dict, ctx: dict) 
         ctx.get("seed"),
         input_path,
         v1={"n_cells": shape[0], "input_dim": shape[1], "time": _time_axis(state)} if v1 else None,
+        tables=bound,
     )
 
     adapter = _adapter_path(cfg)
