@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from manyruns import actions, artifacts, catalog, score, store as records, toolchain, vocab
+from manyruns import actions, artifacts, catalog, resources, score, store as records, toolchain, vocab
 
 
 def parent_row(run_id: str, store) -> dict:
@@ -41,6 +41,61 @@ def parent_tables(row, store) -> dict[str, str]:
             if entry['slot'].startswith('table:')}
 
 
+def _resource_offer(cfg: dict) -> list[dict]:
+    """Describe declared resources without preparing files or opening the dataset."""
+    import shlex
+
+    result = []
+    for name, block in sorted((cfg.get('resource') or {}).items()):
+        key_param = block.get('key')
+        item = {'name': name, 'release': block['release'], 'key_param': key_param,
+                # external._gene_ids reads this mapping only without an Ensembl column.
+                'required': 'if_no_gene_ids' if name == 'gene_ids' else 'always'}
+        if key_param:
+            directory = resources.path_for(name, block, key_param).parent
+            built_keys = []
+            for path in sorted(directory.glob('*.tsv')):
+                try:
+                    found = resources.resolve(name, block, path.stem, cfg['name'])
+                except ValueError:
+                    # Ignore invalid keys and paths outside the resource cache.
+                    continue
+                if found['status'] == 'ready':
+                    built_keys.append(path.stem)
+            item.update(built_keys=built_keys,
+                        build=f'manyruns tools build-resource {shlex.quote(name)}'
+                              f' --param {shlex.quote(key_param)}=<{key_param}>')
+        else:
+            found = resources.resolve(name, block, None, cfg['name'])
+            item.update(built=found['status'] == 'ready', status=found['status'], build=found['fix'])
+        result.append(item)
+    return result
+
+
+def resource_problem(entry: dict, params: dict) -> str | None:
+    """Return a refusal code for an unavailable required resource at choice time."""
+    merged = {**entry['params'], **params}
+    for item in entry['resources']:
+        if item['required'] != 'always':
+            continue
+        name, release, key_param = item['name'], item['release'], item['key_param']
+        suffix = f'{name}:{release}'
+        if key_param:
+            key = merged.get(key_param)
+            suffix += f':{key}'
+            try:
+                status = resources.resolve(name, {'release': release, 'key': key_param},
+                                           key, entry['connector'])['status']
+            except ValueError:
+                status = 'not-built'
+        else:
+            status = item['status']
+        if status != 'ready':
+            code = 'resource_mismatch' if status == 'mismatch' else 'resource_not_built'
+            return f'{code}:{suffix}'
+    return None
+
+
 def offer(dataset: str, run: str, store, *, dataset_dir=None) -> dict:
     parent = parent_row(run, store)
     if (parent.get('dataset_name') or root_row(parent, store).get('source')) != dataset:
@@ -63,6 +118,10 @@ def offer(dataset: str, run: str, store, *, dataset_dir=None) -> dict:
             {'steps': [step]}, ds['shape'], handle=ds['handle']))]
         if parent.get('ok') is not True:
             blocked.append('parent run is not ok')
+        resource_items = _resource_offer(cfg)
+        blocked += [f"resource_not_built:{item['name']}:{item['release']}"
+                    for item in resource_items
+                    if item['key_param'] is None and item['required'] == 'always' and not item['built']]
         roles = list((cfg.get('input') or {}).get('obs') or [])
         offered.append({
             'connector': connector, 'can_run': not blocked, 'blocked': blocked,
@@ -70,6 +129,7 @@ def offer(dataset: str, run: str, store, *, dataset_dir=None) -> dict:
             'declaration': (cfg.get('declaration') or {}).get('params') or {},
             'binds': binds, 'selection': 'selection' in inputs, 'roles': roles,
             'role_keys': {role: parent.get(f'{role}_key') for role in roles},
+            'resources': resource_items,
         })
     return {'gate': None, 'evidence': None,
             'parent': {'run_id': run, 'recipe': parent['recipe'],

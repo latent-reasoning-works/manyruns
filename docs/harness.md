@@ -327,6 +327,36 @@ last embedding. Set `parent_index` to select another persisted step. The origina
 file and recorded cell identifiers must still be available. A user file can be named by its
 recorded source path in place of a catalog dataset name.
 
+Each derive offer entry has `connector`, `can_run`, `blocked`, `params`, `declaration`,
+`binds`, `selection`, `roles`, `role_keys` and `resources`. The `resources` list has one
+item per resource in the connector's manifest, sorted by `name`. It is empty when the
+manifest declares no resources. An offer reads local files and never builds a resource.
+
+| Resource field | Meaning |
+| --- | --- |
+| `name`, `release` | The resource name and pinned release declared by the connector. |
+| `key_param` | The manifest's `key`, which names the step parameter that selects a resource key, or `null` for a keyless resource. |
+| `required` | `always`, or `if_no_gene_ids` for the `gene_ids` mapping. The executor reads that mapping only when the source has no Ensembl column. Offers retain this condition without opening the source dataset. |
+| `built`, `status` | Keyless resources only. `built` is true only for `status: ready`. Other statuses are `not-built` and `mismatch`. A mismatch means that the file differs from its SHA-256 sidecar. |
+| `built_keys` | Keyed resources only. A sorted list of keys whose files and sidecars resolve as `ready` in this release. |
+| `build` | For a keyless resource, the exact resolver fix command. For a keyed resource, the build command with a key placeholder, such as `manyruns tools build-resource opentargets --param disease=<disease>`. Replace the placeholder with the chosen key before running it. |
+
+A keyless resource with `required: always` and a status other than `ready` makes
+`can_run` false and adds `resource_not_built:<name>:<release>` to `blocked`.
+A keyed resource does not block the offer because its key is chosen later.
+Choice checks merge the chosen parameters over the manifest defaults. An unavailable
+key refuses the choice with exit code 2 and a message starting with
+`resource_not_built:<name>:<release>:<key>`. A mismatch refuses with
+`resource_mismatch:<name>:<release>:<key>`, or `resource_mismatch:<name>:<release>`
+for a keyless resource. A missing required keyless resource refuses with
+`resource_not_built:<name>:<release>`. Conditional `gene_ids` resources do not block
+the offer or choice; the executor checks the mapping if the source needs it.
+
+The offer digest includes all resource fields. A successful build that changes resource
+readiness makes a choice based on the old offer stale. A caller can show the resource
+and build command to its user for consent, build explicitly, then read a fresh offer
+before choosing. It must compute `offer_sha256` from that fresh offer.
+
 On the laptop, in the directory containing `outputs/index.jsonl`, get an offer. Replace
 `DATASET` and `PARENT_RUN` with the dataset and parent run identifiers:
 
