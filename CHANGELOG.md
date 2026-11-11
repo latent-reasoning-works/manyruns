@@ -10,6 +10,7 @@ Target: 0.1.2, with `manylatents>=0.1.11`.
 
 ### Added
 
+- Derive offers list each connector's resources and build readiness, with resource checks before a choice runs.
 - `dataset_features` analysis step: runs `manylatents.singlecell.dataset_features` on the
   input the run loaded and publishes the `dataset_features` run table. Needs the next
   manylatents-omics release; until then the step declines as unsupported.
