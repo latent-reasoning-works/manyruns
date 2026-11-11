@@ -180,6 +180,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--sample-key, --batch-key, --color-by "
         "or --ask.",
     )
+    p_run.add_argument("--selection", metavar="FILE", help="selection TSV for a derive choice")
     p_run.set_defaults(func=cmd_run)
 
     p_open = sub.add_parser(
@@ -1168,6 +1169,8 @@ def cmd_run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     verb, which nobody guesses. Anything that says what to do (a path, `--dataset`,
     `--engine`, `--recipe`, …) keeps the one-shot, and so does a pipe or a script, so
     automation is unaffected."""
+    if getattr(args, "selection", None) and not getattr(args, "choice", None):
+        parser.error("--selection requires --choice on derive")
     if getattr(args, "ask", None) and getattr(args, "recipe", None):
         parser.error("--ask and --recipe both choose the recipe; give one of them")
     if _wants_the_console(args):
@@ -1233,6 +1236,19 @@ def _cmd_run_choice(args: argparse.Namespace, parser: argparse.ArgumentParser) -
         parser.error(f"the choice file {args.choice} is not JSON: {exc}")
     if not isinstance(choice, dict):
         parser.error(f"the choice file {args.choice} does not hold a JSON object")
+    selection = Path(args.selection) if args.selection is not None else None
+    if selection is not None:
+        import hashlib
+
+        if choice.get("surface") != "derive":
+            parser.error("--selection requires a derive choice")
+        try:
+            actual = hashlib.sha256(selection.read_bytes()).hexdigest()
+        except OSError as exc:
+            parser.error(f"cannot read --selection: {exc}")
+        expected = choice.get("selection_sha256")
+        if actual != expected:
+            parser.error(f"selection sha256 {actual} differs from selection_sha256 {expected}")
     try:
         result = _run_choice(
             choice,
@@ -1242,6 +1258,7 @@ def _cmd_run_choice(args: argparse.Namespace, parser: argparse.ArgumentParser) -
             project=args.project,
             parser=parser,
             fast_dev_run=_smoke(args),
+            selection=selection,
         )
     except action_space.Refused as refused:
         if refused.exit_code == 2:
@@ -1260,6 +1277,7 @@ def _run_choice(
     project: Optional[str],
     parser: argparse.ArgumentParser,
     fast_dev_run: bool = False,
+    selection: Optional[Path] = None,
 ) -> dict:
     """Run one checked choice and return the result document.
 
@@ -1271,6 +1289,12 @@ def _run_choice(
     from manyruns import action_space, decisions
 
     doc = action_space.check_choice(choice, store=".", seed=seed)
+    if choice["surface"] == "derive":
+        if "selection_sha256" in choice and selection is None:
+            raise action_space.Refused(2, "this derive choice needs --selection")
+        if "selection_sha256" not in choice and selection is not None:
+            raise action_space.Refused(2, "this connector takes no --selection")
+        raise action_space.Refused(2, "the derive surface is checked but not yet runnable")
     chosen = choice["chosen"]
     dataset = choice["dataset"]
     surface = choice["surface"]

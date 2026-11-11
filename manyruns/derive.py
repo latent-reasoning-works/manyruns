@@ -73,4 +73,29 @@ def offer(dataset: str, run: str, store, *, dataset_dir=None) -> dict:
     return {'gate': None, 'evidence': None,
             'parent': {'run_id': run, 'recipe': parent['recipe'],
                        'index': max((s['index'] for s in parent.get('steps') or []), default=0)},
-            'offered': offered}
+            'embeddings': _embeddings(parent, store), 'offered': offered}
+
+
+def _embeddings(parent, store) -> list[dict]:
+    entries = _manifest(parent, store)
+    result = []
+    for path, entry in sorted(entries.items(), key=lambda item: (item[1]['index'], item[0])):
+        if entry['slot'] != 'emb':
+            continue
+        ids = (entry.get('row_identity') or {}).get('sample_ids')
+        if ids is not None:
+            rows = len(ids)
+        else:
+            import numpy as np
+
+            rows = int(np.load(_path(path, store), mmap_mode='r', allow_pickle=False).shape[0])
+        result.append({'index': entry['index'], 'rows': rows})
+    return result
+
+
+def parameter_problems(connector: str, declaration: dict, params: dict) -> list[str]:
+    """Check a connector's choice without requiring dataset dimensions."""
+    from manykinds.params import check
+
+    return check({'method': connector, 'params': declaration}, params,
+                 n_samples=None, n_features=None)
