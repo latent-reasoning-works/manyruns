@@ -321,6 +321,7 @@ class Session:
         # `agents.propose` sets for the length of its call. It stamps the `step` and
         # `run_complete` trace events, so a reader can tell a person's steps from a model's.
         self.agent_id = agent_id
+        self.measure = True
         self.compute = None  # Optional execution placement; never an engine selection.
         # A caller-supplied embedding is a fact the CALLER provided, which is what
         # `vocab.noncanonical` needs to say "legal and unusual" rather than nothing at all.
@@ -812,6 +813,7 @@ class Session:
             ident=(self.run_id, spec_id),
             parent=self.parent,
             discarded=self.discarded,
+            measure=self.measure,
             abandoned=abandoned,
             not_run=not_run,
         )

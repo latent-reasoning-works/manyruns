@@ -75,7 +75,7 @@ _SUBCOMMANDS = (
 )
 
 
-_TOOLS_ACTIONS = ("list", "install", "check", "verify", "lock")
+_TOOLS_ACTIONS = ("build-resource", "list", "install", "check", "verify", "lock")
 
 
 def _load_dotenv() -> None:
@@ -180,6 +180,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--sample-key, --batch-key, --color-by "
         "or --ask.",
     )
+    p_run.add_argument("--selection", metavar="FILE", help="selection TSV for a derive choice")
     p_run.set_defaults(func=cmd_run)
 
     p_open = sub.add_parser(
@@ -212,11 +213,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_actions.add_argument("--dataset-dir", help="read datasets from this directory instead")
     p_actions.add_argument(
         "--surface",
-        choices=("ledger", "tune", "ladder"),
+        choices=("ledger", "tune", "ladder", "derive"),
         default="ledger",
         help="ledger: which recipes can run · tune: the knobs of one "
         "recipe's steps · ladder: the scorer's rung tables",
     )
+    p_actions.add_argument("--run", help="parent run on the derive surface")
     p_actions.add_argument("--recipe", help="the recipe to tune (tune surface)")
     p_actions.add_argument("--step", help="only this tunable step (tune surface)")
     p_actions.add_argument(
@@ -367,6 +369,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "compile the manifest's requirements into a hashed lock",
     )
     p_tools.add_argument("name", nargs="?", help="the tool (required for install, verify and lock)")
+    p_tools.add_argument("--param", action="append", metavar="KEY=VALUE")
     p_tools.set_defaults(func=cmd_tools)
 
     p_shell = sub.add_parser(
@@ -602,6 +605,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
     parser = _build_parser()
     args = parser.parse_args(_normalize_argv(raw))
+    args.seed_explicit = any(arg == "--seed" or arg.startswith("--seed=") for arg in raw)
     # THE FRONT DOOR, and the one line where the three surfaces meet. argv is NOT rewritten:
     # `_normalize_argv([])` is still `["shell"]`, so the app is handed the same namespace the
     # rich console would have been handed for the same invocation (a bare one, so: the parser's
@@ -1166,6 +1170,8 @@ def cmd_run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     verb, which nobody guesses. Anything that says what to do (a path, `--dataset`,
     `--engine`, `--recipe`, …) keeps the one-shot, and so does a pipe or a script, so
     automation is unaffected."""
+    if getattr(args, "selection", None) and not getattr(args, "choice", None):
+        parser.error("--selection requires --choice on derive")
     if getattr(args, "ask", None) and getattr(args, "recipe", None):
         parser.error("--ask and --recipe both choose the recipe; give one of them")
     if _wants_the_console(args):
@@ -1231,15 +1237,29 @@ def _cmd_run_choice(args: argparse.Namespace, parser: argparse.ArgumentParser) -
         parser.error(f"the choice file {args.choice} is not JSON: {exc}")
     if not isinstance(choice, dict):
         parser.error(f"the choice file {args.choice} does not hold a JSON object")
+    selection = Path(args.selection) if args.selection is not None else None
+    if selection is not None:
+        import hashlib
+
+        if choice.get("surface") != "derive":
+            parser.error("--selection requires a derive choice")
+        try:
+            actual = hashlib.sha256(selection.read_bytes()).hexdigest()
+        except OSError as exc:
+            parser.error(f"cannot read --selection: {exc}")
+        expected = choice.get("selection_sha256")
+        if actual != expected:
+            parser.error(f"selection sha256 {actual} differs from selection_sha256 {expected}")
     try:
         result = _run_choice(
             choice,
             engine=args.engine,
-            seed=args.seed,
+            seed=args.seed if getattr(args, "seed_explicit", False) else None,
             device=args.device,
             project=args.project,
             parser=parser,
             fast_dev_run=_smoke(args),
+            selection=selection,
         )
     except action_space.Refused as refused:
         if refused.exit_code == 2:
@@ -1258,6 +1278,7 @@ def _run_choice(
     project: Optional[str],
     parser: argparse.ArgumentParser,
     fast_dev_run: bool = False,
+    selection: Optional[Path] = None,
 ) -> dict:
     """Run one checked choice and return the result document.
 
@@ -1268,7 +1289,19 @@ def _run_choice(
     """
     from manyruns import action_space, decisions
 
-    doc = action_space.check_choice(choice, store=".", seed=seed)
+    doc = action_space.check_choice(choice, store=".", seed=42 if seed is None else seed)
+    if choice["surface"] == "derive":
+        if "selection_sha256" in choice and selection is None:
+            raise action_space.Refused(2, "this derive choice needs --selection")
+        if "selection_sha256" not in choice and selection is not None:
+            raise action_space.Refused(2, "this connector takes no --selection")
+        from manyruns import derive
+
+        parent = derive.parent_row(choice["parent_run"], ".")
+        if engine is not None and engine != parent["engine"]:
+            raise action_space.Refused(2, "a derived run inherits its parent engine; omit --engine or match it")
+        return derive.run_derived(choice, doc, selection, seed=seed)
+    seed = 42 if seed is None else seed
     chosen = choice["chosen"]
     dataset = choice["dataset"]
     surface = choice["surface"]
@@ -1452,7 +1485,8 @@ def cmd_actions(args: argparse.Namespace, parser: argparse.ArgumentParser) -> in
             recipe=args.recipe,
             step=args.step,
             dataset_dir=args.dataset_dir,
-            gate=args.gate != "off",
+            gate=None if args.gate is None else args.gate != "off",
+            run=args.run,
             seed=42 if args.seed is None else args.seed,
         )
     except actions.UsageError as exc:
@@ -3160,6 +3194,28 @@ def cmd_tools(args: Any, parser: Any = None) -> int:
 
     action = getattr(args, "action", "list") or "list"
     names = _tc.discover_tools()
+    if action == "build-resource":
+        import subprocess
+
+        from manyruns import resources
+
+        if not args.name:
+            print("which resource?")
+            return 2
+        params = {}
+        for pair in getattr(args, "param", None) or []:
+            key, sep, value = pair.partition("=")
+            if not sep or not key:
+                print("--param must be KEY=VALUE")
+                return 2
+            params[key] = value
+        try:
+            built = resources.build(args.name, params)
+        except (ValueError, OSError, subprocess.SubprocessError) as exc:
+            print(f"could not build {args.name}: {exc}")
+            return 1
+        print(f"{built['path']} {built['sha256']}")
+        return 0
     if action == "lock":
         if not args.name:
             print("which tool? " + (", ".join(names) or "(none declared)"))

@@ -67,7 +67,7 @@ def test_header_keys_come_first(tmp_path):
         assert doc["tool_version"] == app._installed_build()
         assert doc["vocab_version"] == vocab.VERSION
     assert doc["surface"] == "ladder"
-    assert actions.SURFACES == ("ledger", "tune", "ladder")
+    assert actions.SURFACES == ("ledger", "tune", "ladder", "derive")
 
 
 def test_ledger_offered_equals_tui_ledger(tmp_path):

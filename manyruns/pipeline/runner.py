@@ -1497,10 +1497,13 @@ def _finalize(
     parent: Any = None,
     discarded: "list | None" = None,
     abandoned: bool = False,
+    measure: bool = True,
     not_run=(),
     compute_error: str | None = None,
 ) -> dict:
     """THE g-vector assembler + result shape — identical for every engine.
+
+    `measure=False` closes a table-only derived run without final geometry measurements.
 
     `trace` and `status` are derived from the step record rather than accumulated
     alongside it, so the three cannot drift. A repeated step name collapses in `status`
@@ -1555,7 +1558,7 @@ def _finalize(
     if getattr(X, "ndim", 0) == 2:
         g.setdefault("n_samples", int(X.shape[0]))
         g.setdefault("n_features", int(X.shape[1]))
-    if getattr(emb, "ndim", 0) == 2:
+    if measure and getattr(emb, "ndim", 0) == 2:
         g["n_embedded"] = int(emb.shape[0])
         g["final_dim"] = int(emb.shape[1])
     # The declared suite, measured here because this is the ONE assembler both engines share.
@@ -1567,7 +1570,7 @@ def _finalize(
 
     final = (
         {}
-        if abandoned or compute_error
+        if not measure or abandoned or compute_error
         else _suite.measure(emb, X, catalog.load_suite(), already=g)
     )
     g.update(final)

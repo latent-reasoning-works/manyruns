@@ -100,3 +100,42 @@ if not params.get("no_tables"):
         result["tables"][name] = {"path": path.name, "sha256": digest}
 json.dump(result, open(req["result"], "w"))
 """
+
+
+INPUT_TABLE_ADAPTER = """
+import hashlib
+import json
+import sys
+from pathlib import Path
+import pandas as pd
+import anndata as ad
+req = json.loads(Path(sys.argv[1]).read_text())
+Path(req['workdir'], 'ran.marker').touch()
+frame = ad.read_h5ad(req['input']) if req['input'] else None
+selected = pd.read_csv(req['tables']['selection'], sep='\\t') if 'selection' in req.get('tables', {}) else []
+genes = list(frame.var_names) if frame is not None else ['g0']
+ids = list(frame.var['gene_id']) if frame is not None and 'gene_id' in frame.var else [''] * len(genes)
+ids = req['params'].get('ids', ids)
+table = pd.DataFrame({'gene': genes, 'gene_id': ids, 'score': [1.] * len(genes)})
+path = Path(req['workdir'], 'genes.tsv')
+table.to_csv(path, sep='\\t', index=False)
+result = {'schema_version': 1, 'ok': True, 'n_cells': req['n_cells'], 'facts': {},
+          'scalars': {'selected': len(selected)},
+          'tables': {'genes': {'path': path.name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}}}
+Path(req['result']).write_text(json.dumps(result))
+"""
+
+
+def make_resource(tmp_path, monkeypatch, tool, name, rows, key=None):
+    """Write a tiny prepared resource and the digest that resolution checks."""
+    import hashlib
+    import pandas as pd
+    from manyruns import resources
+
+    monkeypatch.setenv('MANYRUNS_RESOURCE_HOME', str(tmp_path / 'resources'))
+    cfg = toolchain.load_tool(tool)
+    path = resources.path_for(name, cfg['resource'][name], key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(rows).to_csv(path, sep='\t', index=False)
+    path.with_suffix('.tsv.sha256').write_text(hashlib.sha256(path.read_bytes()).hexdigest())
+    return path

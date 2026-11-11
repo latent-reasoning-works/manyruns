@@ -16,7 +16,7 @@ PAGE = ROOT / "docs" / "harness.md"
 
 SECTIONS = ["## The intended use", "## The action space wrapper", "## The choice document",
             "## CLI mode", "## Library mode", "## The record", "## Adding a tool",
-            "## Who is a harness"]
+            "## Adding a connector", "## Who is a harness"]
 
 
 def _section(text: str, heading: str) -> str:

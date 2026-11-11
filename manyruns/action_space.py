@@ -43,10 +43,13 @@ META_MAX_BYTES = 2048
 EXTRA_MAX_BYTES = 8192
 
 #: The surfaces a choice can be made on. `ladder` is read only.
-_CHOICE_SURFACES = ("ledger", "tune")
+_CHOICE_SURFACES = ("ledger", "tune", "derive")
 
 _REQUIRED = ("schema_version", "surface", "dataset", "offer_sha256", "chosen", "chooser", "bound")
 _OPTIONAL = (
+    "parent_run",
+    "parent_index",
+    "selection_sha256",
     "scores",
     "meta",
     "proposed",
@@ -272,7 +275,9 @@ def _check_shape(choice: Any) -> None:
             f"{' or '.join(_CHOICE_SURFACES)} (ladder is read only)"
         )
     dataset = choice["dataset"]
-    if not isinstance(dataset, str) or dataset not in catalog.discover_datasets():
+    if not isinstance(dataset, str) or not dataset or (
+        choice["surface"] != "derive" and dataset not in catalog.discover_datasets()
+    ):
         raise _refuse(f"dataset {dataset!r} is not a catalog dataset name")
     _check_chooser(choice["chooser"], "chooser")
     _check_bound(choice["bound"], "bound")
@@ -284,6 +289,18 @@ def _check_shape(choice: Any) -> None:
         _check_extra(choice["extra"])
     if "proposed" in choice:
         _check_proposed(choice)
+    if choice["surface"] == "derive":
+        if not isinstance(choice.get("parent_run"), str) or not choice["parent_run"]:
+            raise _refuse("parent_run is required on derive")
+        if "parent_index" in choice and (type(choice["parent_index"]) is not int or choice["parent_index"] < 0):
+            raise _refuse("parent_index must be a nonnegative int")
+        if "selection_sha256" in choice and (not isinstance(choice["selection_sha256"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", choice["selection_sha256"])):
+            raise _refuse("selection_sha256 must be 64 lowercase hex characters")
+    else:
+        for key in ("parent_run", "parent_index", "selection_sha256"):
+            if key in choice:
+                raise _refuse(f"{key} is allowed only on derive")
     _check_column_key_types(choice)
 
 
@@ -350,7 +367,17 @@ def _check_column_keys(choice: dict) -> None:
     if not given:
         return
     dataset = choice["dataset"]
-    columns = _dataset_columns(dataset)
+    if choice['surface'] == 'derive':
+        from manyruns import derive
+        from manyruns.pipeline import loading
+
+        root = derive.root_row(derive.parent_row(choice['parent_run'], '.'), '.')
+        try:
+            columns = loading.obs_columns(derive.source_path(root, derive.dataset_description(root), '.'))
+        except (OSError, ValueError) as exc:
+            raise Refused(1, str(exc)) from exc
+    else:
+        columns = _dataset_columns(dataset)
     if columns is None:
         raise _refuse(
             f"dataset {dataset!r} has no columns that manyruns reads, so a choice on "
@@ -372,6 +399,9 @@ def _candidates(choice: dict, store: Path | str, seed: int):
     from manyruns import actions
 
     dataset = choice["dataset"]
+    if choice["surface"] == "derive":
+        yield lambda: actions.enumerate_actions("derive", dataset=dataset, run=choice["parent_run"], store=store)
+        return
     if choice["surface"] == "ledger":
         for gate in (True, False):
             yield lambda gate=gate: actions.enumerate_actions(
@@ -459,6 +489,31 @@ def _illegal(choice: dict, chosen: Any, doc: dict, store: Path | str, seed: int)
     """Why `chosen` is not in the legal set of `doc`, or None when it is."""
     from manyruns import actions
 
+    if choice["surface"] == "derive":
+        from manyruns import derive
+
+        if not isinstance(chosen, dict) or set(chosen) != {"connector", "params"}:
+            return 'chosen on derive must be exactly {"connector", "params"}'
+        entry = next((e for e in doc["offered"] if e["connector"] == chosen["connector"]), None)
+        if entry is None:
+            return f"connector {chosen['connector']!r} is not offered"
+        if not entry["can_run"]:
+            return "; ".join(entry["blocked"])
+        if not isinstance(chosen["params"], dict):
+            return "params must be a mapping"
+        problems = derive.parameter_problems(chosen["connector"], entry["declaration"], chosen["params"])
+        if problems:
+            return "; ".join(problems)
+        for role, key in entry["role_keys"].items():
+            if key is None and not choice.get(f"{role}_key"):
+                return f"supply {role}_key in the choice"
+        if entry["selection"] != ("selection_sha256" in choice):
+            return "selection_sha256 is required exactly when the connector takes a selection"
+        if "parent_index" in choice:
+            parent = derive.parent_row(choice["parent_run"], store)
+            if choice["parent_index"] not in {e["index"] for e in derive._manifest(parent, store).values()}:
+                return "parent_index must name a persisted slot of the parent"
+        return None
     if choice["surface"] == "ledger":
         if not isinstance(chosen, dict) or set(chosen) != {"recipe"}:
             extra = sorted(set(chosen) - {"recipe"}) if isinstance(chosen, dict) else []
@@ -552,7 +607,7 @@ def review(choice: dict, *, ask: Callable[[dict], Any], human_id: str) -> dict:
         for k in ("schema_version", "surface", "dataset", "offer_sha256")
     }
     out.update(chosen=final, chooser="human:" + human_id, bound="none", proposed=proposed)
-    for key in ("extra", *_COLUMN_KEYS):
+    for key in ("extra", "parent_run", "parent_index", "selection_sha256", *_COLUMN_KEYS):
         if key in choice:
             out[key] = copy.deepcopy(choice[key])
     return out
@@ -560,6 +615,8 @@ def review(choice: dict, *, ask: Callable[[dict], Any], human_id: str) -> dict:
 
 def label(choice: dict, chosen: dict, doc: dict) -> str:
     """The row form of a legal `chosen`: the recipe on ledger, the attempt label on tune."""
+    if choice["surface"] == "derive":
+        return f"derive:{chosen['connector']}"
     if choice["surface"] == "ledger":
         return chosen["recipe"]
     from manyruns import tune
@@ -742,19 +799,22 @@ class ActionSpace:
         self,
         surface: str = "ledger",
         *,
-        gate: bool = True,
+        gate: Optional[bool] = None,
         recipe: Optional[str] = None,
         step: Optional[str] = None,
+        run: Optional[str] = None,
     ) -> dict:
         """The action document of `surface` for this dataset. Raises `Refused` on a failure."""
         if self.mode == "library":
-            return self._offer_library(surface, gate, recipe, step)
-        return self._offer_cli(surface, gate, recipe, step)
+            return self._offer_library(surface, gate, recipe, step, run)
+        return self._offer_cli(surface, gate, recipe, step, run)
 
-    def _offer_library(self, surface, gate, recipe, step) -> dict:
+    def _offer_library(self, surface, gate, recipe, step, run) -> dict:
         from manyruns import actions
 
         kwargs: dict[str, Any] = {}
+        if run is not None:
+            kwargs["run"] = run
         if recipe is not None:
             kwargs["recipe"] = recipe
         if step is not None:
@@ -768,17 +828,21 @@ class ActionSpace:
         except actions.LoadError as exc:
             raise Refused(1, f"cannot load {exc}") from None
 
-    def _offer_cli(self, surface, gate, recipe, step) -> dict:
+    def _offer_cli(self, surface, gate, recipe, step, run) -> dict:
         args = ["actions"]
         if surface != "ladder":
             args.append(self.dataset)
         args += ["--surface", surface]
+        if run is not None:
+            args += ["--run", run]
         if recipe is not None:
             args += ["--recipe", recipe]
         if step is not None:
             args += ["--step", step]
         if surface != "ladder":
-            args += ["--gate", "on" if gate else "off", "--seed", str(self.seed)]
+            args += ["--seed", str(self.seed)]
+            if gate is not None:
+                args += ["--gate", "on" if gate else "off"]
         done = self._child(args)
         if done.returncode != 0:
             raise Refused(2 if done.returncode == 2 else 1, _stderr_text(done.stderr))

@@ -128,7 +128,8 @@ datasets = []
 # is declared by `[agents]`, `shop` by `[harness]`'s cluster path, `heatgeo` by nothing here.
 # Kept empty so `--extra engine` in a shell history or CI job does not start erroring.
 engine = []
-dev = ["pytest>=7.0.0", "ruff>=0.11,<0.12"]  # pinned: 0.16 broadened defaults, floats CI red
+# pydeseq2: tests only; the pseudobulk_de connector runs in its own locked environment.
+dev = ["pytest>=7.0.0", "ruff>=0.11,<0.12", "pydeseq2==0.5.4"]  # ruff pinned: 0.16 broadened defaults, floats CI red
 # the harness — manyruns's user-facing product flow, lifted from shop.
 # it runs DR via manylatents (PCA/UMAP/PHATE) and STOPS AT THE STORE: `run -> label -> store`.
 # Training is the learner's, and the learner is not called from here (§3.5).

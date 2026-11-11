@@ -45,6 +45,7 @@ mid-run is an outage, not a step.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -52,6 +53,11 @@ from typing import Any
 
 from manyruns import toolchain as _toolchain
 from manyruns.pipeline.steps import _StepSkipped, _StepUnsupported
+
+ENSEMBL_PATTERN = r"^ENSG\d{11}$"
+ENSEMBL_COLUMNS = ("gene_ids", "gene_id", "ensembl_id")
+GENE_ID_COVERAGE = 0.5
+
 
 #: `fact -> (destination, how it arrives)`. It held ONE entry, `velocity`, and its comment said
 #: that a second entry would tell us the general shape. The model seam is that second entry, with
@@ -436,7 +442,7 @@ def _table_problems(doc: dict, tables: Any) -> list[str]:
     return bad
 
 
-def _load_tables(doc: dict, base: Path, tables: dict, genes: Any, loaded: dict) -> list[str]:
+def _load_tables(doc: dict, base: Path, tables: dict, genes: Any, loaded: dict, gene_ids=None) -> list[str]:
     import hashlib
 
     import pandas as pd
@@ -458,7 +464,7 @@ def _load_tables(doc: dict, base: Path, tables: dict, genes: Any, loaded: dict) 
                 bad.append(f"tables.{name}: sha256 does not match the file; regenerate the result")
                 continue
             df = pd.read_csv(
-                path, sep="\t", dtype={"gene": str}, keep_default_na=False, na_filter=False
+                path, sep="\t", dtype={"gene": str, "gene_id": str}, keep_default_na=False, na_filter=False
             )
             table = Table(df, provenance=(name,)).require(*tables[name])
             if "gene" in df and genes is not None:
@@ -467,6 +473,11 @@ def _load_tables(doc: dict, base: Path, tables: dict, genes: Any, loaded: dict) 
                     bad.append(
                         f"tables.{name}: gene identifiers {stray} are absent from the current frame; regenerate for the current genes"
                     )
+                    continue
+            if "gene_id" in df and gene_ids is not None:
+                stray = sorted(set(df["gene_id"]) - {""} - set(gene_ids))
+                if stray:
+                    bad.append(f"tables.{name}: gene_id values {stray} are absent from the reference genes")
                     continue
             loaded[name] = table.df
         except (OSError, ValueError) as exc:
@@ -486,6 +497,7 @@ def _check_and_load(
     check_files: bool = True,
     genes: Any = None,
     loaded_tables: Any = None,
+    gene_ids: Any = None,
 ) -> tuple[list[str], dict]:
     """`check_result`, and the arrays it loaded. The merge uses the arrays that were checked."""
     import hashlib
@@ -509,7 +521,7 @@ def _check_and_load(
     if not check_files:
         return bad, {}
     bad += _load_tables(
-        doc, base, tables or {}, genes, loaded_tables if loaded_tables is not None else {}
+        doc, base, tables or {}, genes, loaded_tables if loaded_tables is not None else {}, gene_ids
     )
     root = base.resolve()
     loaded: dict = {}
@@ -619,7 +631,8 @@ def _refuse_unbuilt(name: str, resolved: dict) -> None:
 
 
 def _write_request(
-    workdir: Path, cfg: dict, params: dict, seed: Any, input_path: Path, v1: "dict | None" = None
+    workdir: Path, cfg: dict, params: dict, seed: Any, input_path: Path | None, v1: "dict | None" = None,
+    tables: dict | None = None, resources: dict | None = None
 ) -> tuple[Path, Path, Path]:
     """`request.json`. On the version 1 path (`v1` given) it also carries `result_schema`,
     `n_cells`, `input_dim`, the optional `time` file and, in call mode, the `call` block. It
@@ -637,7 +650,7 @@ def _write_request(
         "version": cfg["version"],
         "params": merged,
         "seed": int(seed) if seed is not None else 0,
-        "input": str(input_path),
+        "input": str(input_path) if input_path is not None else None,
         "output": str(out_path),
         "result": str(res_path),
         "workdir": str(workdir),
@@ -658,6 +671,10 @@ def _write_request(
             request["time"] = str(time_path)
         if _toolchain.tool_mode(cfg) == "call":
             request["call"] = cfg["call"]
+    if resources:
+        request["resources"] = resources
+    if tables:
+        request["tables"] = {k: str(v) for k, v in tables.items()}
     req_path.write_text(json.dumps(request, indent=2))
     return req_path, out_path, res_path
 
@@ -674,10 +691,13 @@ def _time_axis(state: dict) -> Any:
         return None
 
 
-def _input_shape(input_path: Path, state: dict) -> tuple[int, int]:
+def _input_shape(input_path: Path | None, state: dict, ctx: dict | None = None) -> tuple[int, int | None]:
     """`(n_cells, input_dim)` of what the tool reads: the rows and columns of the input."""
     import numpy as np
 
+    if input_path is None:
+        cells = _cell_list(state, ctx or {})
+        return len(cells) if cells is not None else len(state["rows"]), None
     if input_path.suffix == ".npy":
         shape = np.load(input_path, mmap_mode="r", allow_pickle=False).shape
         return int(shape[0]), int(shape[1]) if len(shape) > 1 else 1
@@ -752,9 +772,101 @@ def _source_cell_ids(path: Path) -> "list[str] | None":
         data.file.close()
 
 
-def _input_path(cfg: dict, state: dict, ctx: dict, workdir: Path) -> Path:
+def _bind_tables(name: str, cfg: dict, ctx: dict, workdir: Path) -> dict[str, Path]:
+    import shutil
+    import pandas as pd
+    from manykinds import Table
+
+    bound = {}
+    for table, columns in _toolchain.input_tables(cfg).items():
+        source = (ctx.get("input_tables") or {}).get(table)
+        if source is None:
+            raise _StepSkipped(f"{name}: input table {table} is not bound")
+        path = workdir / "tables" / f"{table}.tsv"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, path)
+            df = pd.read_csv(path, sep="\t", dtype=str, keep_default_na=False, na_filter=False)
+            Table(df, provenance=(table,)).require(*columns)
+        except (OSError, ValueError) as exc:
+            raise _StepSkipped(f"{name}: input table {table}: {exc}") from exc
+        bound[table] = path
+    return bound
+
+
+def _check_selection(name: str, df, obs_names: list[str]) -> None:
+    from manykinds import Table
+
+    try:
+        Table(df, provenance=("selection",)).require("cell", "group")
+    except ValueError as exc:
+        raise _StepSkipped(f"{name}: selection: {exc}") from exc
+    if obs_names is None:
+        raise _StepSkipped(f"{name}: selection requires recorded cell ids")
+    if df.empty:
+        raise _StepSkipped(f"{name}: selection is empty")
+    if df["cell"].duplicated().any():
+        raise _StepSkipped(f"{name}: selection has duplicate cells")
+    absent = sorted(set(df["cell"]) - set(map(str, obs_names)))
+    if absent:
+        raise _StepSkipped(f"{name}: selection cells {absent} are absent from the frame")
+
+
+def _gene_ids(name: str, cfg: dict, genes, ctx: dict) -> tuple[list[str], int]:
+    import pandas as pd
+    from manyruns import resources
+
+    mapping = None
+    source = ctx.get("source_path")
+    if source and Path(source).suffix == ".h5ad":
+        import anndata as ad
+
+        try:
+            data = ad.read_h5ad(source, backed="r")
+            try:
+                column = next((c for c in ENSEMBL_COLUMNS if c in data.var), None)
+                if column:
+                    if not data.var_names.is_unique:
+                        raise ValueError("source gene names are not unique")
+                    mapping = dict(zip(map(str, data.var_names), data.var[column]))
+            finally:
+                data.file.close()
+        except (OSError, ValueError) as exc:
+            raise _StepSkipped(f"{name}: cannot read source gene ids: {exc}") from exc
+    if mapping is None:
+        block = (cfg.get("resource") or {}).get("gene_ids")
+        if block is None:
+            raise _StepSkipped(f"{name}: no Ensembl column {ENSEMBL_COLUMNS} and no gene_ids resource")
+        try:
+            found = resources.resolve("gene_ids", block, None, cfg["name"])
+        except ValueError as exc:
+            raise _StepUnsupported(f"{name}: gene_ids resource: {exc}") from exc
+        if found["status"] != "ready":
+            raise _StepUnsupported(f"{name}: gene_ids {found['status']}; {found['fix']}")
+        try:
+            df = pd.read_csv(found["path"], sep="\t", dtype=str, keep_default_na=False, na_filter=False)
+            from manykinds import Table
+
+            Table(df, provenance=("gene_ids",)).require("symbol", "gene_id")
+            mapping = dict(zip(df["symbol"], df["gene_id"]))
+        except (OSError, ValueError) as exc:
+            raise _StepSkipped(f"{name}: gene_ids resource: {exc}") from exc
+        ctx["gene_id_provenance"] = resources.provenance(name, "gene_ids", block, None, found["sha256"])
+    ids = []
+    for gene in genes:
+        value = re.sub(r"\.\d+$", "", str(mapping.get(str(gene), "")))
+        ids.append(value if re.fullmatch(ENSEMBL_PATTERN, value) else "")
+    mapped = sum(bool(value) for value in ids)
+    if not ids or mapped / len(ids) < GENE_ID_COVERAGE:
+        raise _StepSkipped(f"{name}: mapped {mapped} of {len(ids)} genes; need at least half")
+    return ids, len(ids) - mapped
+
+
+def _input_path(cfg: dict, state: dict, ctx: dict, workdir: Path) -> Path | None:
     """Assemble what the tool reads — and refuse the compositions that would mislead it."""
     kind = (cfg.get("input") or {}).get("kind")
+    if kind == "none":
+        return None
     if kind == "source_file":
         src = ctx.get("source_path")
         if not src:
@@ -839,7 +951,8 @@ def _input_path(cfg: dict, state: dict, ctx: dict, workdir: Path) -> Path:
                 if role == "condition"
                 else (view["obs"] or {}).get(role)
             )
-            fix = f"supply --{role}-key naming a complete {role} column"
+            fix = (f"supply {role}_key in the choice naming a complete {role} column"
+                   if ctx.get("derive") else f"supply --{role}-key naming a complete {role} column")
             if values is None:
                 raise _StepSkipped(f"{cfg['name']} needs {role} labels — {fix}")
             values = np.asarray(values)
@@ -862,6 +975,11 @@ def _input_path(cfg: dict, state: dict, ctx: dict, workdir: Path) -> Path:
             out.layers[name] = _dense(have[name])
         if view["genes"] is not None:
             out.var_names = np.asarray(view["genes"]).astype(object)
+        if (cfg.get("input") or {}).get("gene_id"):
+            ids, unmapped = _gene_ids(ctx.get("step_name", cfg["name"]), cfg, out.var_names, ctx)
+            out.var["gene_id"] = ids
+            ctx["gene_ids"] = ids
+            ctx["genes_unmapped"] = unmapped
         workdir.mkdir(parents=True, exist_ok=True)
         path = workdir / "input.h5ad"
         out.write_h5ad(path)
@@ -993,6 +1111,7 @@ def _merge_v1(
         tables=tables,
         genes=genes,
         loaded_tables=loaded_tables,
+        gene_ids=(ctx or {}).get("gene_ids"),
     )
     if problems:
         more = f" (and {len(problems) - 1} more)" if len(problems) > 1 else ""
@@ -1090,7 +1209,7 @@ def _run_precomputed(name: str, resolved: dict, state: dict, g: dict, ctx: dict)
     caveats.append(f"step {name}: {PRECOMPUTED_CAVEAT}")
 
 
-def _adapter_path(cfg: dict) -> "Path | None":
+def _adapter_path(cfg: dict, config_dir=None) -> "Path | None":
     """Where the adapter lives — BESIDE THE MANIFEST FIRST, then the bundled set.
 
     That order is what makes a third-party tool possible without forking the wheel. A user
@@ -1117,7 +1236,7 @@ def _adapter_path(cfg: dict) -> "Path | None":
         [Path(entry)]
         if Path(entry).is_absolute()
         else [
-            _tc.tool_dir() / entry,
+            _tc.tool_dir(config_dir) / entry,
             Path(str(resources.files("manyruns") / "adapters" / entry)),
         ]
     )
@@ -1167,11 +1286,49 @@ def run_external_step(name: str, params: dict, state: dict, g: dict, ctx: dict) 
     cfg = resolved["cfg"]
     v1 = (cfg.get("output") or {}).get("schema") == _toolchain.RESULT_SCHEMA
     workdir = Path(ctx["out_dir"]) / f"tool-{name}"
+    for key in ("gene_ids", "genes_unmapped", "gene_id_provenance"):
+        ctx.pop(key, None)
+    ctx["step_name"] = name
     input_path = _input_path(cfg, state, ctx, workdir)
+    if "genes_unmapped" in ctx:
+        g[f"{name}.genes_unmapped"] = ctx["genes_unmapped"]
+    g.update(ctx.get("gene_id_provenance") or {})
+    bound = _bind_tables(name, cfg, ctx, workdir)
+    if bound and "gene_ids" not in ctx:
+        import pandas as pd
+
+        reference = None
+        for path in bound.values():
+            df = pd.read_csv(path, sep="\t", dtype=str, keep_default_na=False, na_filter=False)
+            if "gene_id" in df:
+                reference = (reference or set()) | set(df["gene_id"])
+        if reference is not None:
+            ctx["gene_ids"] = reference
+    if "selection" in bound:
+        import pandas as pd
+
+        selection = pd.read_csv(bound["selection"], sep="\t", dtype=str, keep_default_na=False, na_filter=False)
+        _check_selection(name, selection, _cell_list(state, ctx))
     decl = cfg.get("declaration")
-    shape = _input_shape(input_path, state) if v1 or decl is not None else None
+    shape = _input_shape(input_path, state, ctx) if v1 or decl is not None else None
     if decl is not None:
         _check_step_parameters(name, cfg, params, shape)
+    from manyruns import resources
+
+    resource_paths = {}
+    merged_params = {**(cfg.get("params") or {}), **params}
+    for resource, block in (cfg.get("resource") or {}).items():
+        if resource == "gene_ids":
+            continue
+        key = merged_params.get(block["key"]) if block.get("key") else None
+        try:
+            found = resources.resolve(resource, block, key, tool)
+        except ValueError as exc:
+            raise _StepSkipped(f"{name}: {exc}") from exc
+        if found["status"] != "ready":
+            raise _StepUnsupported(f"{name}: resource {resource} {found['status']}; {found['fix']}")
+        resource_paths[resource] = found["path"]
+        g.update(resources.provenance(name, resource, block, key, found["sha256"]))
     req_path, out_path, res_path = _write_request(
         workdir,
         cfg,
@@ -1179,6 +1336,8 @@ def run_external_step(name: str, params: dict, state: dict, g: dict, ctx: dict) 
         ctx.get("seed"),
         input_path,
         v1={"n_cells": shape[0], "input_dim": shape[1], "time": _time_axis(state)} if v1 else None,
+        tables=bound,
+        resources=resource_paths,
     )
 
     adapter = _adapter_path(cfg)
