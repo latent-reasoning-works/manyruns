@@ -1679,6 +1679,8 @@ def _run_analysis_step(name, params, state, g, ctx):
 
     Not a manylatents algorithm, which is why `analysis` stays a manyruns-owned sentinel
     rather than collapsing into the engine's group names."""
+    if name in _steps._CTX_ANALYSIS_STEPS:
+        return _steps._ANALYSIS_STEPS[name](state, g, params, ctx)
     if state.get("emb") is None and state.get("X") is None:
         raise _StepSkipped("no data to analyze yet")
     fn = _steps._ANALYSIS_STEPS.get(name)
