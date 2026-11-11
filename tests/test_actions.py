@@ -67,7 +67,7 @@ def test_header_keys_come_first(tmp_path):
         assert doc["tool_version"] == app._installed_build()
         assert doc["vocab_version"] == vocab.VERSION
     assert doc["surface"] == "ladder"
-    assert actions.SURFACES == ("ledger", "tune", "ladder")
+    assert actions.SURFACES == ("ledger", "tune", "ladder", "derive")
 
 
 def test_ledger_offered_equals_tui_ledger(tmp_path):
@@ -89,8 +89,8 @@ def test_ledger_offered_equals_tui_ledger(tmp_path):
     assert doc["offered"][0] == {"recipe": "cluster", "can_run": True, "blocked": [],
                                  "recommended": True, "measured": "unmeasured"}
     assert doc["detail"]["cluster"]["steps"] == [
-        "prep:normalize", "prep:transform", "latent:pca", "latent:umap", "latent:leiden",
-        "analysis:cluster_quality"]
+        "prep:normalize", "prep:transform", "latent:pca", "latent:leiden",
+        "analysis:cluster_quality", "latent:umap"]
     assert doc["detail"]["contrast"]["unmet"] == ["conditions"]
     assert doc["detail"]["archetypes"]["offer_rank"] == 2
     assert list(doc["detail"]) == [o["recipe"] for o in doc["offered"]]
@@ -161,8 +161,8 @@ def test_tune_offers_declared_params_and_tune_label(tmp_path):
     assert doc["recipe"] == "cluster"
     assert doc["step"] is None
     assert doc["offered"] == [
-        {"step": "umap", "params": {"n_components": 2}, "label": "umap n_components=2"},
-        {"step": "leiden", "params": {}, "label": "leiden"}]
+        {"step": "leiden", "params": {}, "label": "leiden"},
+        {"step": "umap", "params": {"n_components": 2}, "label": "umap n_components=2"}]
     recipes = _tunable_recipes()
     assert "cluster" in recipes
     for r in recipes:
@@ -178,9 +178,12 @@ def test_tune_offers_declared_params_and_tune_label(tmp_path):
 def test_tune_knobs_carry_neighbours_and_null_cap(tmp_path):
     doc = actions.enumerate_actions("tune", dataset="pbmc3k", recipe="cluster", store=tmp_path)
     umap = doc["knobs"]["umap"]
-    assert (umap["index"], umap["order"], umap["group"]) == (3, 0, "latent")
-    assert doc["knobs"]["leiden"]["index"] == 4
-    assert doc["knobs"]["leiden"]["order"] == 1
+    assert (umap["index"], umap["order"], umap["group"]) == (5, 1, "latent")
+    assert (
+        doc["knobs"]["leiden"]["index"],
+        doc["knobs"]["leiden"]["order"],
+        doc["knobs"]["leiden"]["group"],
+    ) == (3, 0, "latent")
     assert list(umap["params"]) == ["n_neighbors", "min_dist", "n_components"]
     assert umap["params"]["n_components"] == {
         "current": 2, "source": "declared", "floor": 1, "cap": None, "left": 1, "right": 3,

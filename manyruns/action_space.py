@@ -17,6 +17,7 @@ child process with the store as its working directory. Both return equal documen
 Nothing here imports Textual or the compute engine at module level, and nothing here reads a
 provider key or retries a call: those belong to whatever runs the filler.
 """
+
 from __future__ import annotations
 
 import copy
@@ -42,14 +43,27 @@ META_MAX_BYTES = 2048
 EXTRA_MAX_BYTES = 8192
 
 #: The surfaces a choice can be made on. `ladder` is read only.
-_CHOICE_SURFACES = ("ledger", "tune")
+_CHOICE_SURFACES = ("ledger", "tune", "derive")
 
 _REQUIRED = ("schema_version", "surface", "dataset", "offer_sha256", "chosen", "chooser", "bound")
-_OPTIONAL = ("scores", "meta", "proposed", "extra", "time_key", "condition_key")
+_OPTIONAL = (
+    "parent_run",
+    "parent_index",
+    "selection_sha256",
+    "scores",
+    "meta",
+    "proposed",
+    "extra",
+    "time_key",
+    "condition_key",
+    "sample_key",
+    "batch_key",
+)
 
 #: The optional keys that name a column of the dataset. The run uses a given key before it
-#: detects a column by name (`pipeline.loading.label_key_of`).
-_COLUMN_KEYS = ("time_key", "condition_key")
+#: detects a label column by name (`pipeline.loading.label_key_of`). Sample and batch
+#: columns are read only when explicitly named.
+_COLUMN_KEYS = ("time_key", "condition_key", "sample_key", "batch_key")
 _PROPOSED_REQUIRED = ("chooser", "bound", "chosen", "offer_sha256")
 _PROPOSED_OPTIONAL = ("scores", "meta")
 
@@ -75,12 +89,16 @@ class Refused(Exception):
 def offer_sha256(doc: dict) -> str:
     """The SHA-256 hex digest of the canonical JSON of an action document."""
     return hashlib.sha256(
-        json.dumps(doc, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+        json.dumps(doc, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
 
 def _compact_size(value: Any) -> int:
-    return len(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
-                          allow_nan=False).encode("utf-8"))
+    return len(
+        json.dumps(
+            value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+        ).encode("utf-8")
+    )
 
 
 def _is_number(value: Any) -> bool:
@@ -109,8 +127,10 @@ def _check_chooser(chooser: Any, where: str) -> None:
     from manyruns import verdict
 
     if not isinstance(chooser, str) or not verdict.CHOOSER_PATTERN.fullmatch(chooser):
-        raise _refuse(f"{where} {chooser!r} does not match the chooser grammar "
-                      f"({', '.join(p + '<id>' for p in CHOOSER_PREFIXES)})")
+        raise _refuse(
+            f"{where} {chooser!r} does not match the chooser grammar "
+            f"({', '.join(p + '<id>' for p in CHOOSER_PREFIXES)})"
+        )
 
 
 def _check_bound(bound: Any, where: str) -> None:
@@ -122,12 +142,16 @@ def _check_bound(bound: Any, where: str) -> None:
 
 def _check_scores(scores: Any, where: str) -> None:
     if not isinstance(scores, list):
-        raise _refuse(f"{where} must be a list of {{\"action\", \"score\"}} objects")
+        raise _refuse(f'{where} must be a list of {{"action", "score"}} objects')
     previous = math.inf
     for i, entry in enumerate(scores):
-        if (not isinstance(entry, dict) or set(entry) != {"action", "score"}
-                or not isinstance(entry["action"], dict) or not _is_number(entry["score"])):
-            raise _refuse(f"{where}[{i}] must be {{\"action\": object, \"score\": number}}")
+        if (
+            not isinstance(entry, dict)
+            or set(entry) != {"action", "score"}
+            or not isinstance(entry["action"], dict)
+            or not _is_number(entry["score"])
+        ):
+            raise _refuse(f'{where}[{i}] must be {{"action": object, "score": number}}')
         if not math.isfinite(entry["score"]):
             raise _refuse(f"{where}[{i}] has a score that is not finite")
         if entry["score"] > previous:
@@ -150,8 +174,9 @@ def _check_meta(meta: Any, where: str = "meta") -> None:
             raise _refuse(f"{where} key {key!r} must be a string of 1 to {_KEY_MAX} characters")
         if isinstance(value, list):
             if len(value) > _META_LIST_MAX:
-                raise _refuse(f"{where}[{key!r}] holds {len(value)} items; "
-                              f"at most {_META_LIST_MAX}")
+                raise _refuse(
+                    f"{where}[{key!r}] holds {len(value)} items; at most {_META_LIST_MAX}"
+                )
             if not all(_is_meta_scalar(v) for v in value):
                 raise _refuse(f"{where}[{key!r}] may hold only scalars, not lists or objects")
         elif not _is_meta_scalar(value):
@@ -183,8 +208,10 @@ def _check_proposed(choice: dict) -> None:
     proposed = choice["proposed"]
     _check_proposed_keys(proposed)
     if not str(choice["chooser"]).startswith("human:"):
-        raise _refuse("a choice with proposed is a person's review: its chooser must start "
-                      f"with human:, got {choice['chooser']!r}")
+        raise _refuse(
+            "a choice with proposed is a person's review: its chooser must start "
+            f"with human:, got {choice['chooser']!r}"
+        )
     _check_proposed_values(proposed, choice["offer_sha256"])
 
 
@@ -203,8 +230,10 @@ def _check_proposed_values(proposed: dict, want_sha256: str) -> None:
     _check_chooser(proposed["chooser"], "proposed.chooser")
     _check_bound(proposed["bound"], "proposed.bound")
     if proposed["offer_sha256"] != want_sha256:
-        raise _refuse("proposed.offer_sha256 differs from offer_sha256: a proposal and its "
-                      "review answer one action document")
+        raise _refuse(
+            "proposed.offer_sha256 differs from offer_sha256: a proposal and its "
+            "review answer one action document"
+        )
     if "scores" in proposed:
         _check_scores(proposed["scores"], "proposed.scores")
     if "meta" in proposed:
@@ -223,8 +252,10 @@ def check_proposed(proposed: Any, offer: dict, *, store: Path | str = ".", seed:
     """
     if not isinstance(offer, dict) or offer.get("surface") not in _CHOICE_SURFACES:
         surface = offer.get("surface") if isinstance(offer, dict) else None
-        raise _refuse(f"surface {surface!r} takes no choice; a proposal answers a "
-                      f"{' or '.join(_CHOICE_SURFACES)} document")
+        raise _refuse(
+            f"surface {surface!r} takes no choice; a proposal answers a "
+            f"{' or '.join(_CHOICE_SURFACES)} document"
+        )
     _check_proposed_keys(proposed)
     _check_proposed_values(proposed, offer_sha256(offer))
     reason = _illegal({"surface": offer["surface"]}, proposed["chosen"], offer, store, seed)
@@ -239,10 +270,14 @@ def _check_shape(choice: Any) -> None:
     if choice["schema_version"] != SCHEMA_VERSION or isinstance(choice["schema_version"], bool):
         raise _refuse(f"schema_version {choice['schema_version']!r} is not {SCHEMA_VERSION}")
     if choice["surface"] not in _CHOICE_SURFACES:
-        raise _refuse(f"surface {choice['surface']!r} takes no choice; choose on "
-                      f"{' or '.join(_CHOICE_SURFACES)} (ladder is read only)")
+        raise _refuse(
+            f"surface {choice['surface']!r} takes no choice; choose on "
+            f"{' or '.join(_CHOICE_SURFACES)} (ladder is read only)"
+        )
     dataset = choice["dataset"]
-    if not isinstance(dataset, str) or dataset not in catalog.discover_datasets():
+    if not isinstance(dataset, str) or not dataset or (
+        choice["surface"] != "derive" and dataset not in catalog.discover_datasets()
+    ):
         raise _refuse(f"dataset {dataset!r} is not a catalog dataset name")
     _check_chooser(choice["chooser"], "chooser")
     _check_bound(choice["bound"], "bound")
@@ -254,20 +289,41 @@ def _check_shape(choice: Any) -> None:
         _check_extra(choice["extra"])
     if "proposed" in choice:
         _check_proposed(choice)
+    if choice["surface"] == "derive":
+        if not isinstance(choice.get("parent_run"), str) or not choice["parent_run"]:
+            raise _refuse("parent_run is required on derive")
+        if "parent_index" in choice and (type(choice["parent_index"]) is not int or choice["parent_index"] < 0):
+            raise _refuse("parent_index must be a nonnegative int")
+        if "selection_sha256" in choice and (not isinstance(choice["selection_sha256"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", choice["selection_sha256"])):
+            raise _refuse("selection_sha256 must be 64 lowercase hex characters")
+    else:
+        for key in ("parent_run", "parent_index", "selection_sha256"):
+            if key in choice:
+                raise _refuse(f"{key} is allowed only on derive")
     _check_column_key_types(choice)
 
 
 def _check_column_key_types(choice: dict) -> None:
-    """Each given column key is a non-empty string, and the two keys name two columns."""
+    """Each given column key is a non-empty string, and each key names a different column."""
     for key in _COLUMN_KEYS:
         if key in choice:
             value = choice[key]
             if not isinstance(value, str) or not value:
-                raise _refuse(f"{key} must be a non-empty string, the name of a column of the "
-                              f"dataset; got {value!r}")
-    if "time_key" in choice and choice.get("time_key") == choice.get("condition_key"):
-        raise _refuse(f"time_key and condition_key both name the column {choice['time_key']!r}; "
-                      "one column is one axis")
+                raise _refuse(
+                    f"{key} must be a non-empty string, the name of a column of the "
+                    f"dataset; got {value!r}"
+                )
+    used = {}
+    for key in _COLUMN_KEYS:
+        if key in choice:
+            column = choice[key]
+            if column in used:
+                raise _refuse(
+                    f"{used[column]} and {key} both name the column {column!r}; "
+                    "one column is one axis"
+                )
+            used[column] = key
 
 
 def _dataset_columns(name: str) -> Optional[list[str]]:
@@ -293,8 +349,11 @@ def _dataset_columns(name: str) -> Optional[list[str]]:
 
         found = dataset_ref_path(ref)
         if found is None:
-            raise Refused(1, f"cannot load dataset {name!r}: its file {ref!r} is not on this "
-                             "machine, so its columns cannot be checked")
+            raise Refused(
+                1,
+                f"cannot load dataset {name!r}: its file {ref!r} is not on this "
+                "machine, so its columns cannot be checked",
+            )
         path = found
     try:
         return loading.obs_columns(Path(path))
@@ -308,14 +367,28 @@ def _check_column_keys(choice: dict) -> None:
     if not given:
         return
     dataset = choice["dataset"]
-    columns = _dataset_columns(dataset)
+    if choice['surface'] == 'derive':
+        from manyruns import derive
+        from manyruns.pipeline import loading
+
+        root = derive.root_row(derive.parent_row(choice['parent_run'], '.'), '.')
+        try:
+            columns = loading.obs_columns(derive.source_path(root, derive.dataset_description(root), '.'))
+        except (OSError, ValueError) as exc:
+            raise Refused(1, str(exc)) from exc
+    else:
+        columns = _dataset_columns(dataset)
     if columns is None:
-        raise _refuse(f"dataset {dataset!r} has no columns that manyruns reads, so a choice on "
-                      f"it takes no {' or '.join(given)}")
+        raise _refuse(
+            f"dataset {dataset!r} has no columns that manyruns reads, so a choice on "
+            f"it takes no {' or '.join(given)}"
+        )
     for key in given:
         if choice[key] not in columns:
-            raise _refuse(f"{key} {choice[key]!r} is not a column of dataset {dataset!r}; its "
-                          f"columns are {', '.join(columns) or '(none)'}")
+            raise _refuse(
+                f"{key} {choice[key]!r} is not a column of dataset {dataset!r}; its "
+                f"columns are {', '.join(columns) or '(none)'}"
+            )
 
 
 # ── check 11: the recompute ──────────────────────────────────────────────────────
@@ -326,24 +399,28 @@ def _candidates(choice: dict, store: Path | str, seed: int):
     from manyruns import actions
 
     dataset = choice["dataset"]
+    if choice["surface"] == "derive":
+        yield lambda: actions.enumerate_actions("derive", dataset=dataset, run=choice["parent_run"], store=store)
+        return
     if choice["surface"] == "ledger":
         for gate in (True, False):
             yield lambda gate=gate: actions.enumerate_actions(
-                "ledger", dataset=dataset, gate=gate, seed=seed, store=store)
+                "ledger", dataset=dataset, gate=gate, seed=seed, store=store
+            )
         return
     chosen = choice["chosen"]
     recipe = chosen.get("recipe") if isinstance(chosen, dict) else None
     if not isinstance(recipe, str):
-        raise _refuse(f"chosen {chosen!r} on tune must be "
-                      "{\"recipe\": R, \"step\": S, \"params\": P}")
+        raise _refuse(f'chosen {chosen!r} on tune must be {{"recipe": R, "step": S, "params": P}}')
     step = chosen.get("step")
     for gate in (True, False):
         yield lambda gate=gate: actions.enumerate_actions(
-            "tune", dataset=dataset, recipe=recipe, gate=gate, seed=seed, store=store)
+            "tune", dataset=dataset, recipe=recipe, gate=gate, seed=seed, store=store
+        )
         if isinstance(step, str):
             yield lambda gate=gate: actions.enumerate_actions(
-                "tune", dataset=dataset, recipe=recipe, step=step, gate=gate, seed=seed,
-                store=store)
+                "tune", dataset=dataset, recipe=recipe, step=step, gate=gate, seed=seed, store=store
+            )
 
 
 def _recompute(choice: dict, store: Path | str, seed: int) -> dict:
@@ -363,8 +440,10 @@ def _recompute(choice: dict, store: Path | str, seed: int) -> dict:
     what = f"{choice['surface']} document of {choice['dataset']!r}"
     if choice["surface"] == "tune":
         what += f" for recipe {choice['chosen']['recipe']!r}"
-    raise _refuse(f"stale offer: no {what}, with the gate on or off, has offer_sha256 "
-                  f"{want!r}; get the action document again and choose on it")
+    raise _refuse(
+        f"stale offer: no {what}, with the gate on or off, has offer_sha256 "
+        f"{want!r}; get the action document again and choose on it"
+    )
 
 
 # ── checks 12 and 13: legality, one function for a choice and a proposal ─────────
@@ -410,19 +489,46 @@ def _illegal(choice: dict, chosen: Any, doc: dict, store: Path | str, seed: int)
     """Why `chosen` is not in the legal set of `doc`, or None when it is."""
     from manyruns import actions
 
+    if choice["surface"] == "derive":
+        from manyruns import derive
+
+        if not isinstance(chosen, dict) or set(chosen) != {"connector", "params"}:
+            return 'chosen on derive must be exactly {"connector", "params"}'
+        entry = next((e for e in doc["offered"] if e["connector"] == chosen["connector"]), None)
+        if entry is None:
+            return f"connector {chosen['connector']!r} is not offered"
+        if not entry["can_run"]:
+            return "; ".join(entry["blocked"])
+        if not isinstance(chosen["params"], dict):
+            return "params must be a mapping"
+        problems = derive.parameter_problems(chosen["connector"], entry["declaration"], chosen["params"])
+        if problems:
+            return "; ".join(problems)
+        for role, key in entry["role_keys"].items():
+            if key is None and not choice.get(f"{role}_key"):
+                return f"supply {role}_key in the choice"
+        if entry["selection"] != ("selection_sha256" in choice):
+            return "selection_sha256 is required exactly when the connector takes a selection"
+        if "parent_index" in choice:
+            parent = derive.parent_row(choice["parent_run"], store)
+            if choice["parent_index"] not in {e["index"] for e in derive._manifest(parent, store).values()}:
+                return "parent_index must name a persisted slot of the parent"
+        return None
     if choice["surface"] == "ledger":
         if not isinstance(chosen, dict) or set(chosen) != {"recipe"}:
             extra = sorted(set(chosen) - {"recipe"}) if isinstance(chosen, dict) else []
-            return (f"chosen {chosen!r} on ledger must be exactly {{\"recipe\": R}}"
-                    + (f"; unknown key {', '.join(extra)}" if extra else ""))
+            return f'chosen {chosen!r} on ledger must be exactly {{"recipe": R}}' + (
+                f"; unknown key {', '.join(extra)}" if extra else ""
+            )
         return _ledger_reason(doc, chosen["recipe"])
     if not isinstance(chosen, dict) or set(chosen) != {"recipe", "step", "params"}:
-        return f"chosen {chosen!r} on tune must be exactly {{\"recipe\", \"step\", \"params\"}}"
+        return f'chosen {chosen!r} on tune must be exactly {{"recipe", "step", "params"}}'
     recipe, step, params = chosen["recipe"], chosen["step"], chosen["params"]
     if recipe != doc["recipe"]:
         return f"recipe {recipe!r} is not the document's recipe {doc['recipe']!r}"
-    ledger = actions.enumerate_actions("ledger", dataset=doc["dataset"]["name"],
-                                       gate=doc["gate"], seed=seed, store=store)
+    ledger = actions.enumerate_actions(
+        "ledger", dataset=doc["dataset"]["name"], gate=doc["gate"], seed=seed, store=store
+    )
     reason = _ledger_reason(ledger, recipe)
     if reason is not None:
         return reason
@@ -445,7 +551,7 @@ def check_choice(choice: dict, *, store: Path | str = ".", seed: int = 42) -> di
 
     Raises `Refused(2, ...)` at the first failed check, and `Refused(1, ...)` when the action
     document cannot be loaded. Reads `<store>/outputs/index.jsonl`, and the dataset's column
-    names when the choice gives `time_key` or `condition_key`; writes nothing.
+    names when the choice gives a column key; writes nothing.
     """
     _check_shape(choice)
     doc = _recompute(choice, store, seed)
@@ -474,8 +580,10 @@ def review(choice: dict, *, ask: Callable[[dict], Any], human_id: str) -> dict:
     from manyruns import annotations
 
     if not isinstance(human_id, str) or not re.fullmatch(annotations.PSEUDONYM_PATTERN, human_id):
-        raise ValueError(f"human_id {human_id!r} is not a pseudonym: lowercase letters, digits, "
-                         "_ and -, at most 32 characters, starting with a letter or digit")
+        raise ValueError(
+            f"human_id {human_id!r} is not a pseudonym: lowercase letters, digits, "
+            "_ and -, at most 32 characters, starting with a letter or digit"
+        )
     if not isinstance(choice, dict):
         raise ValueError(f"a choice document is a dict, got {type(choice).__name__}")
     missing = [k for k in _REQUIRED if k not in choice]
@@ -489,14 +597,17 @@ def review(choice: dict, *, ask: Callable[[dict], Any], human_id: str) -> dict:
     elif isinstance(answer, dict):
         final = copy.deepcopy(answer)
     else:
-        raise ValueError(f"ask must return 'accept' or a chosen dict, got "
-                         f"{type(answer).__name__} {answer!r}")
+        raise ValueError(
+            f"ask must return 'accept' or a chosen dict, got {type(answer).__name__} {answer!r}"
+        )
     proposed = {k: copy.deepcopy(choice[k]) for k in _PROPOSED_REQUIRED}
     proposed.update({k: copy.deepcopy(choice[k]) for k in _PROPOSED_OPTIONAL if k in choice})
-    out = {k: copy.deepcopy(choice[k])
-           for k in ("schema_version", "surface", "dataset", "offer_sha256")}
+    out = {
+        k: copy.deepcopy(choice[k])
+        for k in ("schema_version", "surface", "dataset", "offer_sha256")
+    }
     out.update(chosen=final, chooser="human:" + human_id, bound="none", proposed=proposed)
-    for key in ("extra", *_COLUMN_KEYS):
+    for key in ("extra", "parent_run", "parent_index", "selection_sha256", *_COLUMN_KEYS):
         if key in choice:
             out[key] = copy.deepcopy(choice[key])
     return out
@@ -504,13 +615,14 @@ def review(choice: dict, *, ask: Callable[[dict], Any], human_id: str) -> dict:
 
 def label(choice: dict, chosen: dict, doc: dict) -> str:
     """The row form of a legal `chosen`: the recipe on ledger, the attempt label on tune."""
+    if choice["surface"] == "derive":
+        return f"derive:{chosen['connector']}"
     if choice["surface"] == "ledger":
         return chosen["recipe"]
     from manyruns import tune
 
     declared = next(o["params"] for o in doc["offered"] if o["step"] == chosen["step"])
     return tune._label({"name": chosen["step"], "params": {**declared, **chosen["params"]}})
-
 
 
 # ── the tool view ─────────────────────────────────────────────────────────────────
@@ -530,16 +642,18 @@ def _knob_schema(name: str, knob: dict) -> dict:
     domain = knob["domain"]
     integer = domain["kind"] == "int"
     numeric: dict[str, Any] = {"type": "integer" if integer else "number"}
-    low = _bound([(knob.get("floor"), False), (domain.get("min"), bool(domain.get("min_open")))],
-                 max)
+    low = _bound(
+        [(knob.get("floor"), False), (domain.get("min"), bool(domain.get("min_open")))], max
+    )
     if low is not None:
         value, is_open = low
         if is_open and integer:
             numeric["minimum"] = math.floor(value) + 1
         else:
             numeric["exclusiveMinimum" if is_open else "minimum"] = value
-    high = _bound([(knob.get("cap"), False), (domain.get("max"), bool(domain.get("max_open")))],
-                  min)
+    high = _bound(
+        [(knob.get("cap"), False), (domain.get("max"), bool(domain.get("max_open")))], min
+    )
     if high is not None:
         value, is_open = high
         if is_open and integer:
@@ -547,7 +661,7 @@ def _knob_schema(name: str, knob: dict) -> dict:
         else:
             numeric["exclusiveMaximum" if is_open else "maximum"] = value
     also = list(domain.get("also") or [])
-    schema = ({"anyOf": [numeric, {"type": "string", "enum": also}]} if also else numeric)
+    schema = {"anyOf": [numeric, {"type": "string", "enum": also}]} if also else numeric
     return {**schema, "description": f"{name}, current {knob['current']}"}
 
 
@@ -563,45 +677,69 @@ def as_tools(doc: dict) -> list[dict]:
         legal = [o["recipe"] for o in doc["offered"] if o.get("can_run")]
         if not legal:
             return []
-        return [{
-            "name": "choose_recipe",
-            "description": (f"Choose the next recipe that manyruns runs on "
-                            f"{doc['dataset']['name']}. Only the listed recipes are legal."),
-            "parameters": {"type": "object",
-                           "properties": {"recipe": {"type": "string", "enum": legal}},
-                           "required": ["recipe"], "additionalProperties": False},
-        }]
+        return [
+            {
+                "name": "choose_recipe",
+                "description": (
+                    f"Choose the next recipe that manyruns runs on "
+                    f"{doc['dataset']['name']}. Only the listed recipes are legal."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {"recipe": {"type": "string", "enum": legal}},
+                    "required": ["recipe"],
+                    "additionalProperties": False,
+                },
+            }
+        ]
     if surface == "tune":
-        return [{
-            "name": f"tune_{step}",
-            "description": (f"Set parameters of step {step} in recipe {doc['recipe']}. "
-                            "Values outside the stated bounds are refused."),
-            "parameters": {"type": "object",
-                           "properties": {name: _knob_schema(name, knob)
-                                          for name, knob in knobs["params"].items()},
-                           "minProperties": 1, "additionalProperties": False},
-        } for step, knobs in doc["knobs"].items()]
+        return [
+            {
+                "name": f"tune_{step}",
+                "description": (
+                    f"Set parameters of step {step} in recipe {doc['recipe']}. "
+                    "Values outside the stated bounds are refused."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        name: _knob_schema(name, knob) for name, knob in knobs["params"].items()
+                    },
+                    "minProperties": 1,
+                    "additionalProperties": False,
+                },
+            }
+            for step, knobs in doc["knobs"].items()
+        ]
     return []
 
 
-def choice_from_tool_call(doc: dict, name: str, arguments: Any, *, chooser: str,
-                          bound: str) -> dict:
+def choice_from_tool_call(
+    doc: dict, name: str, arguments: Any, *, chooser: str, bound: str
+) -> dict:
     """The choice document of one tool call on `doc`. Checks the tool name, not legality."""
     known = [tool["name"] for tool in as_tools(doc)]
     if name not in known:
-        raise _refuse(f"tool {name!r} is not a tool of this document: "
-                      f"{', '.join(known) or '(none)'}")
+        raise _refuse(
+            f"tool {name!r} is not a tool of this document: {', '.join(known) or '(none)'}"
+        )
     if not isinstance(arguments, dict):
-        raise _refuse(f"the arguments of tool {name!r} must be an object, got "
-                      f"{type(arguments).__name__}")
+        raise _refuse(
+            f"the arguments of tool {name!r} must be an object, got {type(arguments).__name__}"
+        )
     if doc["surface"] == "ledger":
         chosen: dict = {"recipe": arguments.get("recipe")}
     else:
-        chosen = {"recipe": doc["recipe"], "step": name[len("tune_"):],
-                  "params": dict(arguments)}
-    return {"schema_version": SCHEMA_VERSION, "surface": doc["surface"],
-            "dataset": doc["dataset"]["name"], "offer_sha256": offer_sha256(doc),
-            "chosen": chosen, "chooser": chooser, "bound": bound}
+        chosen = {"recipe": doc["recipe"], "step": name[len("tune_") :], "params": dict(arguments)}
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "surface": doc["surface"],
+        "dataset": doc["dataset"]["name"],
+        "offer_sha256": offer_sha256(doc),
+        "chosen": chosen,
+        "chooser": chooser,
+        "bound": bound,
+    }
 
 
 # ── the wrapper ───────────────────────────────────────────────────────────────────
@@ -634,8 +772,16 @@ class ActionSpace:
     `act`, so a threaded caller must not call `act` from two threads at once.
     """
 
-    def __init__(self, dataset: str, *, mode: str = "library", store: str | Path = ".",
-                 engine: Optional[str] = None, seed: int = 42, device: Optional[str] = None):
+    def __init__(
+        self,
+        dataset: str,
+        *,
+        mode: str = "library",
+        store: str | Path = ".",
+        engine: Optional[str] = None,
+        seed: int = 42,
+        device: Optional[str] = None,
+    ):
         if mode not in _MODES:
             raise ValueError(f"mode {mode!r} is not one of {', '.join(_MODES)}")
         if not Path(store).is_dir():
@@ -649,17 +795,26 @@ class ActionSpace:
 
     # ── offer ──
 
-    def offer(self, surface: str = "ledger", *, gate: bool = True,
-              recipe: Optional[str] = None, step: Optional[str] = None) -> dict:
+    def offer(
+        self,
+        surface: str = "ledger",
+        *,
+        gate: Optional[bool] = None,
+        recipe: Optional[str] = None,
+        step: Optional[str] = None,
+        run: Optional[str] = None,
+    ) -> dict:
         """The action document of `surface` for this dataset. Raises `Refused` on a failure."""
         if self.mode == "library":
-            return self._offer_library(surface, gate, recipe, step)
-        return self._offer_cli(surface, gate, recipe, step)
+            return self._offer_library(surface, gate, recipe, step, run)
+        return self._offer_cli(surface, gate, recipe, step, run)
 
-    def _offer_library(self, surface, gate, recipe, step) -> dict:
+    def _offer_library(self, surface, gate, recipe, step, run) -> dict:
         from manyruns import actions
 
         kwargs: dict[str, Any] = {}
+        if run is not None:
+            kwargs["run"] = run
         if recipe is not None:
             kwargs["recipe"] = recipe
         if step is not None:
@@ -673,17 +828,21 @@ class ActionSpace:
         except actions.LoadError as exc:
             raise Refused(1, f"cannot load {exc}") from None
 
-    def _offer_cli(self, surface, gate, recipe, step) -> dict:
+    def _offer_cli(self, surface, gate, recipe, step, run) -> dict:
         args = ["actions"]
         if surface != "ladder":
             args.append(self.dataset)
         args += ["--surface", surface]
+        if run is not None:
+            args += ["--run", run]
         if recipe is not None:
             args += ["--recipe", recipe]
         if step is not None:
             args += ["--step", step]
         if surface != "ladder":
-            args += ["--gate", "on" if gate else "off", "--seed", str(self.seed)]
+            args += ["--seed", str(self.seed)]
+            if gate is not None:
+                args += ["--gate", "on" if gate else "off"]
         done = self._child(args)
         if done.returncode != 0:
             raise Refused(2 if done.returncode == 2 else 1, _stderr_text(done.stderr))
@@ -714,9 +873,14 @@ class ActionSpace:
         captured = io.StringIO()
         try:
             with contextlib.chdir(self.store), contextlib.redirect_stderr(captured):
-                result = app._run_choice(choice, engine=self.engine, seed=self.seed,
-                                         device=self.device, project=None,
-                                         parser=app._build_parser())
+                result = app._run_choice(
+                    choice,
+                    engine=self.engine,
+                    seed=self.seed,
+                    device=self.device,
+                    project=None,
+                    parser=app._build_parser(),
+                )
         except SystemExit as exc:
             code = exc.code if isinstance(exc.code, int) else 1
             raise Refused(code, _stderr_text(captured.getvalue())) from None
@@ -743,12 +907,19 @@ class ActionSpace:
         ran = _RUN_LINE.search(done.stdout)
         if done.returncode != 0 and decided is None:
             raise Refused(2 if done.returncode == 2 else 1, _stderr_text(done.stderr))
-        return {"schema_version": SCHEMA_VERSION,
-                "decision_id": decided.group(1) if decided else None,
-                "run_id": ran.group(1) if ran else None,
-                "exit_code": done.returncode}
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "decision_id": decided.group(1) if decided else None,
+            "run_id": ran.group(1) if ran else None,
+            "exit_code": done.returncode,
+        }
 
     def _child(self, args: list[str]):
-        return subprocess.run([sys.executable, "-m", "manyruns", *args], cwd=self.store,
-                              capture_output=True, encoding="utf-8",
-                              stdin=subprocess.DEVNULL, env=_child_env())
+        return subprocess.run(
+            [sys.executable, "-m", "manyruns", *args],
+            cwd=self.store,
+            capture_output=True,
+            encoding="utf-8",
+            stdin=subprocess.DEVNULL,
+            env=_child_env(),
+        )

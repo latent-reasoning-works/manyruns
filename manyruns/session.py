@@ -32,6 +32,7 @@ atomic `manyruns run` is the degenerate lineage: issued all at once, no parent. 
 only reading under which the artifact folder's `NN` stays a POSITION rather than becoming a
 graph node, and under which `COMPLETE` keeps meaning "this folder is finished".
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -39,6 +40,7 @@ from typing import Any, Optional
 
 from manyruns import trace as _trace
 from manyruns.pipeline import runner as _runner
+from manyruns.pipeline import steps as _steps
 
 
 def catalog_steps(config_dir: Optional[Path | str] = None) -> dict[str, dict]:
@@ -100,12 +102,16 @@ def available_actions(engine: Optional[str] = None) -> list[str]:
     steps = {n: s for n, s in catalog_steps().items() if offered(s)}
     if engine is None:
         return list(steps)
-    return [name for name, step in steps.items()
-            if _runner.dispatchable(engine, name, step.get("group"))]
+    return [
+        name
+        for name, step in steps.items()
+        if _runner.dispatchable(engine, name, step.get("group"))
+    ]
 
 
-def resolve_step(action: Any, engine: Optional[str] = None,
-                 recipe: Optional[dict] = None) -> Optional[dict]:
+def resolve_step(
+    action: Any, engine: Optional[str] = None, recipe: Optional[dict] = None
+) -> Optional[dict]:
     """A typed action (any casing/spacing/alias) → the step dict to apply, or None.
 
     Returns the CATALOG's step — group and declared params included — rather than a
@@ -130,16 +136,36 @@ def resolve_step(action: Any, engine: Optional[str] = None,
     """
     from manyruns import commands
 
-    cmd = commands.resolve(action)
-    name = cmd.name if cmd is not None and cmd.kind == "step" else None
-    if name is None:
+    declarations = (recipe or {}).get("steps") or []
+    # A recipe can name a tool the command catalog has never seen. Its declaration
+    # must be reachable before consulting that catalog, or typing the name loses it.
+    # Other steps still need command resolution: a declaration alone must not make
+    # an unknown built-in name typeable just because the engine accepts its group.
+    declared = next(
+        (s for s in declarations if commands._norm(s.get("name")) == commands._norm(action)),
+        None,
+    )
+    if declared is not None and declared.get("tool"):
+        step = declared
+    else:
+        cmd = commands.resolve(action)
+        name = cmd.name if cmd is not None and cmd.kind == "step" else None
+        if name is None:
+            return None
+        declared = next((s for s in declarations if s.get("name") == name), None)
+        step = declared or catalog_steps().get(name)
+    if step is None:
         return None
-    declared = next((s for s in ((recipe or {}).get("steps") or [])
-                     if s.get("name") == name), None)
-    step = declared or catalog_steps().get(name)
-    if step is None or (engine is not None
-                        and not _runner.dispatchable(engine, name, step.get("group"))):
-        return None
+    if engine is not None:
+        # Tool steps use the external executor, so the built-in name and group tables
+        # cannot answer whether they run. They still need an engine with a step loop.
+        supported = (
+            _runner.steppable(engine)
+            if step.get("tool")
+            else _runner.dispatchable(engine, step.get("name"), step.get("group"))
+        )
+        if not supported:
+            return None
     return dict(step)
 
 
@@ -269,6 +295,9 @@ class Session:
         genes: Any = None,
         layers: Optional[dict] = None,
         agent_id: str = _trace.HUMAN,
+        source_path: Any = None,
+        obs: dict | None = None,
+        original_input: dict | None = None,
     ):
         from manyruns.pipeline import bounds
 
@@ -294,7 +323,10 @@ class Session:
         # `agents.propose` sets for the length of its call. It stamps the `step` and
         # `run_complete` trace events, so a reader can tell a person's steps from a model's.
         self.agent_id = agent_id
+        self.measure = True
         self.compute = None  # Optional execution placement; never an engine selection.
+        # Keep the complete input in the parent; ordinary compute calls only need ctx.
+        self.original_input = original_input
         # A caller-supplied embedding is a fact the CALLER provided, which is what
         # `vocab.noncanonical` needs to say "legal and unusual" rather than nothing at all.
         self.provided = {"embedding"} if getattr(embedding, "ndim", 0) == 2 else set()
@@ -303,11 +335,16 @@ class Session:
         # known and because a session's close can be an hour of prompting away.
         self.parent = _runner.as_parent(parent)
 
-        self.dispatch = _runner.dispatch_for(engine)   # raises for a non-steppable engine
+        self.dispatch = _runner.dispatch_for(engine)  # raises for a non-steppable engine
         self.state = _runner._new_state(
             X=array if getattr(array, "ndim", 0) == 2 else None,
-            labels=labels, seed=self.seed, emb=embedding,
-            counts=counts, genes=genes, layers=layers,
+            labels=labels,
+            seed=self.seed,
+            emb=embedding,
+            counts=counts,
+            genes=genes,
+            layers=layers,
+            obs=obs,
         )
         if counts is not None and self.state["X"] is not None:
             from manyruns.aligned import check_aligned
@@ -334,13 +371,26 @@ class Session:
         # the artifact step 0 writes, so a lineage with no address at step 0 writes nothing.
         # `spec_id` is the half that cannot be known yet — it hashes the step list, and a
         # session's step list is not known until the session ends. See `results`.
-        self.run_id = _runner.identity(self.recipe, engine=engine, seed=self.seed,
-                                       dataset=dataset, dataset_name=dataset_name,
-                                       data_kwargs=self.data_kwargs)[0]
+        self.run_id = _runner.identity(
+            self.recipe,
+            engine=engine,
+            seed=self.seed,
+            dataset=dataset,
+            dataset_name=dataset_name,
+            data_kwargs=self.data_kwargs,
+        )[0]
         self.ctx: dict[str, Any] = {
-            "out_dir": self.out_dir, "plots": self.plots, "target_dim": target_dim,
-            "seed": self.seed, "fast_dev_run": self.fast_dev_run, "device": device,
-            "array": array, "data_ref": dataset, "data_kwargs": self.data_kwargs,
+            "source_path": source_path,
+            "tool_timeout": _runner.tool_timeout(),
+            "out_dir": self.out_dir,
+            "plots": self.plots,
+            "target_dim": target_dim,
+            "seed": self.seed,
+            "fast_dev_run": self.fast_dev_run,
+            "device": device,
+            "array": array,
+            "data_ref": dataset,
+            "data_kwargs": self.data_kwargs,
             "dataset_name": dataset_name,
             "declared_shape": declared_shape,
             # The declared suite reaches the ENGINE here, the same way `_explore_project`
@@ -365,19 +415,34 @@ class Session:
         record is appended inside `apply_step` (that is what gives a live observer the list it
         renders), so appending it again here would double-count and break the index.
         """
+        # Inspect the issued step, since the TUI can add analysis after opening a session.
+        step_input = (
+            {"original_input": self.original_input}
+            if _runner.step_group(step) == "analysis" and step.get("name") in _steps._CTX_ANALYSIS_STEPS
+            else {}
+        )
         if self.compute is not None:
             index = len(self.steps)
 
             def reported(rec, steps):
-                if rec.get('state') == 'running':
+                if rec.get("state") == "running":
                     self.steps[:] = steps
                     _runner._report(self.on_step, rec, self.steps)
 
             try:
                 state, g, ctx, carry, steps = self.compute.call(
-                    _runner.compute_step, step, self.state, self.g,
-                    dispatch=self.dispatch, ctx=self.ctx, index=index, carry=self.carry,
-                    steps=self.steps, on_step=reported)
+                    _runner.compute_step,
+                    step,
+                    self.state,
+                    self.g,
+                    dispatch=self.dispatch,
+                    ctx=self.ctx,
+                    index=index,
+                    carry=self.carry,
+                    steps=self.steps,
+                    on_step=reported,
+                    **step_input,
+                )
             except _runner.ComputeCancelled:
                 # A progress message is provisional: no returned snapshot means this
                 # attempt never reached the retained state. The driver records its
@@ -388,36 +453,68 @@ class Session:
                 # No returned snapshot means no committed transition. Retain the last
                 # authoritative state and mark the issued occurrence as interrupted/error.
                 if len(self.steps) == index:
-                    self.steps.append({'index': index, 'name': step.get('name'),
-                                       'group': _runner.step_group(step),
-                                       'params': dict(step.get('params') or {})})
+                    self.steps.append(
+                        {
+                            "index": index,
+                            "name": step.get("name"),
+                            "group": _runner.step_group(step),
+                            "params": dict(step.get("params") or {}),
+                            **({"tool": step["tool"]} if "tool" in step else {}),
+                        }
+                    )
                 rec = self.steps[index]
-                rec.update(outcome='error', detail=f'{type(exc).__name__}: {exc}', seconds=0.0)
+                rec.update(outcome="error", detail=f"{type(exc).__name__}: {exc}", seconds=0.0)
                 _runner._settle(rec)
                 _runner._report(self.on_step, rec, self.steps)
                 return self._emit_step(rec)
-            for target, source in ((self.state, state), (self.g, g),
-                                   (self.ctx, ctx), (self.carry, carry)):
+            for target, source in (
+                (self.state, state),
+                (self.g, g),
+                (self.ctx, ctx),
+                (self.carry, carry),
+            ):
                 target.clear()
                 target.update(source)
-            self.plots[:] = ctx['plots']
-            self.ctx['plots'] = self.plots
+            self.plots[:] = ctx["plots"]
+            self.ctx["plots"] = self.plots
             self.steps[:] = steps
             _runner._report(self.on_step, self.steps[index], self.steps)
             return self._emit_step(self.steps[index])
-        return self._emit_step(_runner.apply_step(
-            step, self.state, self.g, dispatch=self.dispatch, ctx=self.ctx,
-            index=len(self.steps), carry=self.carry, on_step=self.on_step, steps=self.steps,
-        ))
+        self.ctx.update(step_input)
+        try:
+            return self._emit_step(
+                _runner.apply_step(
+                    step,
+                    self.state,
+                    self.g,
+                    dispatch=self.dispatch,
+                    ctx=self.ctx,
+                    index=len(self.steps),
+                    carry=self.carry,
+                    on_step=self.on_step,
+                    steps=self.steps,
+                )
+            )
+        finally:
+            self.ctx.pop("original_input", None)
 
     def _emit_step(self, rec: dict) -> dict:
         """The `step` trace event for one returned record, then the record itself, unchanged.
 
         The default sink writes nothing and no sink raises, so this changes no step result."""
-        _trace.current().emit(_trace.stamp(
-            {"kind": "step", "index": rec.get("index"), "name": rec.get("name"),
-             "group": rec.get("group"), "outcome": rec.get("outcome")},
-            run_id=self.run_id, agent_id=self.agent_id))
+        _trace.current().emit(
+            _trace.stamp(
+                {
+                    "kind": "step",
+                    "index": rec.get("index"),
+                    "name": rec.get("name"),
+                    "group": rec.get("group"),
+                    "outcome": rec.get("outcome"),
+                },
+                run_id=self.run_id,
+                agent_id=self.agent_id,
+            )
+        )
         return rec
 
     def step(self, action: Any) -> dict:
@@ -435,12 +532,18 @@ class Session:
         # declares. See `resolve_step`: without it a typed `pca` resolved to whichever
         # recipe sorts first alphabetically, so walking `cflows` by hand gave a 10-dim PCA
         # where its own file declares 50.
-        step = (action if isinstance(action, dict)
-                else resolve_step(action, engine=self.engine, recipe=self.recipe))
+        step = (
+            action
+            if isinstance(action, dict)
+            else resolve_step(action, engine=self.engine, recipe=self.recipe)
+        )
         if step is None:
             offered = ", ".join(available_actions(self.engine)) or "(none on this engine)"
-            return {"ok": False, "name": str(action),
-                    "error": f"unknown action {action!r}; try {offered}"}
+            return {
+                "ok": False,
+                "name": str(action),
+                "error": f"unknown action {action!r}; try {offered}",
+            }
         return self._view(self.apply(step))
 
     def run_recipe(self) -> list[dict]:
@@ -525,7 +628,7 @@ class Session:
         # zero-drop filter made `branch(0)` raise "step 0 (phate)'s embedding predates a
         # filter: cut dropped 0 rows since" — a refusal that states its own falsity, and one
         # that stood for the rest of the lineage.
-        dropped = [s for s in self.steps[index + 1:] if (s.get("dropped") or {}).get("n")]
+        dropped = [s for s in self.steps[index + 1 :] if (s.get("dropped") or {}).get("n")]
         if dropped:
             n = sum(int(s["dropped"].get("n") or 0) for s in dropped)
             raise ValueError(
@@ -537,8 +640,12 @@ class Session:
         from manyruns import artifacts as _artifacts
 
         child = Session(
-            project=self.project, engine=self.engine, out_dir=self.out_dir, seed=self.seed,
-            fast_dev_run=self.fast_dev_run, modality=self.modality,
+            project=self.project,
+            engine=self.engine,
+            out_dir=self.out_dir,
+            seed=self.seed,
+            fast_dev_run=self.fast_dev_run,
+            modality=self.modality,
             # NOT the parent's recipe: this lineage did not run that recipe's earlier steps,
             # it inherited their output. Claiming the name would make `recipe` and `spec_id`
             # describe different things — `None` renders as "(adaptive)" at both readers.
@@ -549,31 +656,57 @@ class Session:
             # unfiltered label vector is the desync `aligned` exists to catch — one row off and
             # every cell is attributed to the wrong donor. Identical objects on every lineage
             # that ran no filter, which is all of them until a recipe declares one.
-            array=self.ctx["array"], labels=self.state.get("labels"),
-            sample_ids=(self.ctx["sample_ids"][self.state["rows"]]
-                        if self.ctx.get("sample_ids") is not None else None),
+            array=self.ctx["array"],
+            labels=self.state.get("labels"),
+            source_path=self.ctx.get("source_path"),
+            original_input=self.original_input,
+            obs={
+                name: values[self.state["rows"]]
+                for name, values in self.state["frame"]["obs"].items()
+            },
+            sample_ids=(
+                self.ctx["sample_ids"][self.state["rows"]]
+                if self.ctx.get("sample_ids") is not None
+                else None
+            ),
             label_kind=self.state.get("label_kind"),
             label_key=self.state.get("label_key"),
-            color=([{**c, "values": c["values"][self.state["rows"]]}
-                    for c in self.ctx.get("display_channels") or ()]),
-            counts=self.state.get("counts"), genes=self.state.get("genes"),
+            color=(
+                [
+                    {**c, "values": c["values"][self.state["rows"]]}
+                    for c in self.ctx.get("display_channels") or ()
+                ]
+            ),
+            counts=self.state.get("counts"),
+            genes=self.state.get("genes"),
             layers=self.state.get("layers"),
-            dataset=self.dataset, data_kwargs=self.data_kwargs,
+            dataset=self.dataset,
+            data_kwargs=self.data_kwargs,
             dataset_name=self.dataset_name,
             declared_shape=self.ctx.get("declared_shape"),
-            target_dim=self.ctx["target_dim"], device=self.ctx["device"],
-            metrics=self.ctx["metrics"], on_step=self.on_step, shape=self.shape,
+            target_dim=self.ctx["target_dim"],
+            device=self.ctx["device"],
+            metrics=self.ctx["metrics"],
+            on_step=self.on_step,
+            shape=self.shape,
             embedding=_artifacts.load_array(path),
             parent={"run_id": self.run_id, "index": index},
             agent_id=self.agent_id,
         )
+        # `Session.__init__` takes no `sample_key`/`batch_key` param — `_build_session` sets
+        # them as plain attributes after construction (app.py:917-918), so the constructor
+        # call above cannot carry them and they must be copied across explicitly, the same
+        # way `interactive_session` later reads them with `getattr(session, …, None)`.
+        child.sample_key = getattr(self, "sample_key", None)
+        child.batch_key = getattr(self, "batch_key", None)
         if alignment is None:
             # A positional branch inherits the uncertainty and must not turn reloaded
             # source metadata into verified identities on its newly written artifacts.
             child.ctx["metadata_aligned"] = None
             child.ctx["caveats"].append(
                 "branched from positional alignment: sample identity remains unverified; "
-                "source metadata will not be attached to derived coordinates")
+                "source metadata will not be attached to derived coordinates"
+            )
         return child
 
     # ── the record ───────────────────────────────────────────────────────────
@@ -586,8 +719,15 @@ class Session:
         """
         return {
             "name": self._recipe_name(),
-            "steps": [{"name": s["name"], "group": s["group"], "params": dict(s["params"])}
-                      for s in self.steps],
+            "steps": [
+                {
+                    "name": s["name"],
+                    "group": s["group"],
+                    "params": dict(s["params"]),
+                    **({"tool": s["tool"]} if "tool" in s else {}),
+                }
+                for s in self.steps
+            ],
         }
 
     def results(self, *, abandoned: bool = False, not_run=()) -> dict:
@@ -612,9 +752,14 @@ class Session:
         # stays the same function of the same kind of input as the recipe path — where the
         # declared list also contains steps that may skip. Hashing only what succeeded would
         # make a session's `spec_id` incomparable with a recipe's the moment one step skipped.
-        spec_id = _runner.identity(performed, engine=self.engine, seed=self.seed,
-                                   dataset=self.dataset, dataset_name=self.dataset_name,
-                                   data_kwargs=self.data_kwargs)[1]
+        spec_id = _runner.identity(
+            performed,
+            engine=self.engine,
+            seed=self.seed,
+            dataset=self.dataset,
+            dataset_name=self.dataset_name,
+            data_kwargs=self.data_kwargs,
+        )[1]
         from manyruns import vocab as _vocab
 
         # `engine=` also picks up a STAND-IN: a step whose executor is a different algorithm
@@ -627,8 +772,12 @@ class Session:
         # step-produced facts on every DECLARED narrowing — so a `prep` step that skipped or
         # errored would rewrite where the record says the embedding came from. See
         # `runner.executed` for the measured case.
-        caveats = _vocab.noncanonical(_runner.executed(performed, self.steps), self.shape,
-                                      provided=self.provided, engine=self.engine)
+        caveats = _vocab.noncanonical(
+            _runner.executed(performed, self.steps),
+            self.shape,
+            provided=self.provided,
+            engine=self.engine,
+        )
         # THE SAME LIST, because it is the same class of event this channel already carries:
         # something about HOW this run reached its numbers that a reader has to know before
         # trusting them ("legal and unusual, running anyway" / "every number here is
@@ -641,31 +790,48 @@ class Session:
         caveats.extend(self.ctx.get("caveats") or [])
         caveats.extend(
             f"{name}: discarded at the tune prompt — this run does not contain it, and the "
-            + ("retained state is as it stood before it" if abandoned else
-               "geometry here is measured on the state as it stood before it")
+            + (
+                "retained state is as it stood before it"
+                if abandoned
+                else "geometry here is measured on the state as it stood before it"
+            )
             for name in self.discarded
         )
         finalize = _runner._finalize
         if self.compute is not None and not abandoned:
+
             def finalize(*args, **kwargs):
                 try:
                     return self.compute.call(_runner._finalize, *args, **kwargs)
                 except _runner.ComputeCancelled:
                     # The interrupted metric response was never committed. Existing step
                     # scores survive; the same abandoned assembler discloses missing geometry.
-                    kwargs['abandoned'] = True
+                    kwargs["abandoned"] = True
                     return _runner._finalize(*args, **kwargs)
                 except (RuntimeError, OSError) as exc:
                     # A dead metric worker or failed startup must still produce one honest
                     # record. Never retry expensive geometry on the UI process.
-                    kwargs['compute_error'] = str(exc)
+                    kwargs["compute_error"] = str(exc)
                     return _runner._finalize(*args, **kwargs)
+
         return finalize(
-            self.state, dict(self.g), engine=self.engine, recipe=performed, steps=self.steps,
-            plots=self.plots, seed=self.seed, dataset=self.dataset, caveats=caveats,
-            dataset_name=self.dataset_name, data_kwargs=self.data_kwargs,
-            ident=(self.run_id, spec_id), parent=self.parent, discarded=self.discarded,
-            abandoned=abandoned, not_run=not_run,
+            self.state,
+            dict(self.g),
+            engine=self.engine,
+            recipe=performed,
+            steps=self.steps,
+            plots=self.plots,
+            seed=self.seed,
+            dataset=self.dataset,
+            caveats=caveats,
+            dataset_name=self.dataset_name,
+            data_kwargs=self.data_kwargs,
+            ident=(self.run_id, spec_id),
+            parent=self.parent,
+            discarded=self.discarded,
+            measure=self.measure,
+            abandoned=abandoned,
+            not_run=not_run,
         )
 
     def close(self, *, abandoned: bool = False, not_run=()) -> dict:
@@ -685,10 +851,19 @@ class Session:
             _runner.finish_carry(self.carry, self.ctx)
         if isinstance(res, dict):
             # After `finish_carry`, so the event follows the `COMPLETE` marker it reports on.
-            _trace.current().emit(_trace.stamp(
-                {"kind": "run_complete", "ok": res.get("ok"), "complete": res.get("complete"),
-                 "spec_id": res.get("spec_id"), "n_steps": len(self.steps)},
-                run_id=self.run_id, agent_id=self.agent_id))
+            _trace.current().emit(
+                _trace.stamp(
+                    {
+                        "kind": "run_complete",
+                        "ok": res.get("ok"),
+                        "complete": res.get("complete"),
+                        "spec_id": res.get("spec_id"),
+                        "n_steps": len(self.steps),
+                    },
+                    run_id=self.run_id,
+                    agent_id=self.agent_id,
+                )
+            )
         return res
 
     # ── views over the record (never a second accumulator) ───────────────────
@@ -716,7 +891,10 @@ class Session:
             return None
         for issued, want in zip(self.steps, declared):
             if (issued["name"], issued["group"], issued["params"]) != (
-                    want.get("name"), want.get("group"), dict(want.get("params") or {})):
+                want.get("name"),
+                want.get("group"),
+                dict(want.get("params") or {}),
+            ):
                 return None
         return self.recipe.get("name")
 
@@ -725,10 +903,13 @@ class Session:
         of exactly "ok" — so a step the panel calls failed is a step the row calls failed."""
         ok = rec["outcome"] == "ok"
         return {
-            "ok": ok, "name": rec["name"], "outcome": rec["outcome"],
+            "ok": ok,
+            "name": rec["name"],
+            "outcome": rec["outcome"],
             "detail": rec["detail"] or _produced(rec),
             "error": rec["detail"] or rec["outcome"],
-            "record": rec, "g_vector": dict(self.g),
+            "record": rec,
+            "g_vector": dict(self.g),
         }
 
 

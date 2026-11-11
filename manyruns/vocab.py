@@ -13,6 +13,7 @@ Dependency-free on purpose: importing this must never pull the compute stack. `p
 used to reach into `pipeline` for the three step groups, dragging the entire pipeline
 package (io, loading, mioflow, runner, steps) along to obtain a 3-tuple of strings.
 """
+
 from __future__ import annotations
 
 import re
@@ -85,7 +86,7 @@ HANDLE_KINDS = ("manylatents", "path")
 #: every narrowing by construction. Declared by the dataset, because it is a property of the
 #: BYTES — a time-course `.h5ad` quantified with velocyto has it and a time-course point cloud
 #: of the same shape does not.
-DATASET_FACTS: tuple[str, ...] = ("genes", "splicing")
+DATASET_FACTS: tuple[str, ...] = ("genes", "splicing", "samples", "batch")
 
 #: The TOPOLOGY a dataset carries — scShapeBench's label set (arXiv:2605.12662) plus the two
 #: graph classes its label set omits but its generators cover. Additive alongside `SHAPES`,
@@ -98,12 +99,12 @@ DATASET_FACTS: tuple[str, ...] = ("genes", "splicing")
 #: annotators, because a dataset frequently exhibits more than one organizational regime
 #: (distinct cell types progressing through a cycle is both `clusters` and `single-trajectory`).
 TOPOLOGIES = (
-    "clusters",           # discrete, well-separated groups
+    "clusters",  # discrete, well-separated groups
     "single-trajectory",  # a one-dimensional ribbon, no bifurcation
-    "multi-branching",    # a tree: one arm splits into two or more
-    "archetypal",         # a simplex — extremal specialists at the vertices
-    "cycle",              # a closed loop (not in scShapeBench's L; its graph classes cover it)
-    "surface",            # a 2-manifold (likewise)
+    "multi-branching",  # a tree: one arm splits into two or more
+    "archetypal",  # a simplex — extremal specialists at the vertices
+    "cycle",  # a closed loop (not in scShapeBench's L; its graph classes cover it)
+    "surface",  # a 2-manifold (likewise)
 )
 
 #: The four scShapeBench classes, spelled as `TOPOLOGIES` names and in `TOPOLOGIES` order. Not a
@@ -160,8 +161,9 @@ def scshapebench_to_topology(label: str) -> str:
     try:
         return SCSHAPEBENCH_TOPOLOGY[label]
     except (KeyError, TypeError):
-        raise ValueError(f"unknown scShapeBench label {label!r} — must be one of "
-                         f"{sorted(SCSHAPEBENCH_TOPOLOGY)}") from None
+        raise ValueError(
+            f"unknown scShapeBench label {label!r} — must be one of {sorted(SCSHAPEBENCH_TOPOLOGY)}"
+        ) from None
 
 
 def labeler_to_topology(label: str) -> Optional[str]:
@@ -172,8 +174,9 @@ def labeler_to_topology(label: str) -> Optional[str]:
     try:
         return LABELER_TOPOLOGY[label]
     except (KeyError, TypeError):
-        raise ValueError(f"unknown labeler label {label!r} — must be one of "
-                         f"{sorted(LABELER_TOPOLOGY)}") from None
+        raise ValueError(
+            f"unknown labeler label {label!r} — must be one of {sorted(LABELER_TOPOLOGY)}"
+        ) from None
 
 
 def collapse_for_benchmark(name: str) -> str:
@@ -222,14 +225,18 @@ def check_provides(values: Any) -> list[str]:
     if values is None:
         return []
     if isinstance(values, str) or not isinstance(values, (list, tuple)):
-        return [f"handle `provides` must be a LIST of dataset facts from {DATASET_FACTS}, "
-                f"got {values!r} — a scalar is read as a set of its CHARACTERS, which silently "
-                f"declares nothing"]
+        return [
+            f"handle `provides` must be a LIST of dataset facts from {DATASET_FACTS}, "
+            f"got {values!r} — a scalar is read as a set of its CHARACTERS, which silently "
+            f"declares nothing"
+        ]
     unknown = [v for v in values if v not in DATASET_FACTS]
     if unknown:
-        return [f"unknown handle provides {unknown} — must be from {DATASET_FACTS}; an "
-                f"unrecognised fact is ignored by `dataset_provides`, so a typo here reads as "
-                f"a dataset that carries less than it does"]
+        return [
+            f"unknown handle provides {unknown} — must be from {DATASET_FACTS}; an "
+            f"unrecognised fact is ignored by `dataset_provides`, so a typo here reads as "
+            f"a dataset that carries less than it does"
+        ]
     return []
 
 
@@ -284,8 +291,17 @@ AMBIGUOUS_TIME_KEYS = ("sample", "batch")
 #: `"group"` is deliberately absent: it is already in `CONDITION_KEYS`, where it means a
 #: case/control arm. The KIND named `group` and a COLUMN named `group` are different things,
 #: and listing the name in both tables would make one shadow the other by check order.
-GROUP_KEYS = ("cell_type", "celltype", "cell_types", "annotation",
-              "branch", "cluster", "clusters", "leiden", "louvain")
+GROUP_KEYS = (
+    "cell_type",
+    "celltype",
+    "cell_types",
+    "annotation",
+    "branch",
+    "cluster",
+    "clusters",
+    "leiden",
+    "louvain",
+)
 
 #: The label kinds whose colour is an IDENTITY, not a magnitude — so a legend is the honest
 #: key and a colorbar is not. `time` is deliberately absent: `TIME_KEYS` is "a real ORDERING",
@@ -537,8 +553,15 @@ STEP_PRODUCES: dict[str, tuple[str, ...]] = {
 #: step's needs and produces come from its manifest, not from the name tables above, so these
 #: are named here: `facts()` and `step_facts()` include them, and `narrate` phrases each one.
 #: `pseudotime`, `trajectories` and `class_probabilities` have no other producer in the tables.
-TOOL_OUTPUT_FACTS = ("embedding", "clusters", "pseudotime", "trajectories", "graph",
-                     "class_probabilities", "velocity")
+TOOL_OUTPUT_FACTS = (
+    "embedding",
+    "clusters",
+    "pseudotime",
+    "trajectories",
+    "graph",
+    "class_probabilities",
+    "velocity",
+)
 
 #: What a step needs BEFORE it can run — satisfiable from EITHER source above. One needs
 #: table; which source supplies a fact is `unmet`'s business, not a second table's.
@@ -711,7 +734,8 @@ def facts() -> frozenset:
     needs it (see `STEP_NEEDS`). This answers "what words does the calculus use", not "what can
     currently be missing".
     """
-    out: set = set(TOOL_OUTPUT_FACTS)
+    # Dataset declarations can supply facts before any bundled step demands them.
+    out: set = set(TOOL_OUTPUT_FACTS) | set(DATASET_FACTS)
     for table in (SHAPE_PROVIDES, GROUP_PROVIDES, STEP_PRODUCES, STEP_NEEDS):
         for values in table.values():
             out.update(values)
@@ -893,7 +917,7 @@ NARROWING_STEPS: dict[str, "str | None"] = {
 def step_narrows(step: dict) -> bool:
     """Does running this step remove rows or columns from the selection?
 
-    Reads the step's declared PARAMS as well as its name, because for one step the answer is in
+    Reads a tool's declared mask, or the step's PARAMS and name, because one answer is in
     them (`NARROWING_STEPS`). The recipe is the declaration, so this is not a guess about what
     the executor will do — it is what the author wrote down.
 
@@ -935,6 +959,16 @@ def step_narrows(step: dict) -> bool:
     `narrate.CLEARED_FACT` names the filter as the cause, so the advice a user gets is to move
     it before the embedding rather than to add an embedder the recipe already has.
     """
+    if step.get("tool"):
+        from manyruns.toolchain import load_tool
+
+        try:
+            cfg = load_tool(step["tool"])
+        except ValueError:
+            # Legality reporting names the missing or invalid tool; this asks only
+            # whether its declared transition clears earlier fitted facts.
+            return False
+        return "mask" in (cfg.get("output") or {})
     name = step.get("name")
     if name not in NARROWING_STEPS:
         return False
@@ -952,8 +986,7 @@ def frame_facts() -> frozenset:
     sets stay disjoint, because a fact appearing in both would silently make the fold monotone
     again for that one word.
 
-    Measured today: `{"conditions", "genes", "time"}` — the `SHAPE_PROVIDES` union
-    (`conditions`, `time`) plus `DATASET_FACTS`' one member, `genes`.
+    The shape facts (`conditions`, `time`) survive alongside all dataset facts.
     """
     out: set = set()
     for values in SHAPE_PROVIDES.values():
@@ -983,7 +1016,8 @@ def step_facts() -> frozenset:
     carries. A time label is per cell, so the survivors of a narrowing keep theirs: the frame
     rule (survive) is the one that holds, and `time` stays out of this set.
     """
-    out: set = set(TOOL_OUTPUT_FACTS)
+    # Dataset declarations can supply facts before any bundled step demands them.
+    out: set = set(TOOL_OUTPUT_FACTS) | set(DATASET_FACTS)
     for table in (GROUP_PROVIDES, STEP_PRODUCES):
         for values in table.values():
             out.update(values)
@@ -1088,10 +1122,13 @@ def standins(recipe: dict, engine: Optional[str]) -> list:
     return notes
 
 
-def noncanonical(recipe: dict, shape: str = "unknown",
-                 provided: "frozenset | set | tuple | None" = None,
-                 engine: Optional[str] = None,
-                 handle: "dict | None" = None) -> list:
+def noncanonical(
+    recipe: dict,
+    shape: str = "unknown",
+    provided: "frozenset | set | tuple | None" = None,
+    engine: Optional[str] = None,
+    handle: "dict | None" = None,
+) -> list:
     """Legal compositions that took an unusual route to a fact, as sentences for a human.
 
     Same fold as :func:`unmet`, tracking WHERE each fact came from rather than whether it
@@ -1144,8 +1181,12 @@ def noncanonical(recipe: dict, shape: str = "unknown",
     return notes
 
 
-def unmet(recipe: dict, shape: str, provided: "frozenset | set | tuple | None" = None,
-          handle: "dict | None" = None) -> frozenset:
+def unmet(
+    recipe: dict,
+    shape: str,
+    provided: "frozenset | set | tuple | None" = None,
+    handle: "dict | None" = None,
+) -> frozenset:
     """What this recipe needs that nothing available at that point can provide. Empty = legal.
 
     The same subtraction it has always been, folded ALONG the recipe rather than unioned over
@@ -1195,9 +1236,12 @@ def unmet(recipe: dict, shape: str, provided: "frozenset | set | tuple | None" =
     return _walk(recipe, shape, provided, handle)[0]
 
 
-def invalidated(recipe: dict, shape: str,
-                provided: "frozenset | set | tuple | None" = None,
-                handle: "dict | None" = None) -> frozenset:
+def invalidated(
+    recipe: dict,
+    shape: str,
+    provided: "frozenset | set | tuple | None" = None,
+    handle: "dict | None" = None,
+) -> frozenset:
     """Of what :func:`unmet` refuses, the facts that WERE on hand and a narrowing took away.
 
     A second PROJECTION of the one fold, never a second fold — `unmet` and this both return a
@@ -1224,9 +1268,12 @@ def invalidated(recipe: dict, shape: str,
     return _walk(recipe, shape, provided, handle)[1]
 
 
-def _walk(recipe: dict, shape: str,
-          provided: "frozenset | set | tuple | None",
-          handle: "dict | None" = None) -> tuple[frozenset, frozenset]:
+def _walk(
+    recipe: dict,
+    shape: str,
+    provided: "frozenset | set | tuple | None",
+    handle: "dict | None" = None,
+) -> tuple[frozenset, frozenset]:
     """The fold `unmet` and `invalidated` are the two projections of — `(missing, cleared)`.
 
     ONE walk with two readers, rather than two walks: `unmet` decides legality and
@@ -1241,7 +1288,7 @@ def _walk(recipe: dict, shape: str,
     keep: frozenset = frame_facts() | frozenset(provided or ())
     missing: set = set()
     cleared: set = set()
-    lost: set = set()      # facts a narrowing has already taken away, for the reason half
+    lost: set = set()  # facts a narrowing has already taken away, for the reason half
     for step in recipe.get("steps") or []:
         for fact in step_needs(step):
             if fact in have:
@@ -1303,7 +1350,8 @@ SUPPORT_CODES: tuple[str, str, str] = ("not_admitted", "not_measured", "fails_ru
 #: list, decision rows and the action document, which a caller that must not see the geometry
 #: reads.
 SUPPORT_REASONS: frozenset[str] = frozenset(
-    f"{key}:{code}" for key, _ in RUNG_EVIDENCE.values() for code in SUPPORT_CODES)
+    f"{key}:{code}" for key, _ in RUNG_EVIDENCE.values() for code in SUPPORT_CODES
+)
 
 
 def _support_rule(claim: str, v: float) -> bool:
@@ -1327,15 +1375,19 @@ def _measured_number(v: Any) -> Optional[float]:
     if isinstance(v, (int, float)):
         out = float(v)
     elif getattr(v, "shape", None) == () and getattr(getattr(v, "dtype", None), "kind", "") in (
-            "i", "u", "f"):
+        "i",
+        "u",
+        "f",
+    ):
         out = float(v)
     else:
         return None
     return out if out == out and out not in (float("inf"), float("-inf")) else None
 
 
-def rung_support(recipe: dict, evidence: Mapping[str, Any],
-                 admitted: Collection[str]) -> frozenset[str]:
+def rung_support(
+    recipe: dict, evidence: Mapping[str, Any], admitted: Collection[str]
+) -> frozenset[str]:
     """Why the evidence does not support this recipe's claim. Empty = supported.
 
     A recipe whose `claims` has no rule in `RUNG_EVIDENCE` is never refused. Otherwise at most

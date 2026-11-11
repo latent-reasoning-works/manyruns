@@ -15,7 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 PAGE = ROOT / "docs" / "harness.md"
 
 SECTIONS = ["## The intended use", "## The action space wrapper", "## The choice document",
-            "## CLI mode", "## Library mode", "## The record", "## Who is a harness"]
+            "## CLI mode", "## Library mode", "## The record", "## Adding a tool",
+            "## Adding a connector", "## Who is a harness"]
 
 
 def _section(text: str, heading: str) -> str:

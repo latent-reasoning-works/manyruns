@@ -11,6 +11,7 @@ What that leaves untested is stated rather than implied: whether a REAL lock rep
 environment. That is `toolchain.build` + `selftest`, verified out of band and recorded in
 `docs/sidecars/pyrovelocity.md`; no CI job can afford it.
 """
+
 from __future__ import annotations
 
 import json
@@ -19,11 +20,44 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from tool_stubs import FRAME_ADAPTER, make_tool
 
 from manyruns import toolchain
 from manyruns.pipeline import external, runner, steps
 
-ADAPTER = '''
+
+def test_a_step_named_differently_from_its_tool_runs_that_tool(tmp_path, monkeypatch):
+    import tempfile
+
+    import numpy as np
+
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setenv("MPLCONFIGDIR", str(tmp_path / "matplotlib"))
+    pytest.importorskip("anndata")
+    make_tool(
+        tmp_path,
+        monkeypatch,
+        "framer",
+        {"input": {"kind": "state_frame"}, "output": {"obsm": ["field"]}, "produces": ["field"]},
+        FRAME_ADAPTER,
+    )
+    X = np.arange(24, dtype=float).reshape(8, 3)
+    out = runner.run_inproc(
+        X,
+        {"name": "r", "steps": [{"name": "field_a", "group": "lightning", "tool": "framer"}]},
+        tmp_path / "out",
+        counts=X,
+        genes=np.array(["g0", "g1", "g2"]),
+    )
+    (step,) = out["steps"]
+    assert step["outcome"] == "ok", step.get("detail")
+    g = out["g_vector"]
+    assert g["field_a.tool_name"] == "framer"
+    assert g["field_a.rows"] == 8
+    assert not any(k.startswith("framer.") for k in g)
+
+
+ADAPTER = """
 import json, sys
 def main(p):
     req = json.loads(open(p).read())
@@ -45,7 +79,7 @@ def main(p):
     return 0
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1]))
-'''
+"""
 
 MANIFEST = textwrap.dedent("""
     name: stub
@@ -84,14 +118,30 @@ def _lock(d, body="stub==1.0 --hash=sha256:deadbeef\n"):
 def test_a_manifest_with_no_selftest_is_refused():
     """A lock nobody executed is not a working pin — measured: pyrovelocity 0.4.5 installs with
     exit 0 and fails to import. The manifest may not skip the check that catches that."""
-    bad = toolchain.check_tool({"name": "x", "version": "1", "requires": ["x==1"],
-                                "entrypoint": "a.py", "input": {"kind": "state_matrix"}}, "x")
+    bad = toolchain.check_tool(
+        {
+            "name": "x",
+            "version": "1",
+            "requires": ["x==1"],
+            "entrypoint": "a.py",
+            "input": {"kind": "state_matrix"},
+        },
+        "x",
+    )
     assert any("selftest" in p for p in bad), bad
 
 
 def test_a_manifest_with_no_version_is_refused():
-    bad = toolchain.check_tool({"name": "x", "requires": ["x==1"], "entrypoint": "a.py",
-                                "selftest": "pass", "input": {"kind": "state_matrix"}}, "x")
+    bad = toolchain.check_tool(
+        {
+            "name": "x",
+            "requires": ["x==1"],
+            "entrypoint": "a.py",
+            "selftest": "pass",
+            "input": {"kind": "state_matrix"},
+        },
+        "x",
+    )
     assert any("version" in p for p in bad), bad
 
 
@@ -112,7 +162,7 @@ def test_the_lock_digest_is_the_identity_not_the_version(stub):
     re-locking for a patched transitive dep IS a different tool."""
     _lock(stub, "stub==1.0 --hash=sha256:aaa\n")
     first = toolchain.resolve("stub")["digest"]
-    _lock(stub, "stub==1.0 --hash=sha256:bbb\n")   # same version, different closure
+    _lock(stub, "stub==1.0 --hash=sha256:bbb\n")  # same version, different closure
     assert toolchain.resolve("stub")["digest"] != first
 
 
@@ -172,7 +222,7 @@ def test_a_source_file_tool_is_refused_after_a_narrowing(tmp_path):
 
     cfg = {"name": "t", "input": {"kind": "source_file", "layers": ["spliced"]}}
     state = runner._new_state(counts=np.zeros((10, 4)))
-    state["rows"] = np.arange(3)               # narrowed
+    state["rows"] = np.arange(3)  # narrowed
     with pytest.raises(steps._StepSkipped) as e:
         external._input_path(cfg, state, {"source_path": str(tmp_path / "x.h5ad")}, tmp_path)
     assert "already narrowed" in str(e.value)
@@ -184,8 +234,12 @@ def test_a_tool_step_keeps_its_group_so_the_calculus_is_unchanged():
     from manyruns import vocab
 
     assert vocab.STEP_PRODUCES["pyrovelocity"] == ("velocity",)
-    recipe = {"steps": [{"name": "pyrovelocity", "group": "lightning", "tool": "pyrovelocity"},
-                        {"name": "velocity_field", "group": "analysis"}]}
+    recipe = {
+        "steps": [
+            {"name": "pyrovelocity", "group": "lightning", "tool": "pyrovelocity"},
+            {"name": "velocity_field", "group": "analysis"},
+        ]
+    }
     # The tool's own need is the DATA it cannot run without, and it is refused at plan time on
     # anything that does not carry it — the gate, not an accident of ordering.
     assert vocab.unmet(recipe, "manifold") == frozenset({"splicing"})
@@ -227,11 +281,12 @@ def test_a_state_frame_tool_sees_the_NARROWED_run_not_the_file(tmp_path):
     n, g = 20, 6
     counts = np.arange(n * g, dtype="float32").reshape(n, g)
     layers = {"spliced": counts * 2, "unspliced": counts * 3}
-    state = runner._new_state(counts=counts, genes=np.array([f"g{i}" for i in range(g)]),
-                              layers=layers)
+    state = runner._new_state(
+        counts=counts, genes=np.array([f"g{i}" for i in range(g)]), layers=layers
+    )
 
     keep = np.zeros(n, bool)
-    keep[:7] = True                       # a filter drops 13 of 20
+    keep[:7] = True  # a filter drops 13 of 20
     state["rows"] = _frame.narrow(state["rows"], keep)
 
     cfg = {"name": "t", "input": {"kind": "state_frame", "layers": ["spliced", "unspliced"]}}

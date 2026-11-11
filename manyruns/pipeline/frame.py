@@ -18,13 +18,19 @@ not have to record what it dropped for the record to be able to say so.
 **Plain data on purpose.** Dicts and ndarrays, no classes — an agent driving manylatents or
 manyagents must not have to import a type to use a surface.
 """
+
 from __future__ import annotations
 
 from typing import Any
 
 
-def new_frame(counts: Any = None, genes: Any = None, labels: Any = None,
-              layers: "dict | None" = None) -> dict:
+def new_frame(
+    counts: Any = None,
+    genes: Any = None,
+    labels: Any = None,
+    layers: "dict | None" = None,
+    obs: dict | None = None,
+) -> dict:
     """The immutable original: the data exactly as loaded. Written once, never again.
 
     `counts` is the caller's matrix and is NOT copied — `loading.py:436` records that
@@ -48,7 +54,13 @@ def new_frame(counts: Any = None, genes: Any = None, labels: Any = None,
 
     Not copied, like `counts` — these are references to the caller's arrays.
     """
-    return {"counts": counts, "genes": genes, "labels": labels, "layers": dict(layers or {})}
+    return {
+        "counts": counts,
+        "genes": genes,
+        "labels": labels,
+        "layers": dict(layers or {}),
+        "obs": dict(obs or {}),
+    }
 
 
 def full_selection(n: int) -> Any:
@@ -74,7 +86,8 @@ def narrow(selection: Any, mask: Any) -> Any:
     if m.ndim != 1 or m.shape[0] != selection.shape[0]:
         raise ValueError(
             f"mask has {m.shape[0] if m.ndim == 1 else m.shape} entries but the selection "
-            f"holds {selection.shape[0]} — a filter's mask is sized against what it SAW")
+            f"holds {selection.shape[0]} — a filter's mask is sized against what it SAW"
+        )
     return selection[m]
 
 
@@ -88,7 +101,7 @@ def _take(value: Any, index: Any, axis: int) -> Any:
 
 
 def view(frame: dict, rows: Any, cols: Any) -> dict:
-    """The frame as the current step sees it — `{counts, genes, labels}`.
+    """The frame as the current step sees it — counts, genes, labels, layers and obs.
 
     Row indexing a CSR is cheap; column indexing is not, so `cols` is applied only when it is
     actually narrower than the frame. That keeps the common case (rows filtered, all genes
@@ -111,11 +124,14 @@ def view(frame: dict, rows: Any, cols: Any) -> dict:
         "counts": out_counts,
         "genes": _take(genes, cols, 0),
         "labels": _take(frame.get("labels"), rows, 0),
+        "obs": {name: _take(values, rows, 0) for name, values in (frame.get("obs") or {}).items()},
         # Same two axes as `counts`, so the same rule: rows always, columns only when the
         # selection is actually narrower. A layer that is NOT cell-by-gene has no business here
         # and would be silently mis-sliced, which is why `new_frame` says what a layer is.
-        "layers": {name: _take_both(matrix, rows, cols)
-                   for name, matrix in (frame.get("layers") or {}).items()},
+        "layers": {
+            name: _take_both(matrix, rows, cols)
+            for name, matrix in (frame.get("layers") or {}).items()
+        },
     }
 
 

@@ -6,6 +6,7 @@ The two load-bearing harness invariants are asserted directly: (1) importing the
 never pulls an SDK or the TUI packages into the base chain, and (2) intent refuses an analysis
 the data can't honestly support before it ever routes to a recipe.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -57,6 +58,46 @@ def _isolated_drop_folder(tmp_path, monkeypatch):
     monkeypatch.setattr("urllib.request.urlopen", no_network)
 
 
+def test_the_shell_row_records_the_sample_and_batch_keys(monkeypatch):
+    from types import SimpleNamespace
+
+    from manyruns import shell, store
+
+    seen = {}
+    monkeypatch.setattr(store, "append", lambda results, extra=None: seen.update(extra) or "idx")
+    shell._record(
+        CaptureConsole(),
+        {"run_id": "r"},
+        SimpleNamespace(source="x"),
+        "rna",
+        keys={"sample_key": "donor", "batch_key": "lane"},
+    )
+    assert seen["sample_key"] == "donor" and seen["batch_key"] == "lane"
+
+
+def test_explore_once_hands_the_sample_and_batch_keys_to_loading(tmp_path, monkeypatch):
+    from manyruns import app
+
+    seen = {}
+
+    def _stop(*args, **kwargs):
+        seen.update(kwargs)
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr(app, "_load_inputs", _stop)
+    with pytest.raises(RuntimeError, match="stop"):
+        app.explore_once(
+            data_folder=tmp_path,
+            dataset=None,
+            modality="rna",
+            recipe_name="embed",
+            engine="mock",
+            sample_key="donor",
+            batch_key="lane",
+        )
+    assert seen["sample_key"] == "donor" and seen["batch_key"] == "lane"
+
+
 def _shell_args():
     from manyruns import app
 
@@ -75,9 +116,9 @@ def test_explore_a_preset_dataset_end_to_end_on_mock():
     out = con.text
 
     assert rc == 0
-    assert "swissroll" in out                      # it read + named the data
-    assert "phate" in out and "mioflow" in out     # the step trace ran
-    assert "path" in out.lower()                   # narrate spoke a plain-English finding
+    assert "swissroll" in out  # it read + named the data
+    assert "phate" in out and "mioflow" in out  # the step trace ran
+    assert "path" in out.lower()  # narrate spoke a plain-English finding
 
 
 def test_plain_prompter_drives_the_shell_without_a_tty(monkeypatch):
@@ -104,7 +145,7 @@ def test_plain_prompter_drives_the_shell_without_a_tty(monkeypatch):
     answers = iter(["1", "3", "2", "cluster", "5"])
     monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
     con = CaptureConsole()
-    rc = shell.run_shell(_shell_args(), console=con)   # prompter defaulted → PlainPrompter
+    rc = shell.run_shell(_shell_args(), console=con)  # prompter defaulted → PlainPrompter
     assert rc == 0
     assert "swissroll" in con.text and "leiden" in con.text
 
@@ -126,7 +167,7 @@ def test_explore_a_dropped_file_shows_data_loaded(tmp_path, monkeypatch):
     out = con.text
     assert rc == 0
     assert "cohort.csv" in out
-    assert "data loaded" in out          # the explicit validation step
+    assert "data loaded" in out  # the explicit validation step
 
 
 def test_scan_drop_folder_lists_data_and_folders_only(tmp_path):
@@ -138,7 +179,7 @@ def test_scan_drop_folder_lists_data_and_folders_only(tmp_path):
     labels = [label for label, _ in shell._scan_drop_folder(tmp_path)]
     assert any(lbl == "cohort.h5ad" for lbl in labels)
     assert any("treated_vs_healthy/" in lbl for lbl in labels)
-    assert not any("notes.md" in lbl for lbl in labels)   # .md is not a data suffix
+    assert not any("notes.md" in lbl for lbl in labels)  # .md is not a data suffix
 
 
 def test_data_dir_defaults_and_respects_env(monkeypatch, tmp_path):
@@ -151,7 +192,7 @@ def test_data_dir_defaults_and_respects_env(monkeypatch, tmp_path):
     from manyruns import shell
 
     monkeypatch.setenv("MANYRUNS_DATA_DIR", str(tmp_path / "drop"))
-    assert shell.data_dir() == tmp_path / "drop"          # the env var always wins
+    assert shell.data_dir() == tmp_path / "drop"  # the env var always wins
 
     monkeypatch.delenv("MANYRUNS_DATA_DIR")
     monkeypatch.chdir(tmp_path)
@@ -160,7 +201,7 @@ def test_data_dir_defaults_and_respects_env(monkeypatch, tmp_path):
     assert shell.data_dir() == Path.home() / ".manyruns" / "data"
 
     (tmp_path / "data").mkdir()
-    assert shell.data_dir() == Path("data")               # a checkout keeps its own
+    assert shell.data_dir() == Path("data")  # a checkout keeps its own
 
 
 def test_back_out_of_source_returns_to_menu_then_quits():
@@ -199,9 +240,7 @@ def test_route_recipe_maps_compare_to_contrast():
     from manyruns.narrate import Observation
 
     obs = Observation(shape="case-control", conditions=["treated", "healthy"])
-    recipe, refusal = intent.route_recipe(
-        "compare the two groups", obs, ["contrast", "embed"]
-    )
+    recipe, refusal = intent.route_recipe("compare the two groups", obs, ["contrast", "embed"])
     assert recipe == "contrast" and refusal is None
 
 
@@ -239,8 +278,11 @@ def test_base_import_chain_pulls_no_sdk_or_tui():
     # after this one then died on "module 'rich' has no attribute 'repr'" — a failure that
     # depended on test ORDER, which is why it looked intermittent.
     roots = ("rich", "questionary", "anthropic")
-    saved = {k: v for k, v in sys.modules.items()
-             if k in roots or any(k.startswith(r + ".") for r in roots)}
+    saved = {
+        k: v
+        for k, v in sys.modules.items()
+        if k in roots or any(k.startswith(r + ".") for r in roots)
+    }
     for k in saved:
         sys.modules.pop(k, None)
     try:
@@ -293,8 +335,10 @@ def test_the_stepped_front_door_hands_the_session_the_step_not_its_name():
         def close(self):
             return {"ended_with": "close"}
 
-    recipe = {"name": "odd", "steps": [
-        {"name": "phate", "group": "latent", "params": {"n_components": 4}}]}
+    recipe = {
+        "name": "odd",
+        "steps": [{"name": "phate", "group": "latent", "params": {"n_components": 4}}],
+    }
     out = shell._run_stepped(CaptureConsole(), _Session(), recipe)
 
     assert handed == [{"name": "phate", "group": "latent", "params": {"n_components": 4}}]
@@ -313,7 +357,7 @@ def test_the_front_door_steps_every_engine_that_has_a_step_loop(monkeypatch):
     """
     from manyruns import app, shell
 
-    class _Session:      # `_run` stamps `.source` on it, so it cannot be a bare sentinel
+    class _Session:  # `_run` stamps `.source` on it, so it cannot be a bare sentinel
         pass
 
     monkeypatch.setattr(app, "_build_session", lambda proj, args: _Session())
@@ -322,10 +366,18 @@ def test_the_front_door_steps_every_engine_that_has_a_step_loop(monkeypatch):
 
     def _route(engine):
         obs = type("O", (), {"source": "swissroll"})()
-        return shell._run(_shell_args(), CaptureConsole(), None, "swissroll", "scrna",
-                          "cflows", obs, engine=engine)["stepped"]
+        return shell._run(
+            _shell_args(),
+            CaptureConsole(),
+            None,
+            "swissroll",
+            "scrna",
+            "cflows",
+            obs,
+            engine=engine,
+        )["stepped"]
 
-    assert _route("_inproc") is True               # the public default — was unreachable
+    assert _route("_inproc") is True  # the public default — was unreachable
     assert _route("mock") is True
     assert _route("manylatents") is True
     # The negative arm used to be the learner's engine — the one that ran a whole recipe in a
@@ -345,10 +397,18 @@ def downloadable_sample(tmp_path, monkeypatch):
     from manyruns import catalog
 
     payload = b"a,b\n1,2\n3,4\n"
-    cfg = {"name": "sample", "shape": "clusters", "modality": "scrna", "handle": {
-        "kind": "path", "ref": "elsewhere/sample.csv", "bytes": len(payload),
-        "sha256": hashlib.sha256(payload).hexdigest(), "url": "https://example.org/sample.csv",
-    }}
+    cfg = {
+        "name": "sample",
+        "shape": "clusters",
+        "modality": "scrna",
+        "handle": {
+            "kind": "path",
+            "ref": "elsewhere/sample.csv",
+            "bytes": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "url": "https://example.org/sample.csv",
+        },
+    }
     root = tmp_path / "catalog"
     root.mkdir()
     (root / "sample.yaml").write_text(yaml.safe_dump(cfg))
@@ -389,8 +449,12 @@ def test_fetch_on_selection_returns_a_newly_resolved_absolute_drop_path(download
     assert "download on selection" in str(pr.offered[0])
     assert pr.offered[1][2] == "back"
     assert [label for label, value in pr.offered[1][1]] == ["Fetch", "Back"]
-    for expected in ("sample.csv", ds["handle"]["url"],
-                     str(shell.data_dir().resolve() / "sample.csv"), str(ds["handle"]["bytes"])):
+    for expected in (
+        "sample.csv",
+        ds["handle"]["url"],
+        str(shell.data_dir().resolve() / "sample.csv"),
+        str(ds["handle"]["bytes"]),
+    ):
         assert expected in con.text
 
 
@@ -447,14 +511,22 @@ def test_rich_shell_refusal_preserves_its_rescan_and_local_path_hints(downloadab
     assert requests == []
 
 
-@pytest.mark.parametrize(("source", "dataset", "file_source", "expected"), [
-    ("arch_soft", "archetypal", False, "arch_soft"),
-    ("arch_soft", "swissroll", False, None),
-    ("not_a_catalog_row", "swissroll", False, None),
-    ("arch_soft", None, True, None),
-])
+@pytest.mark.parametrize(
+    ("source", "dataset", "file_source", "expected"),
+    [
+        ("arch_soft", "archetypal", False, "arch_soft"),
+        ("arch_soft", "swissroll", False, None),
+        ("not_a_catalog_row", "swissroll", False, None),
+        ("arch_soft", None, True, None),
+    ],
+)
 def test_run_preserves_only_verified_named_generator_identity(
-    monkeypatch, tmp_path, source, dataset, file_source, expected,
+    monkeypatch,
+    tmp_path,
+    source,
+    dataset,
+    file_source,
+    expected,
 ):
     from types import SimpleNamespace
 
@@ -469,14 +541,24 @@ def test_run_preserves_only_verified_named_generator_identity(
 
     monkeypatch.setattr(app, "_build_session", build)
     monkeypatch.setattr(shell, "_run_stepped", lambda *args: {})
-    shell._run(_shell_args(), CaptureConsole(), tmp_path if file_source else None,
-               dataset, "synthetic", "embed", SimpleNamespace(source=source), engine="mock")
+    shell._run(
+        _shell_args(),
+        CaptureConsole(),
+        tmp_path if file_source else None,
+        dataset,
+        "synthetic",
+        "embed",
+        SimpleNamespace(source=source),
+        engine="mock",
+    )
     assert captured[0]["dataset_name"] == expected
 
 
 @pytest.mark.parametrize("failure", ["offline", "unicode"])
 def test_failed_fetch_stays_in_picker_then_retries_with_the_same_instructions(
-    downloadable_sample, monkeypatch, failure,
+    downloadable_sample,
+    monkeypatch,
+    failure,
 ):
     import io
     from urllib.error import URLError
@@ -485,8 +567,11 @@ def test_failed_fetch_stays_in_picker_then_retries_with_the_same_instructions(
 
     ds, _ = downloadable_sample
     calls = []
-    error = (URLError("offline today") if failure == "offline"
-             else UnicodeEncodeError("ascii", "é", 0, 1, "URL cannot be encoded"))
+    error = (
+        URLError("offline today")
+        if failure == "offline"
+        else UnicodeEncodeError("ascii", "é", 0, 1, "URL cannot be encoded")
+    )
 
     def opener(url, *, timeout):
         calls.append(url)
@@ -606,6 +691,28 @@ def test_sample_without_download_url_refuses_with_citation_and_placement(
     pr = RecordingPrompter([("dataset", "sample"), ("back", None)])
     assert shell._pick_source(pr, con) is None
     assert len(pr.offered) == 2 and requests == []
-    for part in ("sample.csv", ds["source"]["url"],
-                 str(shell.data_dir().resolve() / "sample.csv")):
+    for part in ("sample.csv", ds["source"]["url"], str(shell.data_dir().resolve() / "sample.csv")):
         assert part in con.text
+
+
+@pytest.mark.parametrize("attr, fact", [("sample_key", "samples"), ("batch_key", "batch")])
+def test_a_named_role_column_counts_toward_recipe_eligibility(attr, fact):
+    from types import SimpleNamespace
+
+    from manyruns import shell
+
+    obs = SimpleNamespace(
+        provides=lambda: frozenset({"genes"}), columns=[["donor", "categorical", 3]]
+    )
+    args = SimpleNamespace(**{attr: "donor"})
+    assert shell._role_facts(args, obs, CaptureConsole()) == {"genes", fact}
+
+
+def test_a_named_role_column_the_data_lacks_is_refused_before_a_recipe_is_picked():
+    from types import SimpleNamespace
+
+    from manyruns import shell
+
+    obs = SimpleNamespace(provides=lambda: frozenset(), columns=[["cell_type", "categorical", 3]])
+    console = CaptureConsole()
+    assert shell._role_facts(SimpleNamespace(sample_key="donor"), obs, console) is None

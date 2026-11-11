@@ -10,13 +10,65 @@ argument, so `manyruns tools` fell through to a run, wrote `outputs/tools/summar
 appended a row to `index.jsonl` — a recorded run of a dataset nobody has. An unknown verb must
 refuse, not improvise, and the only reason it improvised is that `tools` was not a verb.
 """
+
 from __future__ import annotations
 
 import pathlib
+import tempfile
+from pathlib import Path
+
+import pytest
+from tool_stubs import FRAME_ADAPTER, make_tool
 
 from manyruns import app, toolchain
 
 _REPO = pathlib.Path(__file__).resolve().parent.parent
+
+
+def test_lock_compiles_the_manifest_requires_with_hashes(tmp_path, monkeypatch):
+    make_tool(tmp_path, monkeypatch, "locky", {"input": {"kind": "state_matrix"}}, FRAME_ADAPTER)
+    toolchain.lock_path(toolchain.load_tool("locky")).unlink()
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    seen = {}
+
+    def fake_run(argv, **kw):
+        seen["argv"] = list(argv)
+        seen["in"] = Path(argv[-1]).read_text()
+
+        class R:
+            returncode, stderr = 0, ""
+
+        return R()
+
+    monkeypatch.setattr(toolchain.subprocess, "run", fake_run)
+    monkeypatch.setattr(toolchain, "uv", lambda: "/usr/bin/uv")
+    out = toolchain.lock("locky")
+    cfg = toolchain.load_tool("locky")
+    argv = seen["argv"]
+    assert argv[:3] == ["/usr/bin/uv", "pip", "compile"] and "--generate-hashes" in argv
+    assert argv[argv.index("--python-version") + 1] == "3.12"
+    assert argv[argv.index("--output-file") + 1] == str(toolchain.lock_path(cfg))
+    assert seen["in"] == "locky==1.0\n"
+    assert Path(argv[-1]).parent == tmp_path and not Path(argv[-1]).exists()
+    assert out == {"lock": toolchain.lock_path(cfg), "returncode": 0, "stderr": ""}
+
+
+def test_lock_without_uv_is_refused(tmp_path, monkeypatch):
+    make_tool(tmp_path, monkeypatch, "locky", {"input": {"kind": "state_matrix"}}, FRAME_ADAPTER)
+    monkeypatch.setattr(toolchain, "uv", lambda: None)
+    with pytest.raises(ValueError, match="uv"):
+        toolchain.lock("locky")
+
+
+def test_the_no_lock_fix_names_an_action_that_exists(tmp_path, monkeypatch):
+    make_tool(tmp_path, monkeypatch, "locky", {"input": {"kind": "state_matrix"}}, FRAME_ADAPTER)
+    monkeypatch.delenv("MANYRUNS_TOOL_LOCKY_PYTHON")
+    toolchain.lock_path(toolchain.load_tool("locky")).unlink()
+    r = toolchain.resolve("locky")
+    assert r["status"] == "no-lock" and r["fix"] == "manyruns tools lock locky"
+    from manyruns import app
+
+    assert "lock" in app._TOOLS_ACTIONS
 
 
 def test_tools_is_a_declared_subcommand():
@@ -26,8 +78,12 @@ def test_tools_is_a_declared_subcommand():
 
 def test_the_parser_accepts_the_three_actions():
     parser = app._build_parser()
-    for argv in (["tools"], ["tools", "list"], ["tools", "check"],
-                 ["tools", "install", "pyrovelocity"]):
+    for argv in (
+        ["tools"],
+        ["tools", "list"],
+        ["tools", "check"],
+        ["tools", "install", "pyrovelocity"],
+    ):
         args = parser.parse_args(argv)
         assert args.func is app.cmd_tools, argv
     assert parser.parse_args(["tools"]).action == "list", "bare `tools` lists"
@@ -66,10 +122,12 @@ def test_no_tool_scratch_file_is_tracked_in_the_repo():
     """
     import subprocess
 
-    tracked = subprocess.run(["git", "ls-files"], capture_output=True, text=True,
-                             cwd=str(_REPO)).stdout.split()
-    strays = [f for f in tracked
-              if f == "mlflow.db" or f.startswith("mlruns/") or f.endswith(".db")]
+    tracked = subprocess.run(
+        ["git", "ls-files"], capture_output=True, text=True, cwd=str(_REPO)
+    ).stdout.split()
+    strays = [
+        f for f in tracked if f == "mlflow.db" or f.startswith("mlruns/") or f.endswith(".db")
+    ]
     assert not strays, f"tool scratch state is tracked: {strays}"
 
 
@@ -87,8 +145,9 @@ def test_list_shows_precomputed(capsys, tmp_path, monkeypatch):
     monkeypatch.setenv("MANYRUNS_TOOL_DIR", str(GOLDEN))
     assert app.main(["tools", "list"]) == 0
     lines = capsys.readouterr().out.splitlines()
-    assert any("golden_precomputed" in line and "precomputed" in line.split()[-1]
-               for line in lines), lines
+    assert any(
+        "golden_precomputed" in line and "precomputed" in line.split()[-1] for line in lines
+    ), lines
 
 
 def test_check_runs_no_selftest_for_precomputed(capsys, tmp_path, monkeypatch):
@@ -96,8 +155,11 @@ def test_check_runs_no_selftest_for_precomputed(capsys, tmp_path, monkeypatch):
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("MANYRUNS_TOOL_DIR", str(GOLDEN))
-    monkeypatch.setattr(toolchain, "selftest", lambda *a, **k: (_ for _ in ()).throw(
-        AssertionError("a selftest ran")))
+    monkeypatch.setattr(
+        toolchain,
+        "selftest",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("a selftest ran")),
+    )
     app.main(["tools", "check"])
     line = next(x for x in capsys.readouterr().out.splitlines() if "golden_precomputed" in x)
     assert "selftest" not in line

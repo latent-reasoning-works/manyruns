@@ -21,6 +21,7 @@ The stages are connected by the **versioned artifact**, not by shared control fl
 writes `<model>@vN`; `eval`/`infer` load it. That glue is the model-version registry
 (serving-router.md) + provenance tagging — referenced here via `model_version`.
 """
+
 from __future__ import annotations
 
 from typing import Optional
@@ -59,10 +60,15 @@ def _infer(req: dict, *, device: Optional[str]) -> dict:
             import numpy as np
 
             emb = np.asarray(registry.apply_weights(v, req["array"]))
-            return {"mode": "infer", "model_version": model_version, "kind": "weights",
-                    "device": device or "cpu", "embedding": emb,
-                    "final_dim": int(emb.shape[1]) if emb.ndim == 2 else 0}
-        recipe = load_recipe(v.spec["recipe"])   # recipe-kind: pull the version's recipe
+            return {
+                "mode": "infer",
+                "model_version": model_version,
+                "kind": "weights",
+                "device": device or "cpu",
+                "embedding": emb,
+                "final_dim": int(emb.shape[1]) if emb.ndim == 2 else 0,
+            }
+        recipe = load_recipe(v.spec["recipe"])  # recipe-kind: pull the version's recipe
 
     if not recipe:
         raise ValueError("infer needs a 'recipe' or a registered 'version' in the request")
@@ -74,15 +80,20 @@ def _infer(req: dict, *, device: Optional[str]) -> dict:
         dataset=req.get("dataset"),
         dataset_name=req.get("dataset_name"),
         declared_shape=req.get("declared_shape"),
-        color=req.get("color"), obs_names=req.get("obs_names"), label_key=req.get("label_key"),
+        color=req.get("color"),
+        obs_names=req.get("obs_names"),
+        label_key=req.get("label_key"),
         color_by=req.get("color_by"),
         array=req.get("array"),
+        source_path=req.get("source_path"),
+        original_input=req.get("original_input"),
+        obs=req.get("obs"),
         out_dir=req.get("out_dir", "."),
         seed=req.get("seed", 42),
         fast_dev_run=req.get("fast_dev_run", True),
         data_kwargs=req.get("data_kwargs"),
         labels=req.get("labels"),
-        metrics=req.get("metrics"),   # the declared metric suite → manylatents' registry
+        metrics=req.get("metrics"),  # the declared metric suite → manylatents' registry
         # "time" | "condition" | "group" — so a trajectory step reads only a declared time
         # axis, and `separation`/`composition` read only a declared condition axis.
         label_kind=req.get("label_kind"),
@@ -91,8 +102,8 @@ def _infer(req: dict, *, device: Optional[str]) -> dict:
         # these two the axis is loaded by `app._read_inputs` and dropped one frame later.
         counts=req.get("counts"),
         genes=req.get("genes"),
-        layers=req.get("layers"),   # declared-only; empty unless a step asked for one
-        device=device,   # ← actually threaded to compute; run_explorations resolves it (fp64/MPS)
+        layers=req.get("layers"),  # declared-only; empty unless a step asked for one
+        device=device,  # ← actually threaded to compute; run_explorations resolves it (fp64/MPS)
     )
     # `res` carries the RESOLVED device + rationale (not the echoed request) — spread it last so
     # "device" is the one compute actually used, closing the cosmetic-device gap.
@@ -104,7 +115,7 @@ def _eval(req: dict, *, device: Optional[str]) -> dict:
     res = req.get("result") or _infer(req, device=device)
     return {
         "mode": "eval",
-        "device": res.get("device", device),   # the device the evaluated run actually used
+        "device": res.get("device", device),  # the device the evaluated run actually used
         "model_version": req.get("model_version") or res.get("model_version"),
         "recipe": res.get("recipe"),
         "metrics": res.get("g_vector") or {},
@@ -135,7 +146,7 @@ def _train(req: dict, *, device: Optional[str]) -> dict:
         "core_snapshot": req.get("core_snapshot"),
         "model_version_out": req.get("model_version", "<model>@vN"),
         "delegate": "not manyruns's to run — the learner reads the store and drives manyruns "
-                    "through its CLI; see docs/environment-contract.md §3.5",
+        "through its CLI; see docs/environment-contract.md §3.5",
         "store": str(req.get("store") or "outputs"),
         "status": "planned — manyruns records the ask and stops at the store",
     }

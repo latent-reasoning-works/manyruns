@@ -128,7 +128,7 @@ def test_the_measured_legal_set_holds(S):
         "current": 5, "source": "default", "floor": 1, "cap": None, "left": 4, "right": 6,
         "domain": {"kind": "int", "min": 1, "min_open": False, "max": None, "max_open": False,
                    "also": []}}
-    assert list(S.CLUSTER_TUNE_DOC["knobs"]) == ["umap", "leiden"]
+    assert list(S.CLUSTER_TUNE_DOC["knobs"]) == ["leiden", "umap"]
 
 
 # ── task 1.1: the choice check ───────────────────────────────────────────────────
@@ -938,8 +938,8 @@ def test_tune_tools_carry_bounds(S):
     assert params["properties"]["t"] == {
         "anyOf": [{"type": "integer", "minimum": 1}, {"type": "string", "enum": ["auto"]}],
         "description": "t, current auto"}
-    umap, leiden = as_tools(S.CLUSTER_TUNE_DOC)
-    assert (umap["name"], leiden["name"]) == ("tune_umap", "tune_leiden")
+    leiden, umap = as_tools(S.CLUSTER_TUNE_DOC)
+    assert (leiden["name"], umap["name"]) == ("tune_leiden", "tune_umap")
     assert umap["parameters"]["properties"]["min_dist"] == {
         "type": "number", "minimum": 0.0, "maximum": 1.0, "description": "min_dist, current 0.1"}
     assert umap["parameters"]["properties"]["n_neighbors"] == {

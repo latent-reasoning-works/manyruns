@@ -39,6 +39,7 @@ scientist's data — 2,700 × 32,738 for pbmc3k — and copying it into an outpu
 data-handling decision this module has no business making silently. It is also the line the
 federated design turns on: geometry leaves, the person's data does not.
 """
+
 from __future__ import annotations
 
 import json
@@ -99,8 +100,31 @@ def too_large(arr: Any, max_bytes: Optional[int] = None) -> bool:
     return arr is not None and hasattr(arr, "shape") and np.asarray(arr).nbytes > cap
 
 
-def save_array(out_dir: Path | str, run_id: Optional[str], index: int, step: str,
-               slot: str, arr: Any, max_bytes: Optional[int] = None) -> Optional[str]:
+def save_table(
+    out_dir: Path | str, run_id: Optional[str], index: int, step: str, name: str, df: Any
+) -> Path:
+    """Save a checked table beside this step's arrays; report write failures to the caller."""
+    directory = root(out_dir, run_id)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{index:02d}-{step}_{name}.tsv"
+    tmp = path.with_name(f".{path.name}.part")
+    try:
+        df.to_csv(tmp, sep="\t", index=False)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return path
+
+
+def save_array(
+    out_dir: Path | str,
+    run_id: Optional[str],
+    index: int,
+    step: str,
+    slot: str,
+    arr: Any,
+    max_bytes: Optional[int] = None,
+) -> Optional[str]:
     """Write one intermediate array atomically. Returns its path, or None if nothing was written.
 
     Returns None rather than raising on every failure path: a run that produced a valid
@@ -244,15 +268,17 @@ def load_array(path: Path | str) -> Any:
     return np.load(p, allow_pickle=False)
 
 
-def load_labeled(out_dir: Path | str, run_id: str, index: int,
-                 slot: str = "emb") -> dict:
+def load_labeled(out_dir: Path | str, run_id: str, index: int, slot: str = "emb") -> dict:
     """Read a completed artifact and its recorded row identity, without reopening inputs.
 
     Old/unannotated artifacts refuse: neither positional integers nor labels reloaded from
     a mutable source can reconstruct the identity that was never recorded.
     """
-    entries = [(path, entry) for path, entry in read_manifest(out_dir, run_id).items()
-               if entry["index"] == index and entry["slot"] == slot]
+    entries = [
+        (path, entry)
+        for path, entry in read_manifest(out_dir, run_id).items()
+        if entry["index"] == index and entry["slot"] == slot
+    ]
     if len(entries) != 1:
         raise ValueError(f"expected one artifact at {run_id}/{index}/{slot}")
     path, entry = entries[0]
@@ -261,7 +287,10 @@ def load_labeled(out_dir: Path | str, run_id: str, index: int,
         raise ValueError(f"artifact has no recorded row identity: {path}")
     array = load_array(path)
     ids, labels = identity["sample_ids"], identity["labels"]
-    if (len(ids) != len(array) or len(set(ids)) != len(ids)
-            or (labels is not None and len(labels) != len(ids))):
+    if (
+        len(ids) != len(array)
+        or len(set(ids)) != len(ids)
+        or (labels is not None and len(labels) != len(ids))
+    ):
         raise ValueError(f"artifact row identity is misaligned: {path}")
     return {"array": array, **identity}
