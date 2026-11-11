@@ -301,7 +301,8 @@ class ComputeProcess:
         self._stopped.set()
 
 
-def compute_step(step, state, g, *, dispatch, ctx, index, carry, steps, on_step):
+def compute_step(step, state, g, *, dispatch, ctx, index, carry, steps, on_step,
+                 original_input=None):
     """The unchanged step loop, returning one coherent snapshot with aliases intact.
 
     MIOFlow's model retains mioflow._run_mioflow_experiment's local _TimeDM class,
@@ -312,17 +313,23 @@ def compute_step(step, state, g, *, dispatch, ctx, index, carry, steps, on_step)
     model = state.get("model")
     if isinstance(model, _RetainedModel):
         state["model"] = _worker_models[model.token]
-    apply_step(
-        step,
-        state,
-        g,
-        dispatch=dispatch,
-        ctx=ctx,
-        index=index,
-        carry=carry,
-        steps=steps,
-        on_step=on_step,
-    )
+    if original_input is not None:
+        ctx["original_input"] = original_input
+    try:
+        apply_step(
+            step,
+            state,
+            g,
+            dispatch=dispatch,
+            ctx=ctx,
+            index=index,
+            carry=carry,
+            steps=steps,
+            on_step=on_step,
+        )
+    finally:
+        # The parent owns this object; never copy it back in the returned snapshot.
+        ctx.pop("original_input", None)
     model = state.get("model")
     if model is not None:
         token = id(model)

@@ -15,7 +15,6 @@ Target: 0.1.2, with `manylatents>=0.1.11`.
   manylatents-omics release; until then the step declines as unsupported.
 - `pipeline.tables.publish`: one validate-and-save path for run tables, used by the tool
   seam and by in-process steps.
-
 - Connector derivation after a finished run: `actions DATASET --surface derive --run RUN_ID`
   offers table-producing tools, and `run --choice FILE --selection FILE` records a linked
   decision and derived run. Bundled connectors are `pseudobulk_de`, `target_evidence` and
