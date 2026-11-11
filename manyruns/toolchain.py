@@ -68,6 +68,8 @@ TOOL_FIELDS = frozenset(
         "call",
         "commercial_use",
         "distribution",
+        "network",
+        "resource",
     }
 )
 
@@ -123,7 +125,22 @@ NON_COMMERCIAL_LICENCES = frozenset(
 #:                  narrowed: the file still holds cells a filter removed, so the tool would
 #:                  report on a population this run rejected. Prefer `state_frame`; this is the
 #:                  escape hatch, and its refusal is the price of being one.
-INPUT_KINDS = ("state_matrix", "state_frame", "source_file")
+INPUT_KINDS = ("state_matrix", "state_frame", "source_file", "none")
+NETWORK_VALUES = ("none",)
+RESOURCE_KEYS = frozenset({"release", "url", "licence", "commercial_use", "prepare", "key"})
+
+
+def _file_safe(name) -> bool:
+    return (isinstance(name, str) and bool(name) and name not in (".", "..")
+            and not any(c in name for c in "/\\\x00"))
+
+
+def input_tables(cfg: dict) -> dict[str, list[str]]:
+    return dict((cfg.get("input") or {}).get("tables") or {})
+
+
+def is_connector(cfg: dict) -> bool:
+    return bool((cfg.get("output") or {}).get("tables")) and not cfg.get("produces")
 
 
 def tool_dir(config_dir: Optional[Path | str] = None) -> Path:
@@ -594,12 +611,7 @@ def check_tool(cfg: Any, name: Optional[str] = None) -> list[str]:
             bad.append("output.tables must map table names to required column lists")
         else:
             for name, columns in tables.items():
-                if (
-                    not isinstance(name, str)
-                    or not name
-                    or name in (".", "..")
-                    or any(c in name for c in "/\\")
-                ):
+                if not _file_safe(name):
                     bad.append(f"output.tables: {name!r} must be a non-empty file-safe name")
                 if not isinstance(columns, list) or any(
                     not isinstance(c, str) or not c for c in columns
@@ -630,6 +642,32 @@ def check_tool(cfg: Any, name: Optional[str] = None) -> list[str]:
     for fact in cfg.get("needs") or []:
         if fact not in known:
             bad.append(f"needs: {fact!r} is not a fact the calculus names ({sorted(known)})")
+
+    if cfg.get("network", "none") not in NETWORK_VALUES:
+        bad.append("network must be none")
+    resources = cfg.get("resource", {})
+    if not isinstance(resources, dict):
+        bad.append("resource must map names to blocks")
+    else:
+        for resource, block in resources.items():
+            if not _file_safe(resource):
+                bad.append("resource name must be file-safe")
+            if not isinstance(block, dict):
+                bad.append(f"resource.{resource} must be a mapping")
+                continue
+            if set(block) - RESOURCE_KEYS or (RESOURCE_KEYS - {"key"}) - set(block):
+                bad.append(f"resource.{resource} has missing or unknown fields")
+            for field in ("release", "url", "licence", "prepare"):
+                if not isinstance(block.get(field), str) or not block[field]:
+                    bad.append(f"resource.{resource}.{field} must be a non-empty string")
+            if not _file_safe(block.get("release")):
+                bad.append(f"resource.{resource}.release must be file-safe")
+            if not isinstance(block.get("commercial_use"), bool):
+                bad.append(f"resource.{resource}.commercial_use must be boolean")
+            if isinstance(block.get("licence"), str) and block["licence"] in NON_COMMERCIAL_LICENCES and block.get("commercial_use"):
+                bad.append(f"resource.{resource}.licence forbids commercial use")
+            if "key" in block and (not _file_safe(block["key"]) or block["key"] not in (cfg.get("params") or {})):
+                bad.append(f"resource.{resource}.key must name a declared file-safe param")
 
     if mode == "precomputed":
         for field in (
@@ -694,6 +732,27 @@ def check_tool(cfg: Any, name: Optional[str] = None) -> list[str]:
             role not in ("sample", "batch", "condition") for role in roles
         ):
             bad.append("input.obs must be a list drawn from sample, batch, condition")
+    if isinstance(io, dict):
+        if "gene_id" in io and (io.get("kind") != "state_frame" or io["gene_id"] is not True):
+            bad.append("input.gene_id must be true on a state_frame")
+        if io.get("kind") == "none" and "layers" in io:
+            bad.append("input.kind none takes no layers")
+        if "tables" in io:
+            if io.get("kind") not in ("state_frame", "none"):
+                bad.append("input.tables requires state_frame or none")
+            tables = io["tables"]
+            if not isinstance(tables, dict):
+                bad.append("input.tables must map names to column lists")
+            else:
+                for table, columns in tables.items():
+                    if not _file_safe(table):
+                        bad.append("input.tables names must be file-safe")
+                    if table == "selection" and io.get("kind") != "state_frame":
+                        bad.append("input.tables.selection requires state_frame")
+                    if not isinstance(columns, list) or any(
+                        not isinstance(c, str) or not c for c in columns
+                    ):
+                        bad.append(f"input.tables.{table} must be a column list")
     return bad
 
 
