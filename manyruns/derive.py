@@ -119,9 +119,10 @@ def offer(dataset: str, run: str, store, *, dataset_dir=None) -> dict:
         if parent.get('ok') is not True:
             blocked.append('parent run is not ok')
         resource_items = _resource_offer(cfg)
-        blocked += [f"resource_not_built:{item['name']}:{item['release']}"
-                    for item in resource_items
-                    if item['key_param'] is None and item['required'] == 'always' and not item['built']]
+        for item in resource_items:
+            if item['key_param'] is None and item['required'] == 'always' and not item['built']:
+                code = 'resource_mismatch' if item['status'] == 'mismatch' else 'resource_not_built'
+                blocked.append(f"{code}:{item['name']}:{item['release']}")
         roles = list((cfg.get('input') or {}).get('obs') or [])
         offered.append({
             'connector': connector, 'can_run': not blocked, 'blocked': blocked,

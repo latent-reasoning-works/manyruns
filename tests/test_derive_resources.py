@@ -112,7 +112,7 @@ def test_mismatched_resource_is_refused_with_its_code(resource_connector, key):
     entry = entry_for(fixture)
     if key is None:
         assert not entry['can_run']
-        assert entry['blocked'] == ['resource_not_built:knowledge:1']
+        assert entry['blocked'] == ['resource_mismatch:knowledge:1']
         assert entry['resources'][0]['status'] == 'mismatch'
         assert entry['resources'][0]['built'] is False
     else:
