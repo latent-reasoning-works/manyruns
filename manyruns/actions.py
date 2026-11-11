@@ -62,6 +62,7 @@ def is_probe(row: dict, dataset: str) -> bool:
     The rule (#37): the row is of `dataset`, `ok is True`, `cancelled` is not True, `not_run` is
     empty, and no step record has the outcome `"error"`.
 
+    - A derived row is never gate evidence: its recipe starts with `derive:`.
     - A step that SKIPPED does not disqualify the row. `normalize` and `transform` decline a file
       whose values are already log-normalised; the run is `ok` and not `complete`, and its
       g-vector still holds the measurements of its embedding. `complete` stays the run's own
@@ -82,6 +83,8 @@ def is_probe(row: dict, dataset: str) -> bool:
     g-vector (`vocab.rung_support`, `not_measured`), so a row that passes this rule never lets a
     claim through without its number.
     """
+    if str(row.get("recipe") or "").startswith("derive:"):
+        return False
     if row.get("dataset_name") != dataset or row.get("ok") is not True:
         return False
     if row.get("cancelled") is True or row.get("not_run"):

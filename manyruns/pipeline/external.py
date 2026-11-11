@@ -948,7 +948,8 @@ def _input_path(cfg: dict, state: dict, ctx: dict, workdir: Path) -> Path | None
                 if role == "condition"
                 else (view["obs"] or {}).get(role)
             )
-            fix = f"supply --{role}-key naming a complete {role} column"
+            fix = (f"supply {role}_key in the choice naming a complete {role} column"
+                   if ctx.get("derive") else f"supply --{role}-key naming a complete {role} column")
             if values is None:
                 raise _StepSkipped(f"{cfg['name']} needs {role} labels — {fix}")
             values = np.asarray(values)

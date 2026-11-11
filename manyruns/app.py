@@ -1294,7 +1294,12 @@ def _run_choice(
             raise action_space.Refused(2, "this derive choice needs --selection")
         if "selection_sha256" not in choice and selection is not None:
             raise action_space.Refused(2, "this connector takes no --selection")
-        raise action_space.Refused(2, "the derive surface is checked but not yet runnable")
+        from manyruns import derive
+
+        parent = derive.parent_row(choice["parent_run"], ".")
+        if engine is not None and engine != parent["engine"]:
+            raise action_space.Refused(2, "a derived run inherits its parent engine; omit --engine or match it")
+        return derive.run_derived(choice, doc, selection, seed=seed)
     chosen = choice["chosen"]
     dataset = choice["dataset"]
     surface = choice["surface"]

@@ -184,17 +184,24 @@ def append(*, offered: Sequence[dict], chosen: Optional[str],
     return decision_id
 
 
+def _entry_name(entry: dict):
+    if "connector" in entry:
+        return f"derive:{entry['connector']}"
+    return entry.get("recipe", entry.get("label", entry.get("step")))
+
+
 def _legal_set(offered: Sequence[dict]) -> list[str]:
     """The sorted, distinct names of the entries that could run.
 
     An entry's name is its `recipe` (ledger), else its `label` (tune), else its `step`; an entry
-    with none of them is skipped. A tune attempt is named by `label` rather than `step` because
+    with none of them is skipped. A connector is named `derive:<connector>`.
+    A tune attempt is named by `label` rather than `step` because
     two attempts of one step differ only by params, and the label renders them. An entry is
     legal unless it says `can_run` is false: a tune attempt carries no `can_run`, and it ran.
     """
     names = set()
     for entry in offered:
-        name = entry.get("recipe", entry.get("label", entry.get("step")))
+        name = _entry_name(entry)
         if name is not None and entry.get("can_run", True):
             names.add(name)
     return sorted(names)
@@ -272,17 +279,17 @@ def examples(out_dir: Path | str = "outputs", *, surface: Optional[str] = "ledge
         if any(chooser == v or (v.endswith(":") and str(chooser).startswith(v)) for v in excluded):
             continue
         offered = row.get("offered") or []
-        legal = [o["recipe"] for o in offered if o.get("can_run")]
+        legal = [_entry_name(o) for o in offered if o.get("can_run") and _entry_name(o) is not None]
         chosen = row.get("chosen")
         if len(legal) < 2 or not chosen:
             continue
-        recommended = [o["recipe"] for o in offered if o.get("recommended")]
+        recommended = [_entry_name(o) for o in offered if o.get("recommended") and _entry_name(o) is not None]
         out.append({
             "shape": row.get("shape"),
             "topology": tuple(row.get("topology") or ()),
             "legal": legal,
-            "blocked": {o["recipe"]: "; ".join(o.get("blocked") or [])
-                        for o in offered if not o.get("can_run")},
+            "blocked": {_entry_name(o): "; ".join(o.get("blocked") or [])
+                        for o in offered if not o.get("can_run") and _entry_name(o) is not None},
             "recommended": recommended,
             "chosen": chosen,
             "took_default": chosen in recommended,
