@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
-from manyruns import actions, artifacts, catalog, store as records, toolchain, vocab
+from manyruns import actions, artifacts, catalog, score, store as records, toolchain, vocab
 
 
 def parent_row(run_id: str, store) -> dict:
-    rows = [row for row in records.read(Path(store) / 'outputs') if row.get('run_id') == run_id]
+    rows = [row for row in records.read(Path(store) / 'outputs') if row.get('run_id') == run_id and score.verdict_of(row) is None]
     if not rows:
         raise actions.UsageError(f'unknown parent run {run_id!r}')
     return rows[-1]
@@ -42,13 +43,13 @@ def parent_tables(row, store) -> dict[str, str]:
 
 def offer(dataset: str, run: str, store, *, dataset_dir=None) -> dict:
     parent = parent_row(run, store)
-    if parent.get('dataset_name') != dataset:
+    if (parent.get('dataset_name') or root_row(parent, store).get('source')) != dataset:
         raise actions.UsageError(f'parent run {run} belongs to another dataset')
     try:
         tables = parent_tables(parent, store)
     except (OSError, ValueError) as exc:
         raise actions.LoadError('parent run', run, str(exc)) from exc
-    ds = catalog.load_dataset(dataset, dataset_dir)
+    ds = dataset_description(root_row(parent, store), dataset_dir)
     offered = []
     for connector in toolchain.discover_tools():
         cfg = toolchain.load_tool(connector)
@@ -144,6 +145,45 @@ def _root_reference(parent, keys, store):
     return root, root_index, index
 
 
+def dataset_description(root, dataset_dir=None):
+    """Describe a catalog dataset or the source and roles recorded for a user file."""
+    name = root.get('dataset_name')
+    if name in catalog.discover_datasets(dataset_dir):
+        return catalog.load_dataset(name, dataset_dir)
+    ref = str(root.get('source') or '')
+    handle = {'kind': 'path', 'ref': ref}
+    provided = set(vocab.dataset_provides('unknown', handle))
+    provided.update(fact for fact in ('samples', 'batch')
+                    if root.get('sample_key' if fact == 'samples' else 'batch_key'))
+    handle['provides'] = sorted(provided)
+    return {'shape': 'unknown', 'modality': root.get('modality') or 'unknown', 'handle': handle}
+
+
+def source_path(root, ds, store):
+    """Prefer the recorded source, then the CLI's catalog and drop-folder anchors."""
+    from manyruns import shell
+
+    tried = []
+    if root.get('source'):
+        recorded = _path(Path(root['source']).expanduser(), store)
+        tried.append(recorded)
+        if recorded.is_file():
+            return recorded
+    handle = ds['handle']
+    ref = handle.get('ref') or ''
+    if handle['kind'] == 'path' and not ref.startswith('synthetic:') and ref:
+        literal = Path(ref).expanduser()
+        candidates = [_path(literal, store)]
+        if not literal.is_absolute():
+            candidates.extend(folder / literal.name for folder in shell.data_dirs())
+        for candidate in candidates:
+            tried.append(candidate)
+            if candidate.is_file():
+                return candidate
+    paths = ', '.join(dict.fromkeys(map(str, tried))) or '(no file paths recorded)'
+    raise ValueError(f'parent dataset file is unavailable; paths tried: {paths}')
+
+
 def open_derived(parent: dict, connector: str, params: dict, keys: dict, store):
     """Reload and align the source before creating a derived lineage."""
     import numpy as np
@@ -154,13 +194,8 @@ def open_derived(parent: dict, connector: str, params: dict, keys: dict, store):
     root, root_index, index = _root_reference(parent, keys, store)
     cells = cell_list(root, root_index, store)
     dataset = root.get('dataset_name')
-    ds = catalog.load_dataset(dataset)
-    handle = ds['handle']
-    if handle['kind'] != 'path':
-        raise ValueError('parent dataset is engine-generated and cannot be reopened by cell id')
-    source = _path(handle['ref'], store).expanduser()
-    if not source.exists():
-        raise ValueError('parent dataset file is unavailable; restore the recorded source file')
+    ds = dataset_description(root)
+    source = source_path(root, ds, store)
     roles = {key: keys.get(key, parent.get(key)) for key in
              ('time_key', 'condition_key', 'sample_key', 'batch_key')}
     cfg = toolchain.load_tool(connector)
@@ -188,7 +223,7 @@ def open_derived(parent: dict, connector: str, params: dict, keys: dict, store):
     engine = parent['engine'] if runner.steppable(parent['engine']) else 'manylatents'
     session = Session(
         project=out_dir.name, engine=engine, out_dir=out_dir,
-        seed=keys.get('seed', parent.get('seed') or 42), modality=ds['modality'], shape=ds['shape'],
+        seed=keys.get('seed', parent['seed'] if parent.get('seed') is not None else 42), modality=ds['modality'], shape=ds['shape'],
         recipe={'name': f'derive:{connector}', 'steps': [step]},
         parent={'run_id': parent['run_id'], 'index': index}, dataset_name=dataset,
         sample_ids=np.asarray(cells), array=loaded['array'], counts=loaded.get('counts'),
@@ -204,7 +239,7 @@ def open_derived(parent: dict, connector: str, params: dict, keys: dict, store):
     return session
 
 
-def run_derived(choice: dict, doc: dict, selection: Path | None, *, seed: int, store='.') -> dict:
+def run_derived(choice: dict, doc: dict, selection: Path | None, *, seed: int | None, store='.') -> dict:
     """Run one checked connector and append its decision and derived record."""
     import hashlib
     import io
@@ -219,7 +254,7 @@ def run_derived(choice: dict, doc: dict, selection: Path | None, *, seed: int, s
     selection_df = None
     # Reopen and check the selection before either append-only record is written.
     try:
-        session = open_derived(parent, chosen['connector'], chosen['params'], {**keys, 'seed': seed}, store)
+        session = open_derived(parent, chosen['connector'], chosen['params'], {**keys, **({'seed': seed} if seed is not None else {})}, store)
         bindings = parent_tables(parent, store)
         if selection is not None:
             raw = Path(selection).read_bytes()
@@ -245,6 +280,7 @@ def run_derived(choice: dict, doc: dict, selection: Path | None, *, seed: int, s
     )
     result = {'schema_version': 1, 'decision_id': decision_id, 'run_id': None, 'exit_code': 1}
     if decision_id is None:
+        print("error: decision not recorded; nothing was run", file=sys.stderr)
         return result
     print(f"decision {decision_id} recorded in {decisions.index_path(Path(store) / 'outputs')}")
     selection_path = None

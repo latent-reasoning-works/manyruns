@@ -605,6 +605,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
     parser = _build_parser()
     args = parser.parse_args(_normalize_argv(raw))
+    args.seed_explicit = any(arg == "--seed" or arg.startswith("--seed=") for arg in raw)
     # THE FRONT DOOR, and the one line where the three surfaces meet. argv is NOT rewritten:
     # `_normalize_argv([])` is still `["shell"]`, so the app is handed the same namespace the
     # rich console would have been handed for the same invocation (a bare one, so: the parser's
@@ -1253,7 +1254,7 @@ def _cmd_run_choice(args: argparse.Namespace, parser: argparse.ArgumentParser) -
         result = _run_choice(
             choice,
             engine=args.engine,
-            seed=args.seed,
+            seed=args.seed if getattr(args, "seed_explicit", False) else None,
             device=args.device,
             project=args.project,
             parser=parser,
@@ -1288,7 +1289,7 @@ def _run_choice(
     """
     from manyruns import action_space, decisions
 
-    doc = action_space.check_choice(choice, store=".", seed=seed)
+    doc = action_space.check_choice(choice, store=".", seed=42 if seed is None else seed)
     if choice["surface"] == "derive":
         if "selection_sha256" in choice and selection is None:
             raise action_space.Refused(2, "this derive choice needs --selection")
@@ -1300,6 +1301,7 @@ def _run_choice(
         if engine is not None and engine != parent["engine"]:
             raise action_space.Refused(2, "a derived run inherits its parent engine; omit --engine or match it")
         return derive.run_derived(choice, doc, selection, seed=seed)
+    seed = 42 if seed is None else seed
     chosen = choice["chosen"]
     dataset = choice["dataset"]
     surface = choice["surface"]

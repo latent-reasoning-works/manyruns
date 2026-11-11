@@ -275,7 +275,9 @@ def _check_shape(choice: Any) -> None:
             f"{' or '.join(_CHOICE_SURFACES)} (ladder is read only)"
         )
     dataset = choice["dataset"]
-    if not isinstance(dataset, str) or dataset not in catalog.discover_datasets():
+    if not isinstance(dataset, str) or not dataset or (
+        choice["surface"] != "derive" and dataset not in catalog.discover_datasets()
+    ):
         raise _refuse(f"dataset {dataset!r} is not a catalog dataset name")
     _check_chooser(choice["chooser"], "chooser")
     _check_bound(choice["bound"], "bound")
@@ -365,7 +367,17 @@ def _check_column_keys(choice: dict) -> None:
     if not given:
         return
     dataset = choice["dataset"]
-    columns = _dataset_columns(dataset)
+    if choice['surface'] == 'derive':
+        from manyruns import derive
+        from manyruns.pipeline import loading
+
+        root = derive.root_row(derive.parent_row(choice['parent_run'], '.'), '.')
+        try:
+            columns = loading.obs_columns(derive.source_path(root, derive.dataset_description(root), '.'))
+        except (OSError, ValueError) as exc:
+            raise Refused(1, str(exc)) from exc
+    else:
+        columns = _dataset_columns(dataset)
     if columns is None:
         raise _refuse(
             f"dataset {dataset!r} has no columns that manyruns reads, so a choice on "

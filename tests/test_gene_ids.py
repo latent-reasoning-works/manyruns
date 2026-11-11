@@ -98,3 +98,15 @@ def test_a_kind_none_result_gene_id_must_come_from_its_input_tables(tmp_path, mo
         external.run_external_step('conn', {'ids': ['ENSG99999999999']}, state, {}, ctx)
     external.run_external_step('conn', {'ids': ['ENSG00000000001']}, state, {}, ctx)
     assert toolchain.load_tool('conn')['input']['kind'] == 'none'
+
+
+def test_a_keyed_gene_ids_resource_is_unsupported_with_the_reason(tmp_path, monkeypatch):
+    state, ctx = gene_tool(tmp_path, monkeypatch, mapping=True, source=False)
+    import yaml
+    path = toolchain.tool_dir() / 'conn.yaml'
+    cfg = yaml.safe_load(path.read_text())
+    cfg['resource']['gene_ids']['key'] = 'release_key'
+    cfg['params'] = {'release_key': 'human'}
+    path.write_text(yaml.safe_dump(cfg))
+    with pytest.raises(steps._StepUnsupported, match='key'):
+        external.run_external_step('conn', {}, state, {}, ctx)

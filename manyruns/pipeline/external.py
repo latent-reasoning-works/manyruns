@@ -837,7 +837,10 @@ def _gene_ids(name: str, cfg: dict, genes, ctx: dict) -> tuple[list[str], int]:
         block = (cfg.get("resource") or {}).get("gene_ids")
         if block is None:
             raise _StepSkipped(f"{name}: no Ensembl column {ENSEMBL_COLUMNS} and no gene_ids resource")
-        found = resources.resolve("gene_ids", block, None, cfg["name"])
+        try:
+            found = resources.resolve("gene_ids", block, None, cfg["name"])
+        except ValueError as exc:
+            raise _StepUnsupported(f"{name}: gene_ids resource: {exc}") from exc
         if found["status"] != "ready":
             raise _StepUnsupported(f"{name}: gene_ids {found['status']}; {found['fix']}")
         try:

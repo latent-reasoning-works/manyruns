@@ -187,6 +187,7 @@ def test_unreachable_parent_data_is_refused_before_any_row(store_with_parent, fa
         import yaml
         path = store_with_parent['store'] / 'datasets/cells.yaml'
         cfg = yaml.safe_load(path.read_text())
+        store_with_parent['source'].unlink()
         cfg['handle'] = {'kind': 'manylatents', 'ref': 'swissroll', 'provides': ['genes', 'samples']}
         path.write_text(yaml.safe_dump(cfg))
     with pytest.raises(action_space.Refused) as exc:
@@ -263,3 +264,73 @@ def test_cli_wrapper_returns_the_ids_of_a_table_only_chain(store_with_parent):
     assert result['exit_code'] == 0
     assert result['run_id'] == last_row()['run_id']
     assert result['decision_id'] == last_row()['decision_id']
+
+
+def test_reopen_resolves_a_relative_catalog_ref_in_the_drop_folder(store_with_parent, monkeypatch):
+    import yaml
+    fixture = store_with_parent
+    path = fixture['store'] / 'datasets/cells.yaml'
+    cfg = yaml.safe_load(path.read_text())
+    cfg['handle']['ref'] = 'data/cells.h5ad'
+    path.write_text(yaml.safe_dump(cfg))
+    drop = fixture['store'] / 'drop'
+    drop.mkdir()
+    fixture['source'].rename(drop / 'cells.h5ad')
+    monkeypatch.setenv('MANYRUNS_DATA_DIR', str(drop))
+    assert run_choice(fixture)['exit_code'] == 0
+
+
+def test_reopen_prefers_the_recorded_source_even_without_a_catalog_name(store_with_parent):
+    parent = {**store_with_parent['parent'], 'dataset_name': 'user-cells'}
+    session = derive.open_derived(parent, 'conn', {}, {}, '.')
+    assert session.ctx['source_path'] == store_with_parent['source']
+
+
+def test_missing_source_names_the_paths_tried(store_with_parent):
+    store_with_parent['source'].unlink()
+    with pytest.raises(action_space.Refused, match=str(store_with_parent['source'])):
+        run_choice(store_with_parent)
+
+
+def test_a_verdict_does_not_replace_the_parent_run(store_with_parent):
+    from manyruns import verdict, vocab
+    verdict.write_verdict(store_with_parent['parent']['run_id'],
+                          dict.fromkeys(vocab.TOPOLOGIES, 0.0), chooser='human:test')
+    assert run_choice(store_with_parent)['exit_code'] == 0
+    assert last_row()['parent']['run_id'] == store_with_parent['parent']['run_id']
+
+
+@pytest.mark.parametrize('explicit, expected', [(False, 0), (True, 42)])
+def test_derive_inherits_seed_unless_explicit(store_with_parent, explicit, expected):
+    parent = {**store_with_parent['parent'], 'seed': 0}
+    store.append(parent, extra={'sample_key': 'sample', 'condition_key': 'condition',
+                                'source': str(store_with_parent['source'])})
+    choice = choice_for(store_with_parent)
+    path = store_with_parent['store'] / 'choice.json'
+    path.write_text(json.dumps(choice))
+    argv = ['run', '--choice', str(path), '--selection', str(store_with_parent['selection'])]
+    assert app.main(argv + (['--seed', '42'] if explicit else [])) == 0
+    assert last_row()['seed'] == expected
+
+
+def test_failed_decision_write_reports_why_nothing_ran(store_with_parent, monkeypatch, capsys):
+    monkeypatch.setattr(decisions, 'append', lambda **kw: None)
+    assert run_choice(store_with_parent)['exit_code'] == 1
+    assert 'error: decision not recorded; nothing was run' in capsys.readouterr().err
+    assert len(list(store.read())) == 1
+
+
+def test_a_file_parent_can_be_offered_and_derived_without_a_catalog_entry(store_with_parent):
+    parent = {**store_with_parent['parent'], 'dataset_name': None}
+    source = str(store_with_parent['source'])
+    store.append(parent, extra={'source': source, 'modality': 'scrna',
+                                'sample_key': 'sample', 'condition_key': 'condition'})
+    doc = actions.enumerate_actions('derive', dataset=source, run=parent['run_id'])
+    choice = {'schema_version': 1, 'surface': 'derive', 'dataset': source,
+              'parent_run': parent['run_id'], 'offer_sha256': action_space.offer_sha256(doc),
+              'chosen': {'connector': 'conn', 'params': {}}, 'chooser': 'human:test', 'bound': 'none',
+              'sample_key': 'sample',
+              'selection_sha256': hashlib.sha256(store_with_parent['selection'].read_bytes()).hexdigest()}
+    path = store_with_parent['store'] / 'choice.json'
+    path.write_text(json.dumps(choice))
+    assert app.main(['run', '--choice', str(path), '--selection', str(store_with_parent['selection'])]) == 0

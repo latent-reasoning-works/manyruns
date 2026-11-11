@@ -147,7 +147,7 @@ def enumerate_actions(surface: str, *, dataset: Optional[str] = None,
     if dataset is None:
         raise UsageError(f"the {surface} surface needs a DATASET")
     known = catalog.discover_datasets(dataset_dir)
-    if dataset not in known:
+    if dataset not in known and surface != "derive":
         raise UsageError(f"unknown dataset {dataset!r}; known: {', '.join(known) or '(none)'}")
     if surface == "ledger" and (recipe is not None or step is not None):
         raise UsageError("the ledger surface takes no --recipe or --step")
@@ -158,7 +158,14 @@ def enumerate_actions(surface: str, *, dataset: Optional[str] = None,
         if recipe not in recipes:
             raise UsageError(f"unknown recipe {recipe!r}; known: {', '.join(recipes) or '(none)'}")
     try:
-        ds = catalog.load_dataset(dataset, dataset_dir)
+        if surface == "derive":
+            from manyruns import derive
+
+            ds = derive.dataset_description(derive.root_row(derive.parent_row(run, store), store), dataset_dir)
+        else:
+            ds = catalog.load_dataset(dataset, dataset_dir)
+    except UsageError:
+        raise
     except Exception as exc:  # noqa: BLE001 - a malformed YAML raises a parser error, not ValueError
         raise LoadError("dataset", dataset, str(exc)) from exc
     obs = narrate.declared_observation(ds, dataset)
