@@ -49,10 +49,11 @@ def test_empty_inputs_have_no_original_input():
     assert app._EMPTY_INPUTS["original_input"] is None
 
 
-def test_session_puts_original_input_in_ctx(tmp_path):
+def test_session_keeps_original_input_out_of_ctx(tmp_path):
     original = _original()
     session = Session("probe", engine="_inproc", out_dir=tmp_path, original_input=original)
-    assert session.ctx["original_input"] is original
+    assert session.original_input is original
+    assert "original_input" not in session.ctx
 
 
 def test_branch_keeps_the_original_input(tmp_path, monkeypatch):
@@ -65,7 +66,11 @@ def test_branch_keeps_the_original_input(tmp_path, monkeypatch):
     session = Session("probe", engine="_inproc", out_dir=tmp_path,
                       array=original["object"], original_input=original)
     assert session.step("phate")["outcome"] == "ok"
-    assert session.branch(0).ctx["original_input"] is original
+    branch = session.branch(0)
+    assert branch.original_input is original
+    assert "original_input" not in branch.ctx
+    assert session.original_input is original
+    assert "original_input" not in session.ctx
 
 
 @pytest.mark.parametrize("annotated", [False, True])
