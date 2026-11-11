@@ -212,11 +212,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_actions.add_argument("--dataset-dir", help="read datasets from this directory instead")
     p_actions.add_argument(
         "--surface",
-        choices=("ledger", "tune", "ladder"),
+        choices=("ledger", "tune", "ladder", "derive"),
         default="ledger",
         help="ledger: which recipes can run · tune: the knobs of one "
         "recipe's steps · ladder: the scorer's rung tables",
     )
+    p_actions.add_argument("--run", help="parent run on the derive surface")
     p_actions.add_argument("--recipe", help="the recipe to tune (tune surface)")
     p_actions.add_argument("--step", help="only this tunable step (tune surface)")
     p_actions.add_argument(
@@ -1453,7 +1454,8 @@ def cmd_actions(args: argparse.Namespace, parser: argparse.ArgumentParser) -> in
             recipe=args.recipe,
             step=args.step,
             dataset_dir=args.dataset_dir,
-            gate=args.gate != "off",
+            gate=None if args.gate is None else args.gate != "off",
+            run=args.run,
             seed=42 if args.seed is None else args.seed,
         )
     except actions.UsageError as exc:

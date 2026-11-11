@@ -39,7 +39,7 @@ from manyruns import store as records
 SCHEMA_VERSION = 1
 
 #: The views of the action space. `ledger` is the default.
-SURFACES = ("ledger", "tune", "ladder")
+SURFACES = ("ledger", "tune", "ladder", "derive")
 
 
 class UsageError(ValueError):
@@ -116,13 +116,22 @@ def probe_run(dataset: str, seed: int, store: Path | str = ".") -> Optional[dict
 
 def enumerate_actions(surface: str, *, dataset: Optional[str] = None,
                       recipe: Optional[str] = None, step: Optional[str] = None,
-                      dataset_dir: Optional[Path | str] = None, gate: bool = True,
-                      seed: int = 42, store: Path | str = ".") -> dict:
+                      dataset_dir: Optional[Path | str] = None, gate: Optional[bool] = None,
+                      seed: int = 42, store: Path | str = ".", run: Optional[str] = None) -> dict:
     """The document for one surface. Raises `UsageError` or `LoadError`; never prints."""
     from manyruns.app import _installed_build
 
     if surface not in SURFACES:
         raise UsageError(f"unknown surface {surface!r}; known: {', '.join(SURFACES)}")
+    if surface != "derive" and run is not None:
+        raise UsageError("--run is allowed only on derive")
+    if surface == "derive":
+        if not run:
+            raise UsageError("the derive surface needs --run")
+        if recipe is not None or step is not None or gate is not None:
+            raise UsageError("the derive surface takes no --recipe, --step or --gate")
+    else:
+        gate = True if gate is None else gate
     doc: dict = {"schema_version": SCHEMA_VERSION, "tool_version": _installed_build(),
                  "surface": surface, "vocab_version": vocab.VERSION}
     if surface == "ladder":
@@ -159,6 +168,10 @@ def enumerate_actions(surface: str, *, dataset: Optional[str] = None,
         "provides": sorted(obs.provides()),
         "dims": ds.get("dims"),
     }
+    if surface == "derive":
+        from manyruns import derive
+
+        return {**doc, **derive.offer(dataset, run, store, dataset_dir=dataset_dir)}
     doc["gate"] = bool(gate)
     probe = probe_run(dataset, seed, store) if gate else None
     doc["evidence"] = _evidence(probe, seed)

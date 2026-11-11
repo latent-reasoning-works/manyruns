@@ -742,19 +742,22 @@ class ActionSpace:
         self,
         surface: str = "ledger",
         *,
-        gate: bool = True,
+        gate: Optional[bool] = None,
         recipe: Optional[str] = None,
         step: Optional[str] = None,
+        run: Optional[str] = None,
     ) -> dict:
         """The action document of `surface` for this dataset. Raises `Refused` on a failure."""
         if self.mode == "library":
-            return self._offer_library(surface, gate, recipe, step)
-        return self._offer_cli(surface, gate, recipe, step)
+            return self._offer_library(surface, gate, recipe, step, run)
+        return self._offer_cli(surface, gate, recipe, step, run)
 
-    def _offer_library(self, surface, gate, recipe, step) -> dict:
+    def _offer_library(self, surface, gate, recipe, step, run) -> dict:
         from manyruns import actions
 
         kwargs: dict[str, Any] = {}
+        if run is not None:
+            kwargs["run"] = run
         if recipe is not None:
             kwargs["recipe"] = recipe
         if step is not None:
@@ -768,17 +771,21 @@ class ActionSpace:
         except actions.LoadError as exc:
             raise Refused(1, f"cannot load {exc}") from None
 
-    def _offer_cli(self, surface, gate, recipe, step) -> dict:
+    def _offer_cli(self, surface, gate, recipe, step, run) -> dict:
         args = ["actions"]
         if surface != "ladder":
             args.append(self.dataset)
         args += ["--surface", surface]
+        if run is not None:
+            args += ["--run", run]
         if recipe is not None:
             args += ["--recipe", recipe]
         if step is not None:
             args += ["--step", step]
         if surface != "ladder":
-            args += ["--gate", "on" if gate else "off", "--seed", str(self.seed)]
+            args += ["--seed", str(self.seed)]
+            if gate is not None:
+                args += ["--gate", "on" if gate else "off"]
         done = self._child(args)
         if done.returncode != 0:
             raise Refused(2 if done.returncode == 2 else 1, _stderr_text(done.stderr))
