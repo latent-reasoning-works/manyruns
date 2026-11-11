@@ -45,6 +45,7 @@ mid-run is an outage, not a step.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -52,6 +53,11 @@ from typing import Any
 
 from manyruns import toolchain as _toolchain
 from manyruns.pipeline.steps import _StepSkipped, _StepUnsupported
+
+ENSEMBL_PATTERN = r"^ENSG\d{11}$"
+ENSEMBL_COLUMNS = ("gene_ids", "gene_id", "ensembl_id")
+GENE_ID_COVERAGE = 0.5
+
 
 #: `fact -> (destination, how it arrives)`. It held ONE entry, `velocity`, and its comment said
 #: that a second entry would tell us the general shape. The model seam is that second entry, with
@@ -436,7 +442,7 @@ def _table_problems(doc: dict, tables: Any) -> list[str]:
     return bad
 
 
-def _load_tables(doc: dict, base: Path, tables: dict, genes: Any, loaded: dict) -> list[str]:
+def _load_tables(doc: dict, base: Path, tables: dict, genes: Any, loaded: dict, gene_ids=None) -> list[str]:
     import hashlib
 
     import pandas as pd
@@ -458,7 +464,7 @@ def _load_tables(doc: dict, base: Path, tables: dict, genes: Any, loaded: dict) 
                 bad.append(f"tables.{name}: sha256 does not match the file; regenerate the result")
                 continue
             df = pd.read_csv(
-                path, sep="\t", dtype={"gene": str}, keep_default_na=False, na_filter=False
+                path, sep="\t", dtype={"gene": str, "gene_id": str}, keep_default_na=False, na_filter=False
             )
             table = Table(df, provenance=(name,)).require(*tables[name])
             if "gene" in df and genes is not None:
@@ -467,6 +473,11 @@ def _load_tables(doc: dict, base: Path, tables: dict, genes: Any, loaded: dict) 
                     bad.append(
                         f"tables.{name}: gene identifiers {stray} are absent from the current frame; regenerate for the current genes"
                     )
+                    continue
+            if "gene_id" in df and gene_ids is not None:
+                stray = sorted(set(df["gene_id"]) - {""} - set(gene_ids))
+                if stray:
+                    bad.append(f"tables.{name}: gene_id values {stray} are absent from the reference genes")
                     continue
             loaded[name] = table.df
         except (OSError, ValueError) as exc:
@@ -486,6 +497,7 @@ def _check_and_load(
     check_files: bool = True,
     genes: Any = None,
     loaded_tables: Any = None,
+    gene_ids: Any = None,
 ) -> tuple[list[str], dict]:
     """`check_result`, and the arrays it loaded. The merge uses the arrays that were checked."""
     import hashlib
@@ -509,7 +521,7 @@ def _check_and_load(
     if not check_files:
         return bad, {}
     bad += _load_tables(
-        doc, base, tables or {}, genes, loaded_tables if loaded_tables is not None else {}
+        doc, base, tables or {}, genes, loaded_tables if loaded_tables is not None else {}, gene_ids
     )
     root = base.resolve()
     loaded: dict = {}
@@ -800,6 +812,53 @@ def _check_selection(name: str, df, obs_names: list[str]) -> None:
         raise _StepSkipped(f"{name}: selection cells {absent} are absent from the frame")
 
 
+def _gene_ids(name: str, cfg: dict, genes, ctx: dict) -> tuple[list[str], int]:
+    import pandas as pd
+    from manyruns import resources
+
+    mapping = None
+    source = ctx.get("source_path")
+    if source and Path(source).suffix == ".h5ad":
+        import anndata as ad
+
+        try:
+            data = ad.read_h5ad(source, backed="r")
+            try:
+                column = next((c for c in ENSEMBL_COLUMNS if c in data.var), None)
+                if column:
+                    if not data.var_names.is_unique:
+                        raise ValueError("source gene names are not unique")
+                    mapping = dict(zip(map(str, data.var_names), data.var[column]))
+            finally:
+                data.file.close()
+        except (OSError, ValueError) as exc:
+            raise _StepSkipped(f"{name}: cannot read source gene ids: {exc}") from exc
+    if mapping is None:
+        block = (cfg.get("resource") or {}).get("gene_ids")
+        if block is None:
+            raise _StepSkipped(f"{name}: no Ensembl column {ENSEMBL_COLUMNS} and no gene_ids resource")
+        found = resources.resolve("gene_ids", block, None, cfg["name"])
+        if found["status"] != "ready":
+            raise _StepUnsupported(f"{name}: gene_ids {found['status']}; {found['fix']}")
+        try:
+            df = pd.read_csv(found["path"], sep="\t", dtype=str, keep_default_na=False, na_filter=False)
+            from manykinds import Table
+
+            Table(df, provenance=("gene_ids",)).require("symbol", "gene_id")
+            mapping = dict(zip(df["symbol"], df["gene_id"]))
+        except (OSError, ValueError) as exc:
+            raise _StepSkipped(f"{name}: gene_ids resource: {exc}") from exc
+        ctx["gene_id_provenance"] = resources.provenance(name, "gene_ids", block, None, found["sha256"])
+    ids = []
+    for gene in genes:
+        value = re.sub(r"\.\d+$", "", str(mapping.get(str(gene), "")))
+        ids.append(value if re.fullmatch(ENSEMBL_PATTERN, value) else "")
+    mapped = sum(bool(value) for value in ids)
+    if not ids or mapped / len(ids) < GENE_ID_COVERAGE:
+        raise _StepSkipped(f"{name}: mapped {mapped} of {len(ids)} genes; need at least half")
+    return ids, len(ids) - mapped
+
+
 def _input_path(cfg: dict, state: dict, ctx: dict, workdir: Path) -> Path | None:
     """Assemble what the tool reads — and refuse the compositions that would mislead it."""
     kind = (cfg.get("input") or {}).get("kind")
@@ -912,6 +971,11 @@ def _input_path(cfg: dict, state: dict, ctx: dict, workdir: Path) -> Path | None
             out.layers[name] = _dense(have[name])
         if view["genes"] is not None:
             out.var_names = np.asarray(view["genes"]).astype(object)
+        if (cfg.get("input") or {}).get("gene_id"):
+            ids, unmapped = _gene_ids(ctx.get("step_name", cfg["name"]), cfg, out.var_names, ctx)
+            out.var["gene_id"] = ids
+            ctx["gene_ids"] = ids
+            ctx["genes_unmapped"] = unmapped
         workdir.mkdir(parents=True, exist_ok=True)
         path = workdir / "input.h5ad"
         out.write_h5ad(path)
@@ -1043,6 +1107,7 @@ def _merge_v1(
         tables=tables,
         genes=genes,
         loaded_tables=loaded_tables,
+        gene_ids=(ctx or {}).get("gene_ids"),
     )
     if problems:
         more = f" (and {len(problems) - 1} more)" if len(problems) > 1 else ""
@@ -1217,8 +1282,24 @@ def run_external_step(name: str, params: dict, state: dict, g: dict, ctx: dict) 
     cfg = resolved["cfg"]
     v1 = (cfg.get("output") or {}).get("schema") == _toolchain.RESULT_SCHEMA
     workdir = Path(ctx["out_dir"]) / f"tool-{name}"
+    for key in ("gene_ids", "genes_unmapped", "gene_id_provenance"):
+        ctx.pop(key, None)
+    ctx["step_name"] = name
     input_path = _input_path(cfg, state, ctx, workdir)
+    if "genes_unmapped" in ctx:
+        g[f"{name}.genes_unmapped"] = ctx["genes_unmapped"]
+    g.update(ctx.get("gene_id_provenance") or {})
     bound = _bind_tables(name, cfg, ctx, workdir)
+    if bound and "gene_ids" not in ctx:
+        import pandas as pd
+
+        reference = None
+        for path in bound.values():
+            df = pd.read_csv(path, sep="\t", dtype=str, keep_default_na=False, na_filter=False)
+            if "gene_id" in df:
+                reference = (reference or set()) | set(df["gene_id"])
+        if reference is not None:
+            ctx["gene_ids"] = reference
     if "selection" in bound:
         import pandas as pd
 
