@@ -155,3 +155,31 @@ def tiny_opentargets(tmp_path, monkeypatch, ids=None):
         'gene_id': ids, 'symbol': [f'symbol{i}' for i in range(len(ids))],
         'disease_id': ['EFO_fixture'] * len(ids), 'assoc_score': [0.9] * len(ids),
     }, key='EFO_fixture')
+
+
+@pytest.fixture
+def planted_store(store_with_parent, monkeypatch):
+    from manyruns import store
+    from manyruns.pipeline import runner
+
+    pytest.importorskip('pydeseq2')
+    fixture = store_with_parent
+    data = replicated_h5ad(fixture['source'])
+    recipe = {'name': 'embed', 'steps': [{'name': 'embedder', 'group': 'latent', 'tool': 'embedder'}]}
+    with monkeypatch.context() as local:
+        local.setattr(runner._suite, 'measure', lambda *a, **k: {})
+        local.setattr(runner, '_attach_geometry', lambda *a, **k: {})
+        result = runner.run_inproc(data.X, recipe, fixture['store'] / 'outputs/planted',
+                                   sample_ids=np.asarray(data.obs_names), counts=data.X,
+                                   genes=np.asarray(data.var_names), dataset='cells')
+    result['dataset_name'] = 'cells'
+    store.append(result, extra={'source': str(fixture['source']), 'modality': 'scrna',
+                                'sample_key': 'sample', 'condition_key': 'condition'})
+    import pandas as pd
+    import sys
+    pd.DataFrame({'cell': data.obs_names, 'group': 'selected'}).to_csv(fixture['selection'], sep='\t', index=False)
+    monkeypatch.delenv('MANYRUNS_TOOL_DIR')
+    for name in ('pseudobulk_de', 'target_evidence'):
+        monkeypatch.setenv(f'MANYRUNS_TOOL_{name.upper()}_PYTHON', sys.executable)
+    tiny_opentargets(fixture['store'], monkeypatch)
+    return {**fixture, 'parent': list(store.read())[-1]}
