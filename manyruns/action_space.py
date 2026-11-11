@@ -260,7 +260,7 @@ def check_proposed(proposed: Any, offer: dict, *, store: Path | str = ".", seed:
     _check_proposed_values(proposed, offer_sha256(offer))
     reason = _illegal({"surface": offer["surface"]}, proposed["chosen"], offer, store, seed)
     if reason is not None:
-        raise _refuse(f"proposed.chosen is not legal: {reason}")
+        raise _illegal_refusal('proposed.chosen', reason)
 
 
 def _check_shape(choice: Any) -> None:
@@ -497,13 +497,16 @@ def _illegal(choice: dict, chosen: Any, doc: dict, store: Path | str, seed: int)
         entry = next((e for e in doc["offered"] if e["connector"] == chosen["connector"]), None)
         if entry is None:
             return f"connector {chosen['connector']!r} is not offered"
-        if not entry["can_run"]:
-            return "; ".join(entry["blocked"])
         if not isinstance(chosen["params"], dict):
             return "params must be a mapping"
         problems = derive.parameter_problems(chosen["connector"], entry["declaration"], chosen["params"])
         if problems:
             return "; ".join(problems)
+        problem = derive.resource_problem(entry, chosen["params"])
+        if problem:
+            return problem
+        if not entry["can_run"]:
+            return "; ".join(entry["blocked"])
         for role, key in entry["role_keys"].items():
             if key is None and not choice.get(f"{role}_key"):
                 return f"supply {role}_key in the choice"
@@ -546,6 +549,12 @@ def _illegal(choice: dict, chosen: Any, doc: dict, store: Path | str, seed: int)
     return None
 
 
+def _illegal_refusal(subject: str, reason: str) -> Refused:
+    if reason.startswith(('resource_not_built:', 'resource_mismatch:')):
+        return _refuse(reason)
+    return _refuse(f'{subject} is not legal: {reason}')
+
+
 def check_choice(choice: dict, *, store: Path | str = ".", seed: int = 42) -> dict:
     """Judge a choice document. Returns the recomputed action document it was made on.
 
@@ -557,11 +566,11 @@ def check_choice(choice: dict, *, store: Path | str = ".", seed: int = 42) -> di
     doc = _recompute(choice, store, seed)
     reason = _illegal(choice, choice["chosen"], doc, store, seed)
     if reason is not None:
-        raise _refuse(f"chosen is not legal: {reason}")
+        raise _illegal_refusal('chosen', reason)
     if "proposed" in choice:
         reason = _illegal(choice, choice["proposed"]["chosen"], doc, store, seed)
         if reason is not None:
-            raise _refuse(f"proposed.chosen is not legal: {reason}")
+            raise _illegal_refusal('proposed.chosen', reason)
     _check_column_keys(choice)
     return doc
 
