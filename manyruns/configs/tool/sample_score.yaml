@@ -1,0 +1,62 @@
+name: sample_score
+version: 0.1.0
+summary: sample score
+source: https://scanpy.readthedocs.io
+licence: BSD-3-Clause
+commercial_use: true
+python: '3.12'
+requires:
+- scanpy==1.12.2
+- scipy==1.14.1
+distribution: scanpy
+entrypoint: sample_score_adapter.py
+selftest: import scanpy
+input:
+  kind: state_frame
+  obs:
+  - sample
+  - condition
+  tables:
+    selection:
+    - cell
+    - group
+needs:
+- samples
+produces: []
+network: none
+output:
+  schema: result-v1
+  tables:
+    sample_scores:
+    - sample
+    - n_cells
+    - fraction
+    - score
+    - condition
+params:
+  top_genes: 20
+declaration:
+  schema_version: 1
+  method: sample_score
+  group: tool
+  origin: manyruns
+  params:
+    top_genes:
+      legal:
+        type: int
+        min: 1
+        max: null
+        min_open: false
+        max_open: false
+        choices: []
+        also: []
+      default: 20
+      sensible: null
+      ladder: null
+      limits: []
+      role: knob
+      precomputed: false
+      cost: null
+      meaning: Number of genes ranked by selection versus rest
+      more: null
+      less: null
