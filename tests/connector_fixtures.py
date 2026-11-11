@@ -146,3 +146,12 @@ def bundled_connector(tmp_path, monkeypatch, name, data=None, selection=None):
 def connector_table(tmp_path, name, table):
     import pandas as pd
     return pd.read_csv(tmp_path / f'out/tool-{name}/{table}.tsv', sep='\t', keep_default_na=False)
+
+
+def tiny_opentargets(tmp_path, monkeypatch, ids=None):
+    from tool_stubs import make_resource
+    ids = ids or [f'ENSG{i + 1:011d}' for i in range(5)]
+    return make_resource(tmp_path, monkeypatch, 'target_evidence', 'opentargets', {
+        'gene_id': ids, 'symbol': [f'symbol{i}' for i in range(len(ids))],
+        'disease_id': ['EFO_fixture'] * len(ids), 'assoc_score': [0.9] * len(ids),
+    }, key='EFO_fixture')
