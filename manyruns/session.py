@@ -296,6 +296,7 @@ class Session:
         agent_id: str = _trace.HUMAN,
         source_path: Any = None,
         obs: dict | None = None,
+        original_input: dict | None = None,
     ):
         from manyruns.pipeline import bounds
 
@@ -377,6 +378,7 @@ class Session:
         )[0]
         self.ctx: dict[str, Any] = {
             "source_path": source_path,
+            "original_input": original_input,
             "tool_timeout": _runner.tool_timeout(),
             "out_dir": self.out_dir,
             "plots": self.plots,
@@ -644,6 +646,7 @@ class Session:
             array=self.ctx["array"],
             labels=self.state.get("labels"),
             source_path=self.ctx.get("source_path"),
+            original_input=self.ctx.get("original_input"),
             obs={
                 name: values[self.state["rows"]]
                 for name, values in self.state["frame"]["obs"].items()

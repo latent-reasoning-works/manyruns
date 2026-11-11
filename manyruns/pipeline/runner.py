@@ -2255,6 +2255,7 @@ def run_manylatents(
     dataset_name: str | None = None,
     source_path: Any = None,
     obs: dict | None = None,
+    original_input: dict | None = None,
 ) -> dict:
     """Run the recipe against the real manylatents engine — one ``api.run`` call per
     latent/lightning step, embeddings chaining forward (phate → mioflow); analysis steps
@@ -2339,6 +2340,7 @@ def run_manylatents(
     g: dict[str, Any] = open_gvector(state)
     ctx = {
         "source_path": source_path,
+        "original_input": original_input,
         "tool_timeout": tool_timeout(),
         "out_dir": out_dir,
         "plots": plots,
@@ -2426,6 +2428,7 @@ def run_inproc(
     label_key: str | None = None,
     source_path: Any = None,
     obs: dict | None = None,
+    original_input: dict | None = None,
 ) -> dict:
     """Run the recipe on a 2-D array with real, public-only compute (no private stack).
 
@@ -2459,6 +2462,8 @@ def run_inproc(
     rows shared by construction rather than by hope (the argument `loading.labels_of`
     makes, one axis over). Passing them explicitly overrides the derivation, for a caller
     that holds the axis and only the matrix — `run_manylatents` is that caller's engine."""
+    if original_input is None:
+        original_input = {"object": matrix, "role_keys": {}}
     try:
         X = as_matrix(matrix)
     except ImportError as e:
@@ -2506,6 +2511,7 @@ def run_inproc(
     g: dict[str, Any] = open_gvector(state)
     ctx = {
         "source_path": source_path,
+        "original_input": original_input,
         "tool_timeout": tool_timeout(),
         "out_dir": Path(out_dir),
         "plots": plots,

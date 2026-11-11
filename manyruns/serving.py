@@ -149,6 +149,7 @@ class LocalServer:
             recipe=data.get("recipe") or {},
             data_ref=data.get("dataset"),
             source_path=data.get("source_path"),
+            original_input=data.get("original_input"),
             obs=data.get("obs"),
             dataset_name=data.get("dataset_name"),
             array=data.get("array"),
