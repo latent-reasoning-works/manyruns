@@ -79,3 +79,50 @@ output:
 params:
   max_epochs: 1500
   num_samples: 12
+
+declaration:
+  schema_version: 1
+  method: pyrovelocity
+  group: tool
+  origin: manyruns
+  params:
+    max_epochs:
+      legal: {type: int, min: 1, min_open: false, max: null, max_open: false, choices: [], also: []}
+      default: 1500
+      sensible:
+        lo: 1500
+        hi: 3000
+        scale: linear
+        source: {kind: measured, ref: "docs/sidecars: recovery at 1500 vs 120 epochs"}
+      ladder: null
+      limits: []
+      role: knob
+      precomputed: false
+      cost: null
+      meaning: Maximum number of training epochs
+      more: null
+      less: null
+    num_samples:
+      legal: {type: int, min: 1, min_open: false, max: null, max_open: false, choices: [], also: []}
+      default: 12
+      sensible: null
+      ladder: null
+      limits: []
+      role: knob
+      precomputed: false
+      cost: null
+      meaning: Number of posterior samples
+      more: null
+      less: null
+    n_neighbors:
+      legal: {type: int, min: 2, min_open: false, max: null, max_open: false, choices: [], also: []}
+      default: 30
+      sensible: null
+      ladder: null
+      limits: []
+      role: knob
+      precomputed: false
+      cost: null
+      meaning: Neighbours in the kNN graph the adapter builds before velocity (sc.pp.neighbors)
+      more: null
+      less: null

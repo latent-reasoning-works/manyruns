@@ -36,6 +36,12 @@ source:
 claims: single-trajectory
 
 steps:
+  # The traced g-vector changes from this commit on: PHATE now embeds PCA 50 of log-normalized
+  # counts, not raw counts.
+  - {name: normalize, group: prep,   params: {target_sum: 10000}, via: manylatents}
+  - {name: transform, group: prep,   params: {method: log1p},     via: manylatents}
+  - {name: pca,       group: latent, params: {n_components: 50},
+     limits: {n_components: [n_samples, n_features]},          via: manylatents}
   - {name: phate,   group: latent,    params: {n_components: 3}, via: manylatents}
   - {name: mioflow, group: lightning, params: {}, via: manylatents}
   # Reads `trajectories`, writes to the g-vector, moves no selection and produces no fact.

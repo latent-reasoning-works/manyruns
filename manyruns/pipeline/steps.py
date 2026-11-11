@@ -364,25 +364,12 @@ _FROM_EMB = "state['emb'] — a 1-column integral vector, which is leiden's outp
 def _partition(state) -> tuple:
     """``(labels, where)`` — the cluster assignment to report on, or ``(None, why)``.
 
-    TWO sources, in this order, and the order is the design:
+    ``state["clusters"]`` is the current model seam output and is read first. The seam keeps
+    ``state["emb"]`` unchanged, so readouts can score the partition in those coordinates.
 
-    1. ``state["clusters"]`` — the slot canonical-recipes.md §5.1 argues for (*"leiden writes
-       state['clusters'] rather than overwriting state['emb'] — the cleaner fix"*). The model
-       seam (`pipeline/external.py`) is its one producer: a model returns `clusters`, and the
-       seam writes this slot. `runner._ml_latent` still assigns `state["emb"] = emb` for every
-       latent step whatever that step computed. It is read FIRST so that every readout here
-       follows a model's partition with no edit.
-    2. ``state["emb"]`` when it is a single column of integral values — what manylatents'
-       leiden actually leaves behind. Measured in this checkout on two gaussian blobs at
-       120×8, `api.run(algorithms={'latent': 'leiden'}, seed=0)`: `embeddings` is
-       **(120, 1) float32 over {0., 1.}** and `scores` is **empty** — a clustering step whose
-       result reaches no record at all.
-
-    Reading a label column out of `emb` is not a design, it is what the state schema forces on
-    a readout while (1) has no producer. The test is deliberately narrow — exactly one column,
-    every value finite and integral — so ordinary 1-D coordinates are not mistaken for a
-    partition. A 1-D embedding whose values happen to be all-integral WOULD be, and that
-    residual is the argument for (1) rather than a reason to widen the test."""
+    A single integral column in ``state["emb"]`` remains a narrow compatibility path for an
+    engine that returns labels as an embedding. Ordinary one-dimensional coordinates are not
+    accepted unless every value is finite and integral."""
     import numpy as np
 
     raw = state.get("clusters")
@@ -410,12 +397,11 @@ def _step_cluster_quality(state, g, params, out_dir, plots, target_dim) -> None:
     types are in here"* previously answered it with a scatter plot and nothing in the record.
 
     **Silhouette, and where it is computed.** sklearn's silhouette over the partition. The
-    coordinate system is `state["emb"]` when the partition came from `state["clusters"]`, and
-    `state["X"]` when the partition came from `emb` ITSELF — because in that case leiden has
-    overwritten the coordinates it partitioned and they no longer exist anywhere in `state`.
-    Those are two different questions ("how separated in the embedding" vs "…in the input"),
-    so the space is recorded as `cluster_quality_space` rather than left for a reader to
-    assume. This is the concrete cost of §5.1's option (b) and the reason (a) is right.
+    coordinate system is `state["emb"]` when the partition came from `state["clusters"]`.
+    The model seam keeps that embedding when it stores the labels in `state["clusters"]`.
+    The compatibility path for labels in `state["emb"]` scores in `state["X"]`. These are two
+    different questions, so `cluster_quality_space` records the coordinate system and
+    `cluster_quality_dims` records its column count.
 
     **No null, deliberately** — see this section's header: a labels null certifies a partition
     of pure noise at the p-floor in every configuration measured. `cluster_quality_silhouette`
@@ -461,8 +447,10 @@ def _step_cluster_quality(state, g, params, out_dir, plots, target_dim) -> None:
         return
     from sklearn.metrics import silhouette_score
 
+    Z = np.asarray(Z)
     g["cluster_quality_space"] = space
-    g["cluster_quality_silhouette"] = float(silhouette_score(np.asarray(Z), labels))
+    g["cluster_quality_dims"] = int(Z.shape[1])
+    g["cluster_quality_silhouette"] = float(silhouette_score(Z, labels))
 
 
 def _step_rank_genes(state, g, params, out_dir, plots, target_dim) -> None:
@@ -1033,7 +1021,16 @@ def _dense_like(m):
     return m.toarray() if hasattr(m, "toarray") else m
 
 
+def _step_dataset_features(state, g, params, ctx):
+    from manyruns.pipeline import features
+
+    return features.step(state, g, params, ctx)
+
+
+_CTX_ANALYSIS_STEPS: frozenset[str] = frozenset({"dataset_features"})
+
 _ANALYSIS_STEPS = {
+    "dataset_features": _step_dataset_features,
     "separation": _step_separation,
     "composition": _step_composition,
     "cluster_quality": _step_cluster_quality,

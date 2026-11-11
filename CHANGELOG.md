@@ -10,6 +10,27 @@ Target: 0.1.2, with `manylatents>=0.1.11`.
 
 ### Added
 
+- `dataset_features` analysis step: runs `manylatents.singlecell.dataset_features` on the
+  input the run loaded and publishes the `dataset_features` run table. Needs the next
+  manylatents-omics release; until then the step declines as unsupported.
+- `pipeline.tables.publish`: one validate-and-save path for run tables, used by the tool
+  seam and by in-process steps.
+- Connector derivation after a finished run: `actions DATASET --surface derive --run RUN_ID`
+  offers table-producing tools, and `run --choice FILE --selection FILE` records a linked
+  decision and derived run. Bundled connectors are `pseudobulk_de`, `target_evidence` and
+  `sample_score`. Derived rows retain cell identities and table artifacts, measure no
+  geometry, and never count as probe evidence.
+- Pinned resource preparation through `tools build-resource NAME --param KEY=VALUE`, with
+  local digest checks and no adapter network access. Connector locks must be generated for
+  each platform before installation; they are not yet bundled.
+- Compatibility: `actions.SURFACES` includes `derive`, and choice surfaces now include
+  `derive`. Derive choices require `parent_run`, accept `parent_index`, and require
+  `selection_sha256` exactly when the connector reads a selection. Their `chosen` object
+  contains `connector` and `params`. Readers must tolerate `recipe: derive:<connector>`.
+- Derivation reopens recorded source files or resolves catalog files through the CLI data
+  folders, ignores verdict rows when locating a parent, and inherits the parent seed unless
+  `--seed` is explicit. Failed decision writes report that nothing was run.
+
 - `action_space.check_proposed(proposed, offer, *, store, seed)`: the checks of a reviewed
   choice's `proposed` block, as a public function, so that a harness can check a filler's block
   against its action document before a person reviews it.

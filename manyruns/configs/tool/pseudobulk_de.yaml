@@ -1,0 +1,138 @@
+name: pseudobulk_de
+version: 0.1.0
+summary: pseudobulk de
+source: https://github.com/owkin/PyDESeq2
+licence: MIT
+commercial_use: true
+python: '3.12'
+requires:
+- pydeseq2==0.5.4
+distribution: pydeseq2
+entrypoint: pseudobulk_de_adapter.py
+selftest: import pydeseq2
+input:
+  kind: state_frame
+  obs:
+  - sample
+  - condition
+  gene_id: true
+  tables:
+    selection:
+    - cell
+    - group
+needs:
+- genes
+- samples
+produces: []
+network: none
+output:
+  schema: result-v1
+  tables:
+    genes:
+    - gene
+    - gene_id
+    - score
+    - log2fc
+    - padj
+    - base_mean
+params:
+  contrast: condition
+  levels: &id001
+  - case
+  - control
+  groups: null
+  min_cells_per_sample: 10
+declaration:
+  schema_version: 1
+  method: pseudobulk_de
+  group: tool
+  origin: manyruns
+  params:
+    contrast:
+      legal:
+        type: choice
+        min: null
+        max: null
+        min_open: false
+        max_open: false
+        choices:
+        - condition
+        - groups
+        also: []
+      default: condition
+      sensible: null
+      ladder: null
+      limits: []
+      role: knob
+      precomputed: false
+      cost: null
+      meaning: Contrast axis
+      more: null
+      less: null
+    levels:
+      legal:
+        type: str
+        min: null
+        max: null
+        min_open: false
+        max_open: false
+        choices: []
+        also:
+        - - case
+          - control
+      default: *id001
+      sensible: null
+      ladder: null
+      limits: []
+      role: knob
+      precomputed: false
+      cost: null
+      meaning: Numerator and denominator as a JSON pair
+      more: null
+      less: null
+    groups:
+      legal:
+        type: str
+        min: null
+        max: null
+        min_open: false
+        max_open: false
+        choices: []
+        also:
+        - null
+      default: null
+      sensible: null
+      ladder: null
+      limits: []
+      role: knob
+      precomputed: false
+      cost: null
+      meaning: Group pair as JSON; null uses the two sorted selection groups
+      more: null
+      less: null
+    min_cells_per_sample:
+      legal:
+        type: int
+        min: 1
+        max: null
+        min_open: false
+        max_open: false
+        choices: []
+        also: []
+      default: 10
+      sensible: null
+      ladder: null
+      limits: []
+      role: knob
+      precomputed: false
+      cost: null
+      meaning: Minimum selected cells per sample for condition inference
+      more: null
+      less: null
+resource:
+  gene_ids:
+    release: '2025-03-01'
+    url: https://storage.googleapis.com/public-download-files/hgnc/archive/archive/monthly/tsv/hgnc_complete_set_2025-03-01.txt
+    licence: CC0-1.0
+    commercial_use: true
+    prepare: gene_ids_prepare.py

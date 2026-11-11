@@ -425,6 +425,8 @@ def offer(obs: Observation, available: "list | None" = None, *,
 #: a `discretize_time` step (`examples/recipes/cflows_inferred.yaml`).
 MISSING_FACT: dict[str, str] = {
     "conditions": "needs a healthy/disease column",
+    "samples":    "needs sample labels — supply --sample-key naming the sample column",
+    "batch":      "needs batch labels — supply --batch-key naming the batch column",
     "time":       "needs timepoints",
     "embedding":  "needs coordinates first — nothing here lays the cells out",
     "clusters":   "needs groups first — nothing here partitions the cells",

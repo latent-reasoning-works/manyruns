@@ -1,0 +1,88 @@
+name: target_evidence
+version: 0.1.0
+summary: target evidence
+source: https://platform.opentargets.org
+licence: BSD-3-Clause
+commercial_use: true
+python: '3.12'
+requires:
+- pandas==2.3.3
+- pyarrow==19.0.1
+distribution: pandas
+entrypoint: target_evidence_adapter.py
+selftest: import pandas
+input:
+  kind: none
+  tables:
+    genes:
+    - gene
+    - gene_id
+    - score
+needs: []
+produces: []
+network: none
+output:
+  schema: result-v1
+  tables:
+    gene_evidence:
+    - gene_id
+    - symbol
+    - disease_id
+    - assoc_score
+    - gene
+    - score
+params:
+  disease: ''
+  top_n: 100
+declaration:
+  schema_version: 1
+  method: target_evidence
+  group: tool
+  origin: manyruns
+  params:
+    disease:
+      legal:
+        type: str
+        min: null
+        max: null
+        min_open: false
+        max_open: false
+        choices: []
+        also: []
+      default: ''
+      sensible: null
+      ladder: null
+      limits: []
+      role: knob
+      precomputed: false
+      cost: null
+      meaning: Disease identifier in the pinned association release
+      more: null
+      less: null
+    top_n:
+      legal:
+        type: int
+        min: 1
+        max: null
+        min_open: false
+        max_open: false
+        choices: []
+        also: []
+      default: 100
+      sensible: null
+      ladder: null
+      limits: []
+      role: knob
+      precomputed: false
+      cost: null
+      meaning: Number of input genes ranked by absolute score
+      more: null
+      less: null
+resource:
+  opentargets:
+    release: '25.03'
+    url: https://ftp.ebi.ac.uk/pub/databases/opentargets/platform/25.03/output/association_by_overall_direct/
+    licence: CC0-1.0  # https://platform-docs.opentargets.org/licence
+    commercial_use: true
+    prepare: opentargets_prepare.py
+    key: disease
