@@ -96,3 +96,53 @@ Path(req['result']).write_text(json.dumps({'schema_version': 1, 'ok': True,
     selection.write_text('cell\tgroup\nc0\ta\nc1\tb\n')
     return {'store': tmp_path, 'parent': parent, 'source': source, 'selection': selection,
             'manifest': next(iter(parent['steps'][0]['artifacts'].values()))}
+
+
+def replicated_h5ad(path):
+    """Eight samples, with five strongly increased genes in the case samples."""
+    import anndata as ad
+    import pandas as pd
+
+    rng = np.random.default_rng(914)
+    counts = rng.poisson(8, (240, 200))
+    counts[:120, :5] += rng.poisson(90, (120, 5))
+    data = ad.AnnData(counts, obs=pd.DataFrame({
+        'sample': [f's{i // 30}' for i in range(240)],
+        'condition': ['case'] * 120 + ['control'] * 120,
+    }, index=[f'c{i}' for i in range(240)]), var=pd.DataFrame({
+        'gene_ids': [f'ENSG{i + 1:011d}.2' for i in range(200)],
+    }, index=[f'g{i}' for i in range(200)]))
+    data.write_h5ad(path)
+    return data
+
+
+def bundled_connector(tmp_path, monkeypatch, name, data=None, selection=None):
+    """Run the shipped adapter using this interpreter, without manufacturing a tool lock."""
+    import sys
+    import pandas as pd
+    from manyruns.pipeline import runner
+
+    monkeypatch.delenv('MANYRUNS_TOOL_DIR', raising=False)
+    monkeypatch.setenv(f'MANYRUNS_TOOL_{name.upper()}_PYTHON', sys.executable)
+    monkeypatch.setenv('MANYRUNS_RESOURCE_HOME', str(tmp_path / 'resources'))
+    if data is None:
+        data = replicated_h5ad(tmp_path / 'source.h5ad')
+    else:
+        data.write_h5ad(tmp_path / 'source.h5ad')
+    state = runner._new_state(X=data.X, counts=data.X, genes=np.asarray(data.var_names),
+                              labels=np.asarray(data.obs['condition']),
+                              obs={k: np.asarray(data.obs[k]) for k in data.obs})
+    state['label_kind'] = 'condition'
+    if selection is None:
+        selection = pd.DataFrame({'cell': data.obs_names, 'group': 'selected'})
+    path = tmp_path / 'selection.tsv'
+    selection.to_csv(path, sep='\t', index=False)
+    ctx = {'out_dir': tmp_path / 'out', 'run_id': 'connector-test', 'step_index': 0,
+           'sample_ids': list(data.obs_names), 'source_path': tmp_path / 'source.h5ad',
+           'input_tables': {'selection': str(path)}, 'seed': 42, 'caveats': []}
+    return data, state, ctx
+
+
+def connector_table(tmp_path, name, table):
+    import pandas as pd
+    return pd.read_csv(tmp_path / f'out/tool-{name}/{table}.tsv', sep='\t', keep_default_na=False)
