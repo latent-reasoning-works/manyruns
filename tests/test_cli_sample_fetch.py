@@ -44,7 +44,7 @@ def test_explicit_first_use_and_local_reuse(sample, argv, capsys):
     row, payload, calls, computes = sample
     argv = argv + ['--engine', 'manylatents', '--project', 'sample', '--recipe', 'embed']
     assert app.main(argv) == 0
-    assert calls == [row['handle']['url']]
+    assert [request.full_url for request in calls] == [row['handle']['url']]
     assert shell.data_dir().joinpath('pbmc3k_raw.h5ad').read_bytes() == payload
     assert app.main(argv) == 0
     assert len(calls) == 1

@@ -93,7 +93,7 @@ def test_the_folder_says_when_it_is_complete(tmp_path):
     import json
 
     manifest = json.loads((state / artifacts.DONE).read_text())
-    assert {v["slot"] for v in manifest.values()} == {"emb", "pseudotime"}
+    assert {v["slot"] for v in manifest.values()} == {"emb", "pseudotime", "input_space"}
 
 
 def test_no_partial_file_survives_a_write(tmp_path):
@@ -115,18 +115,13 @@ def test_no_partial_file_survives_a_write(tmp_path):
     assert not [p.name for p in plots.iterdir() if "part" in p.name]
 
 
-def test_the_input_matrix_is_never_written(tmp_path):
-    """Only DERIVED state. `state["X"]` is the scientist's data — copying it into an outputs
-    folder is a data-handling decision this module has no business making silently, and it is
-    the line the federated design turns on: geometry leaves, the person's data does not."""
-    assert "X" not in artifacts.PERSISTED
-    assert "labels" not in artifacts.PERSISTED
-
+def test_eligible_input_space_is_written_once(tmp_path):
     res = runner.run_inproc(_data(), catalog.load_recipe("cflows"), tmp_path, seed=0)
     state = artifacts.root(tmp_path, res["run_id"])
-
-    for f in state.glob("*.npy"):
-        assert artifacts.load_array(f).shape != (150, 12)   # the 12-column input, nowhere
+    assert state.is_dir()
+    paths = list(state.glob("*_input_space.npy"))
+    assert len(paths) == 1
+    assert artifacts.load_array(paths[0]).shape == (150, 12)
 
 
 def test_an_oversized_array_is_a_stated_absence(tmp_path, monkeypatch):

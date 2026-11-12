@@ -37,6 +37,40 @@ def _file_sha256(path) -> str:
     return digest.hexdigest()
 
 
+
+def input_sha256(matrix, source=None) -> str:
+    """Hash source bytes, or canonical float64 dense/CSR bytes without densifying.
+
+    Equal dense and sparse matrices intentionally have different identities.
+    """
+    import numpy as np
+    from scipy import sparse
+
+    if source is not None and Path(source).is_file():
+        return _file_sha256(source)
+    if hasattr(matrix, "X"):
+        matrix = matrix.X
+    if sparse.issparse(matrix):
+        x = matrix.astype(np.float64).tocsr(copy=True)
+        x.sum_duplicates()
+        x.eliminate_zeros()
+        x.sort_indices()
+        prefix = b"manyruns-csr/1\n"
+        parts = (x.indptr.astype(np.int64).tobytes(),
+                 x.indices.astype(np.int64).tobytes(), x.data.tobytes())
+    else:
+        x = np.asarray(matrix, dtype=np.float64, order="C")
+        prefix = b"manyruns-array/1\n"
+        parts = (x.tobytes(order="C"),)
+    if len(x.shape) != 2:
+        raise ValueError("input must be a matrix")
+    digest = hashlib.sha256(prefix + str(x.dtype).encode() + b"\n"
+                            + f"{x.shape[0]},{x.shape[1]}".encode() + b"\n")
+    for part in parts:
+        digest.update(part)
+    return digest.hexdigest()
+
+
 def _check_rows(rows):
     """Refuse malformed helper output before any table is published."""
     if not isinstance(rows, list) or not rows:
@@ -92,7 +126,7 @@ def step(state, g, params, ctx) -> None:
         raise _StepSkipped(f"dataset_features: {exc}") from exc
     source = ctx.get("source_path")
     try:
-        input_sha256 = _file_sha256(source) if source is not None and Path(source).is_file() else ""
+        digest = input_sha256(original["object"], source)
     except OSError as exc:
         raise _StepSkipped(f"dataset_features: cannot hash the input file: {exc}") from exc
     import pandas as pd
@@ -100,8 +134,10 @@ def step(state, g, params, ctx) -> None:
     encoded_roles = json.dumps(roles, sort_keys=True)
     frame = pd.DataFrame([
         {**row, "value": json.dumps(row["value"], allow_nan=False), "reason": row["reason"] or "",
-         "input_sha256": input_sha256, "tested_matrix": tested_matrix, "roles": encoded_roles}
+         "input_sha256": digest, "tested_matrix": tested_matrix, "roles": encoded_roles}
         for row in rows
     ], columns=COLUMNS)
     tables.publish(TABLE, {TABLE: frame}, required={TABLE: COLUMNS}, state=state, g=g, ctx=ctx)
+    ctx["feature_rows"] = rows
+    ctx["input_sha256"] = digest
     g["dataset_features.n_ok"] = sum(row["status"] == "ok" for row in rows)

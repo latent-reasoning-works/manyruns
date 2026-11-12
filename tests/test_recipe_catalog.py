@@ -176,6 +176,10 @@ def test_the_recipe_runs(name, tmp_path):
     from manyruns.pipeline import runner
 
     recipe = catalog.load_recipe(name)
+    if recipe.get("kind") == "profile":
+        pytest.importorskip("manylatents.metrics.shape_profile")
+        pytest.importorskip("manylatents.utils.profile")
+        pytest.importorskip("manylatents.singlecell.dataset_features")
     if "genes" in vocab.unmet(recipe, "clusters"):
         X, genes = _scrna_counts()
         counts = X

@@ -81,7 +81,7 @@ def test_a_chain_is_one_lineage_with_one_id_and_a_monotonic_index(tmp_path):
     assert [r["index"] for r in res["steps"]] == [0, 1]
     assert res["parent"] is None
     assert _names(artifacts.root(tmp_path, s.run_id)) == [
-        "00-phate_emb.npy", "01-mioflow_pseudotime.npy", "COMPLETE", "plots"]
+        "00-phate_emb.npy", "00-phate_input_space.npy", "01-mioflow_pseudotime.npy", "COMPLETE", "plots"]
     # one lineage, one folder — no second `state/` directory was minted along the way
     assert [p.name for p in (tmp_path / "state").iterdir()] == [s.run_id]
 
@@ -118,7 +118,7 @@ def test_a_rewind_is_a_second_lineage_that_names_the_state_it_started_from(tmp_p
     assert res["parent"] == {"run_id": s.run_id, "index": 0}
     # its own folder, its own positions, starting at 00 again
     assert _names(artifacts.root(tmp_path, b.run_id)) == [
-        "00-mioflow_pseudotime.npy", "COMPLETE", "plots"]
+        "00-mioflow_input_space.npy", "00-mioflow_pseudotime.npy", "COMPLETE", "plots"]
     assert _names(artifacts.root(tmp_path, s.run_id)) == before
     assert artifacts.load_array(s.steps[0]["artifacts"]["emb"]).shape == (150, 3)
 
@@ -185,7 +185,7 @@ def test_branching_does_not_seal_the_parent(tmp_path):
 
     s.close()
     assert artifacts.complete(root) is True
-    assert len(json.loads((root / artifacts.DONE).read_text())) == 2
+    assert len(json.loads((root / artifacts.DONE).read_text())) == 3
 
 
 def test_a_step_that_wrote_no_embedding_cannot_be_rewound_to(tmp_path):
@@ -394,11 +394,12 @@ def test_the_repl_closes_the_lineage_it_stepped(tmp_path, monkeypatch):
     app.interactive_session(s, read=lambda _="": script.pop(0), write=lambda *_: None)
 
     root = artifacts.root(tmp_path, s.run_id)
-    assert _names(root) == ["00-phate_emb.npy", "COMPLETE", "plots"]
+    assert _names(root) == ["00-phate_emb.npy", "00-phate_input_space.npy", "COMPLETE", "plots"]
     assert artifacts.complete(root) is True
     # and the manifest describes the folder it marks, rather than being an empty stamp
     assert list(json.loads((root / artifacts.DONE).read_text())) == [
-        str(s.steps[0]["artifacts"]["emb"])]
+        str(s.steps[0]["artifacts"]["emb"]),
+        str(s.steps[0]["artifacts"]["input_space"])]
 
 
 def test_a_mock_lineage_is_identifiable_in_the_store(tmp_path, monkeypatch):

@@ -446,6 +446,7 @@ GVECTOR_SIZE = ("n_samples", "n_features", "n_embedded", "final_dim")
 #:            new paths separately from the array slots.
 _STATE_KEYS = (
     "X",
+    "input_space",
     "emb",
     "pseudotime",
     "labels",
@@ -514,6 +515,7 @@ def _new_state(
         n_rows = emb.shape[0]
     return {
         "X": X,
+        "input_space": None,
         "emb": emb,
         "pseudotime": None,
         "labels": labels,
@@ -629,6 +631,8 @@ def _persist(
     if out_dir is None:
         return
     for slot in _artifacts.PERSISTED:
+        if slot == "input_space":
+            continue  # saved with its closed provenance by profile.save_input_space
         value = state.get(slot)
         if value is None or not hasattr(value, "shape") or value is before.get(slot):
             continue
@@ -704,7 +708,7 @@ def _persist(
 #:   metadata   — manylatents' provenance for its own run (`source`, `algorithm_type`,
 #:                `data_shape`). manyruns has `run_id`/`spec_id`/`tool_version` for that
 #:                question; a second provenance block invites a reader to trust the wrong one.
-ENGINE_CLAIMED = ("embeddings", "scores", "label", "metadata")
+ENGINE_CLAIMED = ("embeddings", "scores", "label", "metadata", "input_data")
 
 
 def _is_scalar(value: Any) -> bool:
@@ -845,7 +849,7 @@ def open_gvector(state: dict) -> dict:
 #: time; both have to hold or the two disagree about one recipe.
 #: `clusters`, `graph` and `trajectories` arrive through the model seam and were fitted over
 #: the cells the run held then, so a narrowing clears them as `vocab.invalidated` does.
-DERIVED_SLOTS = ("emb", "pseudotime", "model", "velocity", "clusters", "graph", "trajectories")
+DERIVED_SLOTS = ("input_space", "emb", "pseudotime", "model", "velocity", "clusters", "graph", "trajectories")
 
 
 def _apply_transition(out: dict, state: dict, rec: dict, ctx: dict) -> None:
@@ -977,6 +981,9 @@ def _apply_transition(out: dict, state: dict, rec: dict, ctx: dict) -> None:
     )
     for key in invalidated:
         state[key] = None
+    if remaining != before:
+        ctx["input_space_attempted"] = False
+        ctx.pop("input_space_artifact", None)
     if invalidated:
         rec["invalidated"] = invalidated
 
@@ -1041,6 +1048,18 @@ def apply_step(
     check, the dispatch lookup and the executor call, so the trace recorded what was
     ATTEMPTED while reading, to every consumer, as what EXECUTED. `outcome` and `seconds`
     are therefore written only after the executor returns or raises."""
+    from manyruns import profile as _profile
+    if ctx.get("profile"):
+        problems = _profile.check_pins(ctx["profile_recipe"])
+        if problems:
+            raise ValueError(problems[0])
+        expected = ctx["profile_recipe"]["steps"]
+        if index >= len(expected) or step != expected[index]:
+            raise ValueError("pinned_profile_parameter:steps")
+    if step_group(step) in ("latent", "lightning") or step.get("name") == "shape_profile":
+        pending_space = (dict(state), dict(ctx))
+    else:
+        pending_space = None
     name = step.get("name")
     group = step_group(step)
     # params are copied: an executor that mutates its params dict must not rewrite the
@@ -1124,6 +1143,7 @@ def apply_step(
     # `emitted` is, rather than threaded through every executor's signature.
     before_plots = len(ctx.get("plots") or ())
     before_slots = {k: state.get(k) for k in _artifacts.PERSISTED}
+    before_slots["working_X"] = state.get("X")
     # Diffed by identity like the slots above, so a step that only READS an extra another
     # step produced does not deposit a second copy of it under its own name.
     before_extras = dict(state.get("extras") or {})
@@ -1259,7 +1279,7 @@ def apply_step(
         # the panel renders without one and never revisits. This is also why it sits
         # above `_settle` rather than beside `_finalize` — the whole point is that `lid`
         # exists while the run is still going, not once the last step has finished.
-        if state.get("emb") is not before_obj:
+        if not ctx.get("profile") and not ctx.get("derive") and state.get("emb") is not before_obj:
             carry["geometry"] = _attach_geometry(
                 rec, state.get("emb"), carry["declared"], carry["geometry"]
             )
@@ -1274,6 +1294,22 @@ def apply_step(
             before_extras,
             before_tables,
         )
+        if rec["outcome"] in ("ok", "reported"):
+            if pending_space is not None and not ctx.get("input_space_attempted"):
+                saved_state, saved_ctx = pending_space
+                if saved_state.get("X") is None and state.get("X") is not None:
+                    saved_state = dict(state)
+                    saved_ctx["sample_ids"] = ctx.get("sample_ids")
+                saved_ctx["metadata_aligned"] = ctx.get("metadata_aligned", True)
+                _profile.save_input_space(saved_state, g, saved_ctx, carry, [rec])
+                for key in ("input_space_attempted",):
+                    if key in saved_ctx:
+                        ctx[key] = saved_ctx[key]
+                state["input_space"] = saved_state.get("input_space")
+            params = ctx.pop("effective_params", rec["params"])
+            ctx["executed_steps"] = [*ctx.get("executed_steps", []), {"name": name, "params": dict(params)}]
+            if group == "prep" and state.get("X") is not before_slots.get("working_X"):
+                ctx["working_steps"] = list(ctx["executed_steps"])
         _settle(rec)
         _report(on_step, rec, lineage)
     return rec
@@ -1292,6 +1328,11 @@ def _run_steps(
     that are genuinely RUN-shaped and that `new_carry`/`finish_carry` name — a carry opened
     once, a monotonic `index`, and exactly one close. A recipe is the degenerate lineage: it
     is issued all at once."""
+    from manyruns import profile as _profile
+    problems = _profile.check_pins(recipe)
+    if problems:
+        raise ValueError(problems[0])
+    ctx.update(profile=recipe.get("kind") == "profile", profile_recipe=recipe)
     steps: list[dict] = []
     carry = new_carry()
     for index, step in enumerate(recipe.get("steps", []) or []):
@@ -1306,6 +1347,7 @@ def _run_steps(
             on_step=on_step,
             steps=steps,
         )
+    _profile.save_input_space(state, g, ctx, carry, steps)
     finish_carry(carry, ctx)
     return steps
 
@@ -1527,6 +1569,7 @@ def _finalize(
     # Computed at the START of the run now and passed in — an artifact written by step 0
     # needs the run's address at step 0, not once the last step has finished. `identity` is
     # unchanged and still the only place ids are minted.
+    measure = measure and recipe.get("kind") != "profile"
     not_run = [dict(occurrence) for occurrence in not_run]
     for occurrence in not_run:
         if (
@@ -1600,6 +1643,7 @@ def _finalize(
         # refuses one row too many, never one too few.
         "non_commercial_steps": _non_commercial_steps(recipe, steps, g),
         "recipe": recipe.get("name"),
+        "kind": "derived" if str(recipe.get("name", "")).startswith("derive:") else recipe.get("kind", "recipe"),
         "num_steps": len(trace),
         "trace": trace,
         "g_vector": g,
@@ -1721,6 +1765,9 @@ def _run_prep_step(name, params, state, g, ctx):
     executor on this engine)` for the standard preamble, which is a hole rather than a
     fidelity difference — the distinction `--engine` is supposed to encode.
     """
+    if name == "profile_prepare":
+        from manyruns.profile import prepare
+        return prepare(state, g, params, ctx)
     from manyruns.pipeline import frame as _frame
 
     fn = _prep._PREP_STEPS.get(name)
@@ -2090,7 +2137,17 @@ def _ml_latent(name, params, state, g, ctx):
                 kwargs["data_kwargs"] = dict(ctx["data_kwargs"])
     else:
         kwargs["input_data"] = np.ascontiguousarray(state["emb"])  # chain
+    if state.get("X") is None:
+        import inspect
+        if "return_input_data" in inspect.signature(run).parameters:
+            kwargs["return_input_data"] = True
     out = run(**kwargs)
+    if state.get("X") is None and out.get("input_data") is not None:
+        loaded = _new_state(X=out["input_data"])
+        for key in ("X", "frame", "rows", "cols"):
+            state[key] = loaded[key]
+        ctx["array"] = state["X"]
+        ctx["sample_ids"] = implicit_sample_ids(state["X"])
     emb = np.ascontiguousarray(np.asarray(out.get("embeddings")))
     _save_engine_outputs(name, out, emb, ctx)
     if source_fit:
@@ -2292,6 +2349,12 @@ def run_manylatents(
     `mioflow` and neither `pca` nor `leiden` — so the gene axis reaching `run_inproc` alone
     does not unblock it. The state schema and the analysis executors are shared, so the
     remaining work is wiring, not design."""
+    if recipe.get("kind") == "profile" and array is None and data_ref:
+        from manylatents.utils.profile import materialize_profile_input
+        array = materialize_profile_input(data_ref, seed=seed, data_kwargs=data_kwargs)
+        sample_ids = implicit_sample_ids(array)
+    if original_input is None and array is not None:
+        original_input = {"object": array, "role_keys": {}}
     declared_shape = _bounds.declared_shape(declared_shape)
     try:
         import numpy  # noqa: F401 - fail here with actionable guidance, not mid-loop
@@ -2697,4 +2760,4 @@ def dispatchable(engine: str, name: Any, group: Any) -> bool:
     if fn is None:
         return False
     table = _NAME_TABLES.get(fn)
-    return table is None or name in table
+    return (group == "prep" and name == "profile_prepare") or table is None or name in table

@@ -161,6 +161,7 @@ def append(results: dict, *, out_dir: Path | str = "outputs",
         "data_kwargs": _jsonable(results.get("data_kwargs") or {}),
         "at": results.get("at"),
         "recipe": results.get("recipe"),
+        "kind": results.get("kind", "derived" if str(results.get("recipe", "")).startswith("derive:") else "recipe"),
         "engine": results.get("engine"),
         "seed": results.get("seed"),
         "tool_version": results.get("tool_version"),
@@ -197,6 +198,14 @@ def append(results: dict, *, out_dir: Path | str = "outputs",
         "g_vector": _jsonable(results.get("g_vector") or {}),
         **(_jsonable(extra or {})),
     }
+    from manyruns.vocab import RUN_KINDS
+    if extra and "kind" in extra:
+        raise ValueError("extra cannot override kind")
+    if row["kind"] not in RUN_KINDS:
+        raise ValueError("invalid run kind")
+    derived = str(row.get("recipe") or "").startswith("derive:")
+    if derived != (row["kind"] == "derived") or (row.get("recipe") == "profile" and row["kind"] != "profile"):
+        raise ValueError("inconsistent run kind")
     row["schema_version"] = 1
     if _blind.enabled():
         _blind_row(row, out_dir)

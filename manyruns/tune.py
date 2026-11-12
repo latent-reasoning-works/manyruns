@@ -502,6 +502,10 @@ def run_tune_loop(session: Any, step: dict, read: Any, write: Any, *,
     baseline_state = dict(session.state)
     baseline_array = session.ctx.get("array")
     baseline_alignment = session.ctx.get("metadata_aligned", True)
+    provenance_keys = ("executed_steps", "working_steps", "input_space_attempted", "input_space_artifact",
+                       "input_space_manifest", "input_space_name", "profile_prepared",
+                       "feature_rows", "input_sha256")
+    baseline_provenance = {k: session.ctx[k] for k in provenance_keys if k in session.ctx}
     from manyruns.pipeline import bounds
     from manyruns.pipeline.runner import ComputeCancelled
 
@@ -522,6 +526,9 @@ def run_tune_loop(session: Any, step: dict, read: Any, write: Any, *,
         session.state.update(baseline_state)
         session.ctx["array"] = baseline_array
         session.ctx["metadata_aligned"] = baseline_alignment
+        for key in provenance_keys:
+            session.ctx.pop(key, None)
+        session.ctx.update(baseline_provenance)
         # The legacy numeric cache is derived; explicit channels retain their original axis.
         from manyruns.pipeline.io import _labels_to_numeric
 

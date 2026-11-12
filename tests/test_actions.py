@@ -86,7 +86,7 @@ def test_ledger_offered_equals_tui_ledger(tmp_path):
     assert doc["dataset"] == {"name": "pbmc3k", "shape": "clusters", "topology": ["clusters"],
                               "modality": "scrna", "handle_kind": "path",
                               "provides": ["genes"], "dims": None}
-    assert doc["offered"][0] == {"recipe": "cluster", "can_run": True, "blocked": [],
+    assert doc["offered"][0] == {"recipe": "cluster", "kind": "recipe", "can_run": True, "blocked": [],
                                  "recommended": True, "measured": "unmeasured"}
     assert doc["detail"]["cluster"]["steps"] == [
         "prep:normalize", "prep:transform", "latent:pca", "latent:leiden",
@@ -95,7 +95,7 @@ def test_ledger_offered_equals_tui_ledger(tmp_path):
     assert doc["detail"]["archetypes"]["offer_rank"] == 2
     assert list(doc["detail"]) == [o["recipe"] for o in doc["offered"]]
     for entry in doc["detail"].values():
-        assert list(entry) == ["id", "steps", "claims", "suits", "unmet", "invalidated",
+        assert list(entry) == ["id", "kind", "steps", "claims", "suits", "unmet", "invalidated",
                                "unavailable", "support", "offer_rank"]
         assert entry["support"] == []
     # No phrasing and no outcomes: a recipe's question is not a statement of legality.

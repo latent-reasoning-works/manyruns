@@ -390,6 +390,7 @@ def offer(obs: Observation, available: "list | None" = None, *,
         # data rather than assume a shape of it and so have no assumption to state.
         claims = recipe.get("claims")
         out.append({"label": question, "recipe": name, "id": rid,
+                    "kind": recipe.get("kind", "recipe"),
                     "method": rid.rsplit(".", 1)[-1] if rid else name,
                     "assumption": claims,
                     "glyph": ASSUMPTION_GLYPH.get(claims) if claims else None,

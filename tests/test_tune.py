@@ -933,3 +933,12 @@ def test_a_rejected_attempt_keeps_its_own_per_run_figure(tmp_path):
         ["phate.png", "phate.spec.json", "phate.spec.npz"]]
     for path in (p for n in named for p in n):
         assert pathlib.Path(path).is_file(), path
+
+
+def test_cancel_restores_preprocessing_history():
+    session = _mock()
+    baseline = [{'name':'before','params':{}}]
+    session.ctx['executed_steps'] = baseline
+    tune.run_tune_loop(session, tune.parse_step_line('phate', 'mock'),
+                       lambda _: 'cancel', lambda _: None)
+    assert session.ctx['executed_steps'] == baseline

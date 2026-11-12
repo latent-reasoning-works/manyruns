@@ -125,13 +125,15 @@ def offer(dataset: str, run: str, store, *, dataset_dir=None) -> dict:
                 blocked.append(f"{code}:{item['name']}:{item['release']}")
         roles = list((cfg.get('input') or {}).get('obs') or [])
         offered.append({
-            'connector': connector, 'can_run': not blocked, 'blocked': blocked,
+            'connector': connector, 'execution': 'external', 'can_run': not blocked, 'blocked': blocked,
             'params': dict(cfg.get('params') or {}),
             'declaration': (cfg.get('declaration') or {}).get('params') or {},
             'binds': binds, 'selection': 'selection' in inputs, 'roles': roles,
             'role_keys': {role: parent.get(f'{role}_key') for role in roles},
             'resources': resource_items,
         })
+    offered.append(_inprocess_offer(parent, store))
+    offered.sort(key=lambda entry: entry["connector"])
     return {'gate': None, 'evidence': None,
             'parent': {'run_id': run, 'recipe': parent['recipe'],
                        'index': max((s['index'] for s in parent.get('steps') or []), default=0)},
@@ -252,6 +254,8 @@ def open_derived(parent: dict, connector: str, params: dict, keys: dict, store):
     from manyruns.pipeline import runner
     from manyruns.session import Session
 
+    if connector == "shape_profile":
+        return _open_shape_profile(parent, params, keys, store)
     root, root_index, index = _root_reference(parent, keys, store)
     cells = cell_list(root, root_index, store)
     dataset = root.get('dataset_name')
@@ -351,6 +355,11 @@ def run_derived(choice: dict, doc: dict, selection: Path | None, *, seed: int | 
         bindings['selection'] = str(selection_path)
         session.g['derive.selection.sha256'] = hashlib.sha256(selection_path.read_bytes()).hexdigest()
         session.g['derive.selection.rows'] = len(selection_df)
+    if chosen['connector'] == 'shape_profile':
+        if selection_df is None:
+            raise action_space.Refused(1, "shape_profile requires a selection")
+        import numpy as np
+        session.ctx['shape_selection'] = np.isin(session.ctx['sample_ids'], selection_df['cell'])
     session.ctx['input_tables'] = bindings
     session.g['derive.cells_sha256'] = hashlib.sha256('\n'.join(session.ctx['sample_ids']).encode()).hexdigest()
     rec = session.apply(session.recipe['steps'][0])
@@ -369,7 +378,48 @@ def run_derived(choice: dict, doc: dict, selection: Path | None, *, seed: int | 
 
 def parameter_problems(connector: str, declaration: dict, params: dict) -> list[str]:
     """Check a connector's choice without requiring dataset dimensions."""
+    if connector == "shape_profile":
+        if set(params) - {"extended"} or type(params.get("extended", False)) is not bool:
+            return ["invalid_parameters"]
+        return ["not_implemented"] if params.get("extended") else []
     from manykinds.params import check
 
     return check({'method': connector, 'params': declaration}, params,
                  n_samples=None, n_features=None)
+
+
+def _inprocess_offer(parent, store):
+    from manyruns.profile import resolve_parent_space
+    blocked = []
+    try:
+        resolve_parent_space(parent, store)
+    except (ValueError, OSError):
+        blocked.append("parent_input_space_unavailable")
+    return {"connector": "shape_profile", "execution": "inprocess", "can_run": not blocked,
+            "blocked": blocked, "params": {"extended": False},
+            "declaration": {"extended": {"type": "bool"}},
+            "binds": [], "selection": True, "roles": [], "role_keys": {}, "resources": []}
+
+
+def _open_shape_profile(parent, params, keys, store):
+    import numpy as np
+    from manyruns.profile import resolve_parent_space
+    from manyruns.session import Session
+    if set(params) - {"extended"} or type(params.get("extended", False)) is not bool:
+        raise ValueError("invalid_parameters")
+    if params.get("extended"):
+        raise ValueError("not_implemented")
+    space = resolve_parent_space(parent, store, parent_index=keys.get("parent_index"))
+    out_dir = state_dir(parent, store).parent.parent
+    session = Session(project=out_dir.name, engine="manylatents", out_dir=out_dir,
+                      seed=keys.get("seed", parent.get("seed") or 42), array=space["X"],
+                      sample_ids=np.asarray(space["ids"]), dataset_name=parent.get("dataset_name"),
+                      recipe={"name": "derive:shape_profile", "steps": [
+                          {"name": "shape_profile", "group": "analysis", "params": params}]},
+                      parent={"run_id": parent["run_id"], "index": keys.get("parent_index", space["index"])})
+    session.measure = False
+    session.ctx.update(derive=True, role_keys={}, input_space_manifest=space["manifest"],
+                       input_sha256=space["manifest"]["input_sha256"],
+                       input_space_name=space["manifest"]["input_space"], shape_layout=space["layout"])
+    session.g.update({"derive.root_run": space["run_id"], "derive.root_index": space["index"]})
+    return session

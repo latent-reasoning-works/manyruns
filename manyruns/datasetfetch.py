@@ -6,6 +6,7 @@ gesture. Existing files are user inputs, and are returned without hashing or rep
 from __future__ import annotations
 
 import hashlib
+import importlib.metadata
 import os
 import threading
 import urllib.request
@@ -24,6 +25,15 @@ _CHUNK_SIZE = 64 * 1024
 
 class DatasetFetchError(RuntimeError):
     """An actionable download refusal suitable for plain-text UI/CLI rendering."""
+
+
+def _user_agent() -> str:
+    """Identify manyruns and its installed version to download hosts."""
+    try:
+        version = importlib.metadata.version("manyruns")
+    except importlib.metadata.PackageNotFoundError:
+        version = "unknown"
+    return f"manyruns/{version} (+https://github.com/latent-reasoning-works/manyruns)"
 
 
 def _open_partial(folder: Path, name: str) -> BinaryIO:
@@ -125,8 +135,10 @@ def fetch_dataset(
                 progress(0, total)
             check_cancelled()
             open_url = opener if opener is not None else urllib.request.urlopen
-            with closing(open_url(url if url is not None else handle["url"],
-                                  timeout=_TIMEOUT)) as response:
+            download_url = url if url is not None else handle["url"]
+            request = (urllib.request.Request(download_url, headers={"User-Agent": _user_agent()})
+                       if opener is None else download_url)
+            with closing(open_url(request, timeout=_TIMEOUT)) as response:
                 while True:
                     check_cancelled()
                     chunk = response.read(min(_CHUNK_SIZE, total - done + 1))

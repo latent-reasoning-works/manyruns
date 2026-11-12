@@ -350,3 +350,16 @@ Three rules keep the join unambiguous.
 3. **Every event says who acted.** Trace events and transcript lines carry `agent_id`: `human`
    for a person, `llm:<model>` for a model chooser (§2.1). A `decision` event's `agent_id` is
    its row's `chooser`; the decision row has no `agent_id` key.
+
+### Shape profile records
+
+The pinned `profile` recipe and `shape_profile` in-process derive connector are
+described in [Shape profiles](profile.md). New ledger offers carry the declared
+`kind` field. New run records carry `kind` as a core field with the values
+`recipe`, `profile`, or `derived`. Profile and derived rows cannot be probes.
+Legacy records without this additive field remain readable.
+
+The `input_space` artifact carries a bounded dense working matrix and its
+preprocessing provenance. The `shape_profile` table has a closed column contract.
+The original input identity falls back to canonical dense or sparse matrix bytes
+when no file exists. Sparse hashing never densifies.
