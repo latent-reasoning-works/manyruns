@@ -122,6 +122,14 @@ def _installed_build() -> str:
     return f"{dist.version} · revision {revision if revision else 'unavailable'}"
 
 
+class _CallerVersionAction(argparse.Action):
+    """Print declared provenance literally, without help wrapping or interpolation."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        print(self.const)
+        parser.exit()
+
+
 class _Parser(argparse.ArgumentParser):
     """The top-level parser, whose epilog (the REPL command registry) is rendered on demand.
 
@@ -147,7 +155,21 @@ def _build_parser() -> argparse.ArgumentParser:
         description="manyruns — geometric exploration of your data.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--version", action="version", version=f"%(prog)s {_installed_build()}")
+    from manyruns import caller
+
+    try:
+        provenance = caller.read()
+    except ValueError as exc:
+        parser.error(str(exc))
+    version_line = f"%(prog)s {_installed_build()}"
+    if provenance:
+        name = provenance["name"]
+        if provenance["version"]:
+            name += f" {provenance['version']}"
+        version_line = f"{name} · built on manyruns {_installed_build()}"
+        parser.add_argument("--version", action=_CallerVersionAction, nargs=0, const=version_line)
+    else:
+        parser.add_argument("--version", action="version", version=version_line)
     sub = parser.add_subparsers(dest="cmd", required=True, parser_class=argparse.ArgumentParser)
 
     p_init = sub.add_parser("init", help="set up a project, then step through it interactively")
