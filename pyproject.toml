@@ -220,5 +220,6 @@ environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
 line-length = 100
 
 [tool.pytest.ini_options]
-markers = ["source_checkout: requires repository files or the Git index, omitted from sdist",
+markers = ["profile_timing: opt-in process start to both profile tables",
+           "source_checkout: requires repository files or the Git index, omitted from sdist",
            "stack_integration: real sibling packages, compute, intelligence seam and fresh-process records"]

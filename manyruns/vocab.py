@@ -117,6 +117,8 @@ BENCHMARK_CLASSES = ("clusters", "single-trajectory", "multi-branching", "archet
 #: must not share an id. A test pins it to `TOPOLOGIES`. Not derived from a hash of the tables,
 #: because then a reorder would move every `legal_id` with no reason in any diff.
 VERSION = "1"
+RECIPE_KINDS = ("recipe", "profile")
+RUN_KINDS = ("recipe", "profile", "derived")
 
 
 def check_topology(values: Any) -> list[str]:

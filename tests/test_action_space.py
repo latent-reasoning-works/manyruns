@@ -28,7 +28,7 @@ from manyruns.action_space import Refused, check_choice, offer_sha256
 
 #: Task 1.0, measured on the base commit with `manyruns actions swissroll` in an empty folder:
 #: the gate-on legal set of the bundled catalog.
-SWISS_LEGAL = ["archetypes", "embed"]
+SWISS_LEGAL = ["archetypes", "embed", "profile"]
 
 CHOOSER = "prior:test.0123456789ab"
 

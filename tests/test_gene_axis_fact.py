@@ -145,7 +145,7 @@ def test_the_sweep_prices_the_gene_demand_and_every_pruned_cell_is_named():
                 pruned[(r["name"], tuple(sorted(missing)))] = 1 + pruned.get(
                     (r["name"], tuple(sorted(missing))), 0)
 
-    assert len(recipes) * len(datasets) == 168
+    assert len(recipes) * len(datasets) == 182
     assert pruned == {
         ("contrast", ("conditions",)): 14,  # no bundled dataset declares `case-control`
         ("markers", ("genes",)): 13,        # every dataset but pbmc3k: 13 synthetic clouds

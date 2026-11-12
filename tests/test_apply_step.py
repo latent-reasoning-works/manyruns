@@ -129,8 +129,9 @@ def test_the_caller_owns_the_index_so_a_repeated_step_keeps_both_artifacts(tmp_p
     steps, execs = _latent("a", "b", "a"), [_embeds(1), _embeds(2), _embeds(3)]
 
     recs, _, _, _ = _drive(steps, execs, _ctx(tmp_path, "MONO"))
+    assert artifacts.root(tmp_path, "MONO").is_dir()
     files = sorted(p.name for p in artifacts.root(tmp_path, "MONO").iterdir())
-    assert files == ["00-a_emb.npy", "01-b_emb.npy", "02-a_emb.npy", "COMPLETE"]
+    assert files == ["00-a_emb.npy", "00-a_input_space.npy", "01-b_emb.npy", "02-a_emb.npy", "COMPLETE"]
     # the first `a`'s array is still the first `a`'s array
     assert np.load(recs[0]["artifacts"]["emb"])[0, 0] == 1.0
     assert np.load(recs[2]["artifacts"]["emb"])[0, 0] == 3.0
@@ -176,7 +177,8 @@ def test_the_manifest_describes_the_whole_folder_because_written_accumulates(tmp
     folder = artifacts.root(tmp_path, "RUN")
     manifest = json.loads((folder / artifacts.DONE).read_text())
 
-    assert len(manifest) == 3
+    assert len(manifest) == 4
+    assert folder.is_dir()
     assert len(manifest) == len([p for p in folder.iterdir() if p.name != artifacts.DONE])
 
 
@@ -200,7 +202,7 @@ def test_apply_step_never_marks_the_lineage_complete(tmp_path):
     assert artifacts.complete(artifacts.root(tmp_path, "RUN")) is True
 
 
-def test_a_lineage_that_wrote_nothing_leaves_no_marker(tmp_path):
+def test_a_readonly_latent_step_still_records_input_space(tmp_path):
     """An empty state folder and an interrupted one must not look alike."""
     from manyruns import artifacts
     from manyruns.pipeline import runner
@@ -212,7 +214,7 @@ def test_a_lineage_that_wrote_nothing_leaves_no_marker(tmp_path):
     _drive(_latent("a"), [reads_only], ctx)
 
     assert runner.finish_carry(runner.new_carry(), ctx) is None
-    assert artifacts.complete(artifacts.root(tmp_path, "RUN")) is False
+    assert artifacts.complete(artifacts.root(tmp_path, "RUN")) is True
 
 
 def test_apply_step_does_not_finalize_or_mint_identity(tmp_path):
@@ -226,7 +228,7 @@ def test_apply_step_does_not_finalize_or_mint_identity(tmp_path):
     # none of `_finalize`'s run-scoped keys leak into a step record...
     assert not {"run_id", "spec_id", "at", "g_vector", "trace", "status"} & set(recs[0])
     # ...and the executor's own keys are the ONLY thing in g: no suite was measured
-    assert set(g) == set()
+    assert set(g) == {"input_space.saved"}
 
 
 # ── the step is a dict, which is the whole point ─────────────────────────────────────────
@@ -346,7 +348,7 @@ def test_the_recipe_loop_is_apply_step_and_nothing_else(tmp_path, monkeypatch):
     assert strip(looped) == strip(by_hand)
     for run_id in ("LOOP", "HAND"):
         assert artifacts.complete(artifacts.root(tmp_path, run_id)) is True
-        assert len(json.loads((artifacts.root(tmp_path, run_id) / artifacts.DONE).read_text())) == 3
+        assert len(json.loads((artifacts.root(tmp_path, run_id) / artifacts.DONE).read_text())) == 4
 
 
 # ── the frame reaches the step loop, and a mask reaches the selection ─────────────────────
@@ -492,10 +494,11 @@ def test_a_narrowing_writes_no_artifact_for_the_array_it_just_cleared(tmp_path):
                                                           "axis": "rows"}},
                             ctx=ctx, index=1, carry=carry)
 
-    assert rec["invalidated"] == ["emb"]
+    assert rec["invalidated"] == ["input_space", "emb"]
     assert "artifacts" not in rec, rec.get("artifacts")
+    assert (tmp_path / "state").is_dir()
     written = sorted(p.name for p in (tmp_path / "state").rglob("*.npy"))
-    assert written == ["00-e_emb.npy"], written
+    assert written == ["00-e_emb.npy", "00-e_input_space.npy"], written
 
 
 def test_the_shape_a_later_steps_limits_resolve_against_moves_with_the_selection(tmp_path):

@@ -366,7 +366,7 @@ def test_the_offer_is_the_rows_the_screen_drew(tmp_path):
 
     # `measured` joined the record so the corpus can tell "picked the row the numbers warned
     # about" from "picked a row nothing was known about". A refused row reads `refused`.
-    assert row.as_offer() == {"recipe": "contrast", "can_run": False,
+    assert row.as_offer() == {"recipe": "contrast", "kind": "recipe", "can_run": False,
                               "blocked": ["needs a healthy/disease column"],
                               "recommended": False, "measured": "refused"}
     # the PHRASING is deliberately absent: a corpus carrying it would re-label itself every
@@ -436,7 +436,7 @@ def test_every_recipe_that_asserts_a_structure_now_declares_it():
     # filters and rescales — operations that are as true of a tree as of a blob, so it asserts
     # nothing about which. `check_claims` makes absence legal precisely so a recipe can say so
     # rather than pick the nearest word.
-    assert set(discover_recipes()) - set(claimed) == {"qc", "sandbox", "preprocess"}
+    assert set(discover_recipes()) - set(claimed) == {"qc", "sandbox", "preprocess", "profile"}
     assert claimed == {"archetypes": 4, "branches": 3, "cflows": 2, "cluster": 1, "contrast": 1,
                        "embed": 0, "markers": 1, "pseudotime": 2,
                        # `traced` is `cflows` plus a probe, and claims the same structure: the
