@@ -214,6 +214,40 @@ def test_tune_knobs_carry_neighbours_and_null_cap(tmp_path):
     assert _without(doc, "dataset") == _without(other, "dataset")
 
 
+@pytest.mark.parametrize("step, name, current, left, right", [
+    ("phate", "t", "auto", None, 20),
+    ("phate", "knn", 1, None, 2),
+    ("umap", "n_neighbors", 2, None, 3),
+    ("phate", "n_components", 1, None, 2),
+    ("leiden", "resolution", 0.1, None, 0.11),
+    ("phate", "t", 1, None, 2),
+    ("phate", "decay", 1, None, 2),
+    ("umap", "min_dist", 0.0, None, 0.1),
+    ("phate", "knn", 5, 4, 6),
+])
+def test_tune_sides_offer_distinct_moves(tmp_path, monkeypatch, step, name, current, left, right):
+    monkeypatch.setattr(catalog, "load_recipe", lambda _: {
+        "steps": [{"group": "latent", "name": step, "params": {name: current}}]})
+    doc = actions.enumerate_actions("tune", dataset="swissroll", recipe="embed", store=tmp_path)
+    knob = json.loads(json.dumps(doc))["knobs"][step]["params"][name]
+    assert knob["current"] == current
+    if left is None:
+        assert knob["left"] is None
+    else:
+        assert knob["left"] == pytest.approx(left)
+        assert knob["left"] != current
+    assert knob["right"] == pytest.approx(right)
+    assert knob["right"] != current
+
+
+def test_tune_right_is_null_when_step_does_not_move(tmp_path, monkeypatch):
+    monkeypatch.setattr(params, "step_value", lambda name, value, delta: value)
+    doc = actions.enumerate_actions("tune", dataset="swissroll", recipe="embed", store=tmp_path)
+    for knob in doc["knobs"]["phate"]["params"].values():
+        assert knob["left"] is None
+        assert knob["right"] is None
+
+
 def test_ladder_reports_score_tables():
     doc = actions.enumerate_actions("ladder")
     assert list(doc)[4:] == ["rung", "incomparable", "overshoot_weight",
