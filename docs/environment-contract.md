@@ -192,6 +192,9 @@ and it does not know who calls it. It takes no argument that names a caller. Wit
 the document names its evidence, the probe run, in `evidence`; the rule that selects that run is
 in [the harness page](harness.md#the-probe-run).
 
+On the `tune` surface, `left` and `right` are nullable step values: either is JSON `null` when
+its step equals `current`, and `left` is also `null` when both steps give the same value.
+
 **What this buys, and it is why the rule is absolute rather than a preference:**
 
 * manyruns is genuinely standalone open source, with no vestigial hooks whose purpose a reader
