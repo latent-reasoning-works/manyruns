@@ -10,7 +10,8 @@ Three surfaces:
   all come from there, and each `offered` entry is exactly `LedgerRow.as_offer()`, the
   conversion a decision row records. Nothing here recomputes them.
 - `tune`: the declared params of each tunable step, their one-press neighbours, floor, cap and
-  domain. No candidate grid: legality is free inside the domain.
+  domain. The `left` and `right` fields are nullable: unchanged sides are null, and a duplicate
+  left side is null. No candidate grid: legality is free inside the domain.
 - `ladder`: the scorer's rung tables.
 
 **Declared, never sniffed.** The Observation is `narrate.declared_observation`, built from the
@@ -271,20 +272,24 @@ def _tune(name: str, only: Optional[str]) -> dict:
         declared = dict(s.get("params") or {})
         offered.append({"step": s["name"], "params": declared, "label": tune._label(s)})
         caps = bounds.resolved_constraints(s, None)
+        knob_params = {}
+        for k, v in params.tunable_for(s):
+            left = params.step_value(k, v, -1)
+            right = params.step_value(k, v, +1)
+            knob_params[k] = {
+                "current": v,
+                "source": "declared" if k in declared else "default",
+                "floor": params.FLOOR.get(k),
+                "cap": caps[k]["cap"] if k in caps else None,
+                "left": left if left != v and left != right else None,
+                "right": right if right != v else None,
+                "domain": {**params.DOMAIN[k], "also": list(params.DOMAIN[k]["also"])},
+            }
         knobs[s["name"]] = {
             "index": index,
             "group": s["group"],
             "order": order,
-            "params": {
-                k: {"current": v,
-                    "source": "declared" if k in declared else "default",
-                    "floor": params.FLOOR.get(k),
-                    "cap": caps[k]["cap"] if k in caps else None,
-                    "left": params.step_value(k, v, -1),
-                    "right": params.step_value(k, v, +1),
-                    "domain": {**params.DOMAIN[k], "also": list(params.DOMAIN[k]["also"])}}
-                for k, v in params.tunable_for(s)
-            },
+            "params": knob_params,
         }
     return {"recipe": name, "step": only, "offered": offered, "knobs": knobs}
 
