@@ -69,6 +69,8 @@ Target: 0.1.2, with `manylatents>=0.1.11`.
 
 ### Fixed
 
+- Dataset downloads send a manyruns User-Agent with the installed version, fixing HTTP 403
+  responses from the pbmc3k host. Custom download openers keep their existing interface.
 - Two intermittent TUI tests are now deterministic, and a click on a column heading no longer moves the roster cursor (#23).
 
 ## [0.1.1] - 2026-10-31
