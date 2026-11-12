@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import errno
 import hashlib
+import importlib.metadata
 import io
 import json
 import signal
@@ -14,6 +15,7 @@ from pathlib import Path
 from threading import Event
 from time import monotonic
 from urllib.error import HTTPError, URLError
+from urllib.request import Request
 
 import pytest
 
@@ -52,6 +54,40 @@ def assert_empty_drop():
     root = shell.data_dir()
     assert root.is_dir()
     assert list(root.iterdir()) == []
+
+
+@pytest.mark.parametrize("installed_version", ["0.1.1", None])
+def test_default_download_sends_manyruns_user_agent(ds, monkeypatch, installed_version):
+    from manyruns import datasetfetch
+
+    def version(name):
+        assert name == "manyruns"
+        if installed_version is None:
+            raise importlib.metadata.PackageNotFoundError(name)
+        return installed_version
+
+    calls = []
+    response = io.BytesIO(PAYLOAD)
+
+    def urlopen(request, *, timeout):
+        calls.append((request, timeout))
+        return response
+
+    monkeypatch.setattr(importlib.metadata, "version", version)
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    result = datasetfetch.fetch_dataset(ds)
+
+    assert result.read_bytes() == PAYLOAD
+    assert response.closed
+    assert len(calls) == 1
+    request, timeout = calls[0]
+    assert isinstance(request, Request)
+    assert request.full_url == ds["handle"]["url"]
+    assert request.get_header("User-agent") == (
+        f"manyruns/{installed_version or 'unknown'} "
+        "(+https://github.com/latent-reasoning-works/manyruns)"
+    )
+    assert 0 < timeout <= 60
 
 
 def test_verified_first_use_is_invisible_until_complete_and_reused(ds):
@@ -623,7 +659,8 @@ def test_oversize_stream_is_refused_without_reading_to_eof(ds):
     assert_empty_drop()
 
 
-def test_local_url_override_and_runtime_opener_injection(ds, tmp_path, monkeypatch):
+@pytest.mark.parametrize("custom_opener", [False, True])
+def test_local_url_override_and_runtime_opener_injection(ds, tmp_path, monkeypatch, custom_opener):
     from manyruns import datasetfetch
 
     local = tmp_path / "transport.bin"
@@ -631,12 +668,18 @@ def test_local_url_override_and_runtime_opener_injection(ds, tmp_path, monkeypat
     calls = []
 
     def opener(url, *, timeout):
+        if not custom_opener:
+            assert isinstance(url, Request)
+            url = url.full_url
         assert url == local.as_uri()
         calls.append(url)
         return local.open("rb")
 
     monkeypatch.setattr("urllib.request.urlopen", opener)
-    assert datasetfetch.fetch_dataset(ds, url=local.as_uri()).read_bytes() == PAYLOAD
+    result = datasetfetch.fetch_dataset(
+        ds, url=local.as_uri(), opener=opener if custom_opener else None,
+    )
+    assert result.read_bytes() == PAYLOAD
     assert calls == [local.as_uri()]
 
 

@@ -350,7 +350,7 @@ async def test_fetch_progress_refreshes_ledger_runs_and_reuses_verified_file(tmp
             assert app.screen is roster
             await select_source(app, pilot, 'pbmc3k')
             assert isinstance(app.screen, LedgerScreen)
-            assert calls == [row['handle']['url']]
+            assert [request.full_url for request in calls] == [row['handle']['url']]
             assert ready.path.read_bytes() == payload
     finally:
         release.set()
@@ -399,7 +399,7 @@ async def test_failed_fetch_is_actionable_and_never_starts_a_run(tmp_path, monke
         assert not any(isinstance(screen, RunScreen) for screen in app.screen_stack)
         assert destination.parent.is_dir()
         assert not list(destination.parent.iterdir())
-        assert calls == [row['handle']['url']]
+        assert [request.full_url for request in calls] == [row['handle']['url']]
         await until(pilot, lambda: not modal._thread.is_alive())
     if (tmp_path / 'outputs').exists():
         assert records(tmp_path) == []
