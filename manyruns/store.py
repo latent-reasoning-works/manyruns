@@ -33,6 +33,12 @@ tool manifest says ``commercial_use: false``; ``[]`` means none. A row written b
 field existed has no such key, and a missing key means unknown. Product callers also supply the core top-level ``source``,
 ``modality`` and ``decision_id`` fields through the existing ``append(extra=...)`` merge.
 These stay at the top level; absent optional core fields retain their existing meaning.
+``caller`` is optional core provenance: ``{"name": <name>, "version": <version or null>}``.
+It is present only when ``MANYRUNS_CALLER`` is non-empty; a missing key means unknown.
+``MANYRUNS_CALLER_VERSION`` supplies the optional version. Names have no control characters;
+both strings are at most 100 characters. Unlike most core fields in the top-level merge,
+``caller`` cannot be supplied or overridden through ``extra=``; like ``kind``, it is rejected.
+``schema_version`` is also protected and is always written as 1.
 ``run``, ``init --batch``, ``explore`` and ``run --choice`` also write the core ``time_key`` and
 ``condition_key``: the metadata column whose values the run used as its time labels or its
 condition labels (a given ``--time-key``/``--condition-key`` or choice key, else the column
@@ -81,6 +87,7 @@ from pathlib import Path
 from typing import Any, Iterator, Optional
 
 from manyruns import blind as _blind
+from manyruns import caller as _caller
 
 
 def index_path(out_dir: Path | str = "outputs") -> Path:
@@ -136,6 +143,9 @@ def append(results: dict, *, out_dir: Path | str = "outputs",
     ``extra=`` still merges top-level fields, including core source/modality/decision_id.
     Only future downstream additions belong in a nested ``extra.<caller>`` namespace.
     The schema version is owned by this writer, not by the caller."""
+    provenance = _caller.read()
+    if extra and "caller" in extra:
+        raise ValueError("extra cannot override caller")
     path = index_path(out_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     row = {
@@ -207,6 +217,8 @@ def append(results: dict, *, out_dir: Path | str = "outputs",
     if derived != (row["kind"] == "derived") or (row.get("recipe") == "profile" and row["kind"] != "profile"):
         raise ValueError("inconsistent run kind")
     row["schema_version"] = 1
+    if provenance:
+        row["caller"] = provenance
     if _blind.enabled():
         _blind_row(row, out_dir)
     line = json.dumps(row, separators=(",", ":")) + "\n"

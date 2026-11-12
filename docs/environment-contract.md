@@ -192,6 +192,10 @@ and it does not know who calls it. It takes no argument that names a caller. Wit
 the document names its evidence, the probe run, in `evidence`; the rule that selects that run is
 in [the harness page](harness.md#the-probe-run).
 
+A wrapping program may declare itself with `MANYRUNS_CALLER` and the optional
+`MANYRUNS_CALLER_VERSION`, for example `labtool` and `0.1.0`. manyruns records this
+provenance on run records and prints it in `--version`; it changes nothing else.
+
 On the `tune` surface, `left` and `right` are nullable step values: either is JSON `null` when
 its step equals `current`, and `left` is also `null` when both steps give the same value.
 
