@@ -34,10 +34,9 @@ name is a temp file. The path rides in the step record, so `index.jsonl` already
 a reader goes from a row in the run store to the array that row describes with no filesystem
 convention in its head.
 
-**Never the input.** Only DERIVED state is written: `emb`, `pseudotime`. `state["X"]` is the
-scientist's data — 2,700 × 32,738 for pbmc3k — and copying it into an outputs folder is a
-data-handling decision this module has no business making silently. It is also the line the
-federated design turns on: geometry leaves, the person's data does not.
+The measured input space is an explicit exception: dense matrices with at most
+512 columns are persisted as float64 with row identity and preprocessing provenance.
+Sparse matrices and wider matrices are recorded as unavailable for selections.
 """
 
 from __future__ import annotations
@@ -47,10 +46,10 @@ import os
 from pathlib import Path
 from typing import Any, Optional
 
-#: Slots worth persisting. `X` is deliberately absent — see the module docstring. `labels`
+#: Slots worth persisting. The bounded measured matrix uses `input_space`. `labels`
 #: too, unless the caller explicitly supplies Session(sample_ids=...). That opt-in stores
 #: row annotations in the manifest, tied to each derived array's actual row selection.
-PERSISTED = ("emb", "pseudotime", "clusters")
+PERSISTED = ("emb", "pseudotime", "clusters", "input_space")
 
 #: A separate, much smaller ceiling for ENGINE BYPRODUCTS (`runner._collect_extras`), because
 #: they are a different size class from manyruns's own state and the cap below was chosen for

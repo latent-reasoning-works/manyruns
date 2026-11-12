@@ -83,7 +83,7 @@ def is_probe(row: dict, dataset: str) -> bool:
     g-vector (`vocab.rung_support`, `not_measured`), so a row that passes this rule never lets a
     claim through without its number.
     """
-    if str(row.get("recipe") or "").startswith("derive:"):
+    if row.get("kind") in ("profile", "derived") or str(row.get("recipe") or "").startswith("derive:"):
         return False
     if row.get("dataset_name") != dataset or row.get("ok") is not True:
         return False
@@ -228,6 +228,7 @@ def _ledger(obs, evidence: Optional[dict], admitted) -> dict:
         recipe = catalog.load_recipe(row.recipe)
         detail[row.recipe] = {
             "id": recipe.get("id"),
+            "kind": recipe.get("kind", "recipe"),
             "steps": [f"{s['group']}:{s['name']}" for s in recipe["steps"]],
             "claims": recipe.get("claims"),
             "suits": list(recipe.get("suits") or []),
@@ -255,7 +256,7 @@ def _tune(name: str, only: Optional[str]) -> dict:
         recipe = catalog.load_recipe(name)
     except Exception as exc:  # noqa: BLE001 - a malformed YAML raises a parser error, not ValueError
         raise LoadError("recipe", name, str(exc)) from exc
-    tunable = [(i, s) for i, s in enumerate(recipe["steps"]) if params.tunable_for(s)]
+    tunable = [] if recipe.get("kind") == "profile" else [(i, s) for i, s in enumerate(recipe["steps"]) if params.tunable_for(s)]
     seen: set = set()
     for _, s in tunable:
         if s["name"] in seen:

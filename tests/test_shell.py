@@ -445,7 +445,7 @@ def test_fetch_on_selection_returns_a_newly_resolved_absolute_drop_path(download
     assert picked[1] is None
     assert picked[3].source == "sample"
     assert picked[0].read_bytes() == b"a,b\n1,2\n3,4\n"
-    assert requests == [ds["handle"]["url"]]
+    assert [request.full_url for request in requests] == [ds["handle"]["url"]]
     assert "download on selection" in str(pr.offered[0])
     assert pr.offered[1][2] == "back"
     assert [label for label, value in pr.offered[1][1]] == ["Fetch", "Back"]

@@ -17,6 +17,7 @@ real code runs, against a directory that evaporates.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -47,6 +48,10 @@ def _inspection_cache_is_disposable(tmp_path, monkeypatch):
 
 def pytest_collection_modifyitems(items):
     """Repository-only gates cannot run from an sdist, which deliberately omits tooling."""
+    if os.environ.get("MANYRUNS_PROFILE_TIMING") != "1":
+        for item in items:
+            if item.get_closest_marker("profile_timing"):
+                item.add_marker(pytest.mark.skip(reason="set MANYRUNS_PROFILE_TIMING=1"))
     root = Path(__file__).resolve().parents[1]
     assert root.is_dir(), "test root moved"
     if not (root / ".git").exists():

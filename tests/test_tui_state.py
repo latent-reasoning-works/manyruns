@@ -488,7 +488,7 @@ def test_every_bundled_recipe_splits_into_an_ask_and_a_gloss():
     from manyruns.catalog import discover_recipes, load_recipe
 
     names = discover_recipes()
-    assert len(names) == 12, "catalog changed; re-read the measurement in this test"
+    assert len(names) == 13, "catalog changed; re-read the measurement in this test"
     for name in names:
         ask, gloss = narrate.split_question(load_recipe(name)["question"])
         assert ask and gloss, f"{name}: {ask!r} / {gloss!r}"
@@ -539,7 +539,7 @@ def test_the_ledger_shows_the_refused_recipe_instead_of_hiding_it():
     # 5 -> 7: `archetypes` is no longer `blocked:`, and `branches` is legal on every shape.
     # 7 -> 5: `mioflow` needs `time`, so `cflows` and `traced` are hollow on `single`, for a
     # third fact.
-    assert sum(1 for r in rows.values() if r.can_run) == 5
+    assert sum(1 for r in rows.values() if r.can_run) == 6
     assert {name for name, r in rows.items() if not r.can_run} == {
         "contrast", "qc", "markers", "preprocess", "cflows", "traced"}
     assert rows["cflows"].detail == narrate.MISSING_FACT["time"] == rows["traced"].detail
@@ -669,7 +669,7 @@ def test_the_capability_count_discriminates_once_a_row_reads_its_own_facts():
     # `archetypes` is no longer `blocked:`, and `branches` is legal on every shape.
     # Since `mioflow` needs `time` the shape-only reading discriminates on ONE fact, the time
     # axis: 7 on a `time-course` row, where `cflows` and `traced` run, and 5 elsewhere.
-    expected = {r.name: 7 if r.obs.shape == "time-course" else 5 for r in rows}
+    expected = {r.name: 8 if r.obs.shape == "time-course" else 6 for r in rows}
     assert by_shape == expected, f"the shape-only reading moved: {by_shape}"
 
     with_facts = {r.name: sum(1 for row in state.ledger(r.obs, r.obs.provides()) if row.can_run)

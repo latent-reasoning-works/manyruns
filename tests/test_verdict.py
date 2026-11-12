@@ -119,7 +119,7 @@ def test_payload_has_five_keys(outputs, tmp_path):
     (plain,) = list(store.read(plain_dir))
     # the 17 core fields plus `non_commercial_steps` (model seam), `run_plots` (#25), and
     # `cancelled` and `not_run` (#37)
-    assert len(plain) == 21
+    assert len(plain) == 22
     assert set(row) - set(plain) == {"extra"}
     assert set(plain) <= set(row)
 

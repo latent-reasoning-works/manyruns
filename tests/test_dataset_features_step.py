@@ -137,9 +137,9 @@ def test_input_sha256_of_a_file_source(tmp_path):
 
 
 @pytest.mark.parametrize("source", [None, "directory", "missing"])
-def test_input_sha256_is_empty_without_a_file(tmp_path, source):
+def test_input_sha256_uses_matrix_without_a_file(tmp_path, source):
     path = None if source is None else tmp_path if source == "directory" else tmp_path / "missing"
-    assert set(_table(_run(tmp_path, source_path=path))["input_sha256"]) == {""}
+    assert set(_table(_run(tmp_path, source_path=path))["input_sha256"]) == {features.input_sha256(np.ones((30, 4)))}
 
 
 def test_input_sha256_streams_the_file(tmp_path, monkeypatch):

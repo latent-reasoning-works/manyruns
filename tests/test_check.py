@@ -138,13 +138,15 @@ def test_no_bundled_prep_step_declares_a_parameter_its_executor_cannot_read():
         for step in catalog.load_recipe(name)["steps"]:
             if step.get("group") != "prep":
                 continue
-            body = inspect.getsource(prep._PREP_STEPS[step["name"]])
+            from manyruns import profile
+            executor = profile.prepare if step["name"] == "profile_prepare" else prep._PREP_STEPS[step["name"]]
+            body = inspect.getsource(executor)
             for key in (step.get("params") or {}):
                 assert f'"{key}"' in body, (
                     f"{name}: {step['name']} declares {key!r} and its executor never names it — "
                     "a param nothing reads is a silent lie on the page")
                 checked += 1
-    assert checked == 24, "the bundled prep params moved; re-read the measurement above"
+    assert checked == 29, "the bundled prep params moved; re-read the measurement above"
 
 
 def test_the_preamble_asks_the_short_half_like_every_other_row():

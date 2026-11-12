@@ -173,7 +173,7 @@ def test_readers_of_the_store_tolerate_a_derived_row(store_with_parent):
     assert actions.enumerate_actions('ledger', dataset='cells', gate=True)['surface'] == 'ledger'
     assert isinstance(decisions.examples(), list)
     assert isinstance(decisions.examples(surface=None), list)
-    assert decisions._legal_set(list(decisions.read())[-1]['offered']) == ['derive:conn']
+    assert decisions._legal_set(list(decisions.read())[-1]['offered']) == ['derive:conn', 'derive:shape_profile']
 
 
 @pytest.mark.parametrize('fault', ['missing_file', 'missing_cell', 'engine_dataset'])

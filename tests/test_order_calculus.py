@@ -60,6 +60,7 @@ FORWARD = {"name": "forward", "steps": [PHATE, MIOFLOW]}
 #: rather than computed so that a regression has to disagree with a number, not with a
 #: reimplementation of the thing under test.
 BUNDLED_LEGALITY = {
+    **{("profile", shape): set() for shape in SHAPES},
     # The five below were added with the recipe catalogue. Each row is MEASURED, not intended:
     # the guard exists so that adding a recipe forces someone to look at what the calculus now
     # says about it, rather than discovering later that a menu entry is legal on nothing —
