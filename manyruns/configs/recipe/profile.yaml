@@ -1,0 +1,19 @@
+name: profile
+id: data.profile.shape
+kind: profile
+source: {kind: none, note: "Descriptive shape profile, definition profile/1."}
+question: "Describe the shape — report scale-dependent geometry"
+suits: []
+steps:
+  - name: dataset_features
+    group: analysis
+    params: {roles: {}, layer: null, overrides: null}
+    via: manyruns
+  - name: profile_prepare
+    group: prep
+    params: {max_components: 50, center: true, scale: false, dtype: float64, solver: full}
+    via: manylatents
+  - name: shape_profile
+    group: analysis
+    params: {extended: false}
+    via: manyruns

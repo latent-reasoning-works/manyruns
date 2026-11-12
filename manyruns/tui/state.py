@@ -810,6 +810,7 @@ class LedgerRow:
     #: Whether a measurement was taken at all, so "nothing to say" and "nothing was asked" are
     #: not the same blank.
     checked: bool = False
+    kind: str = "recipe"
 
     @property
     def measured(self) -> str:
@@ -846,7 +847,7 @@ class LedgerRow:
         # screen showed — a later reader cannot otherwise tell "picked the row the numbers
         # warned about" from "picked a row nothing was known about" — but the sentence is
         # phrasing, and a corpus that carried it would re-label itself on every rewording.
-        return {"recipe": self.recipe, "can_run": self.can_run,
+        return {"recipe": self.recipe, "kind": self.kind, "can_run": self.can_run,
                 "blocked": list(self.blocked), "recommended": self.recommended,
                 "measured": self.measured}
 
@@ -922,7 +923,7 @@ def ledger(obs: Observation,
             why += sorted(rung_support(recipe, evidence, admitted))
         ask, gloss = narrate.split_question(offered["label"])
         rows.append(LedgerRow(
-            recipe=offered["recipe"], ask=ask, gloss=gloss, can_run=not why,
+            recipe=offered["recipe"], kind=offered.get("kind", "recipe"), ask=ask, gloss=gloss, can_run=not why,
             blocked=tuple(why), recommended=bool(offered["recommended"]),
             assumption=offered.get("assumption"), glyph=offered.get("glyph"),
             method=offered.get("method", ""), cite=offered.get("cite", ""),

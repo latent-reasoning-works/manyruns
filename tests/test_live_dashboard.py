@@ -121,7 +121,7 @@ def test_a_run_without_an_observer_is_unchanged(tmp_path, monkeypatch):
         return out
 
     assert strip(quiet) == strip(watched)
-    assert strip(quiet)[0]["artifacts"] == {"emb": "00-a_emb.npy"}
+    assert strip(quiet)[0]["artifacts"] == {"emb": "00-a_emb.npy", "input_space": "00-a_input_space.npy"}
 
 
 def test_a_failing_step_is_reported_live_too(tmp_path, monkeypatch):

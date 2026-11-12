@@ -2892,6 +2892,8 @@ def apply_transform_shim(recipe: dict, transform: Optional[str]) -> dict:
     """
     if not transform:
         return recipe
+    if recipe.get("kind") == "profile":
+        raise ValueError("pinned_profile_parameter:profile_prepare.transform")
     out = dict(recipe)
     out["steps"] = [
         {**s, "params": {**(s.get("params") or {}), "method": transform}}
@@ -2908,6 +2910,8 @@ def apply_step_params(recipe: dict, step: str, params: dict) -> dict:
     For a tune choice, before `write_project`, so `project.yaml` records the values that ran.
     The tune document refuses two tunable steps with one name, so the step is unique.
     """
+    if recipe.get("kind") == "profile" and params:
+        raise ValueError(f"pinned_profile_parameter:{step}.{next(iter(params))}")
     out = dict(recipe)
     out["steps"] = [
         {**s, "params": {**(s.get("params") or {}), **params}} if s.get("name") == step else s

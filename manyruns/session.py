@@ -227,6 +227,8 @@ def resumable(out_dir: Path | str) -> Optional[dict]:
         per_run: dict[str, dict] = {}
         for path, entry in manifest.items():
             slot = entry["slot"]
+            if slot == "input_space":
+                continue
             if slot not in per_run or entry["index"] > per_run[slot]["index"]:
                 per_run[slot] = {**entry, "path": path}
         for slot, entry in per_run.items():
@@ -309,6 +311,16 @@ class Session:
         self.fast_dev_run = bool(fast_dev_run)
         self.modality = modality
         self.recipe = recipe or {}
+        from manyruns.profile import check_pins
+        problems = check_pins(self.recipe)
+        if problems:
+            raise ValueError(problems[0])
+        if self.recipe.get("kind") == "profile" and array is None and dataset:
+            from manylatents.utils.profile import materialize_profile_input
+            array = materialize_profile_input(dataset, seed=self.seed, data_kwargs=data_kwargs)
+            sample_ids = _runner.implicit_sample_ids(array)
+        if original_input is None and array is not None:
+            original_input = {"object": array, "role_keys": {}}
         self.labels = labels
         # "time" | "condition" | "group" — three kinds in one channel, and every consumer
         # ALLOWS the one it wants rather than denying the ones it does not: only "time"
@@ -323,7 +335,7 @@ class Session:
         # `agents.propose` sets for the length of its call. It stamps the `step` and
         # `run_complete` trace events, so a reader can tell a person's steps from a model's.
         self.agent_id = agent_id
-        self.measure = True
+        self.measure = self.recipe.get("kind") != "profile"
         self.compute = None  # Optional execution placement; never an engine selection.
         # Keep the complete input in the parent; ordinary compute calls only need ctx.
         self.original_input = original_input
@@ -406,6 +418,10 @@ class Session:
         }
 
         self.ctx.update(display)
+        self.ctx.update(profile=self.recipe.get("kind") == "profile", profile_recipe=self.recipe)
+        if array is not None:
+            from manyruns.pipeline.features import input_sha256
+            self.ctx["input_sha256"] = input_sha256(array, source_path)
 
     # ── the seam ─────────────────────────────────────────────────────────────
     def apply(self, step: dict) -> dict:
@@ -697,6 +713,12 @@ class Session:
         # them as plain attributes after construction (app.py:917-918), so the constructor
         # call above cannot carry them and they must be copied across explicitly, the same
         # way `interactive_session` later reads them with `getattr(session, …, None)`.
+        if "input_sha256" in self.ctx:
+            child.ctx["input_sha256"] = self.ctx["input_sha256"]
+        child.ctx["executed_steps"] = list(self.ctx.get("working_steps", []))
+        child.ctx["working_steps"] = list(self.ctx.get("working_steps", []))
+        if "input_space_name" in self.ctx:
+            child.ctx["input_space_name"] = self.ctx["input_space_name"]
         child.sample_key = getattr(self, "sample_key", None)
         child.batch_key = getattr(self, "batch_key", None)
         if alignment is None:
@@ -719,6 +741,7 @@ class Session:
         """
         return {
             "name": self._recipe_name(),
+            "kind": self.recipe.get("kind", "recipe"),
             "steps": [
                 {
                     "name": s["name"],
@@ -841,6 +864,10 @@ class Session:
         step. A marker written per step is True while the session is still open, which destroys
         the single guarantee it exists to give.
         """
+        from manyruns.profile import save_input_space
+        self.ctx["original_input"] = self.original_input
+        save_input_space(self.state, self.g, self.ctx, self.carry, self.steps)
+        self.ctx.pop("original_input", None)
         try:
             res = self.results(abandoned=abandoned, not_run=not_run)
         finally:

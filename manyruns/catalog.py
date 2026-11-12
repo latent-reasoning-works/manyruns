@@ -262,7 +262,11 @@ def check_recipe(cfg: Mapping[str, Any], name: Optional[str] = None) -> list[str
     fell through to a silently missing recommendation (`suits`) or a silently unclaimed rung
     (`claims`, via `score.claimed_rungs`).
     """
-    bad: list[str] = []
+    from manyruns.profile import check_pins
+    from manyruns.vocab import RECIPE_KINDS
+    bad: list[str] = check_pins(cfg)
+    if cfg.get("kind", "recipe") not in RECIPE_KINDS:
+        bad.append("invalid recipe kind")
     if name and cfg.get("name") != name:
         bad.append(f"name is {cfg.get('name')!r} but the file is {name}.yaml — they must match")
     rid = cfg.get("id")

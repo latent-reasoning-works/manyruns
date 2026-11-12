@@ -18,6 +18,9 @@ def test_the_derive_document_lists_each_connector_with_its_legality(store_with_p
     assert list(entries) == sorted(entries)
     assert entries['conn']['can_run'] and entries['conn']['selection']
     assert entries['conn']['binds'] == []
+    assert entries['conn']['execution'] == 'external'
+    assert entries['shape_profile']['execution'] == 'inprocess'
+    assert entries['shape_profile']['blocked'] == []
     assert entries['conn']['role_keys'] == {'sample': 'sample', 'condition': 'condition'}
     assert not entries['chain']['can_run'] and 'genes' in ' '.join(entries['chain']['blocked'])
     assert not entries['missing']['can_run'] and 'absent' in ' '.join(entries['missing']['blocked'])
