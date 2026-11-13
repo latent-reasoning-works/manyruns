@@ -308,6 +308,7 @@ The bundled connectors have these outputs:
 | Connector | Output and interpretation |
 |---|---|
 | `pseudobulk_de` | `genes`: counts summed by sample, then a condition comparison with design `~condition`. Adjusted p-values require at least two samples per level with at least `min_cells_per_sample` selected cells. Otherwise the score is the log2 ratio of mean counts per million, with one added to each mean. For `contrast: groups`, the design is `~sample + group`, the score is the Wald statistic, and adjusted p-values are always empty because the groups came from the same data. |
+| `selection_markers` | `genes`: ranked marker genes for two selection groups or one group against the remaining cells, with effect sizes and expression fractions; requires no sample or condition roles. |
 | `target_evidence` | `gene_evidence`: the top `top_n` genes by absolute score joined by `gene_id` to the pinned association resource for `disease`. Association files do not supply gene symbols, so the prepare script leaves `symbol` empty. |
 | `sample_score` | `sample_scores`: one row per sample. `n_cells` is the total number of cells in that sample; `fraction` is the selected count divided by that total. Genes are ranked by the mean difference in log1p counts per million between selected cells and the rest. `score` averages those genes over all cells in the sample. A Mann–Whitney U test compares fractions between two conditions, using samples as replicates. Its p-value is empty when either condition has fewer than two samples. |
 
