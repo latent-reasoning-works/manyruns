@@ -131,8 +131,8 @@ declaration:
       less: null
 resource:
   gene_ids:
-    release: '2025-03-01'
-    url: https://storage.googleapis.com/public-download-files/hgnc/archive/archive/monthly/tsv/hgnc_complete_set_2025-03-01.txt
+    release: '2025-03-04'
+    url: https://storage.googleapis.com/public-download-files/hgnc/archive/archive/monthly/tsv/hgnc_complete_set_2025-03-04.txt
     licence: CC0-1.0
     commercial_use: true
     prepare: gene_ids_prepare.py

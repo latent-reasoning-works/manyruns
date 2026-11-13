@@ -221,5 +221,6 @@ line-length = 100
 
 [tool.pytest.ini_options]
 markers = ["profile_timing: opt-in process start to both profile tables",
+           "network: opt-in checks of declared resource URLs (MANYRUNS_TEST_NETWORK=1)",
            "source_checkout: requires repository files or the Git index, omitted from sdist",
            "stack_integration: real sibling packages, compute, intelligence seam and fresh-process records"]
