@@ -1,0 +1,114 @@
+name: selection_markers
+version: 0.1.0
+summary: Marker genes for selected cells
+source: https://github.com/latent-reasoning-works/manyruns
+licence: Apache-2.0
+commercial_use: true
+python: '3.12'
+requires:
+- numpy==2.2.6
+- scipy==1.14.1
+- pandas==2.3.3
+- anndata==0.12.19
+distribution: numpy
+entrypoint: selection_markers_adapter.py
+selftest: import numpy, scipy, pandas, anndata
+input:
+  kind: state_frame
+  gene_id: true
+  tables:
+    selection:
+    - cell
+    - group
+needs:
+- genes
+produces: []
+network: none
+output:
+  schema: result-v1
+  tables:
+    genes:
+    - gene
+    - gene_id
+    - score
+    - rank
+    - log2fc
+    - mean_expr
+    - frac_in
+    - frac_out
+    - n_in
+    - n_out
+params:
+  subsample: 1.0
+  min_frac: 0.1
+  min_cells: 10
+declaration:
+  schema_version: 1
+  method: selection_markers
+  group: tool
+  origin: manyruns
+  params:
+    subsample:
+      legal:
+        type: float
+        min: 0
+        max: 1
+        min_open: true
+        max_open: false
+        choices: []
+        also: []
+      default: 1.0
+      sensible: null
+      ladder: null
+      limits: []
+      role: knob
+      precomputed: false
+      cost: null
+      meaning: Fraction of cells used from each side
+      more: null
+      less: null
+    min_frac:
+      legal:
+        type: float
+        min: 0
+        max: 1
+        min_open: false
+        max_open: false
+        choices: []
+        also: []
+      default: 0.1
+      sensible: null
+      ladder: null
+      limits: []
+      role: knob
+      precomputed: false
+      cost: null
+      meaning: Minimum fraction expressing a gene on either side
+      more: null
+      less: null
+    min_cells:
+      legal:
+        type: int
+        min: 1
+        max: null
+        min_open: false
+        max_open: false
+        choices: []
+        also: []
+      default: 10
+      sensible: null
+      ladder: null
+      limits: []
+      role: knob
+      precomputed: false
+      cost: null
+      meaning: Minimum number of cells on each side
+      more: null
+      less: null
+resource:
+  gene_ids:
+    release: '2025-03-01'
+    url: https://storage.googleapis.com/public-download-files/hgnc/archive/archive/monthly/tsv/hgnc_complete_set_2025-03-01.txt
+    licence: CC0-1.0
+    commercial_use: true
+    prepare: gene_ids_prepare.py

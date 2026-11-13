@@ -791,10 +791,12 @@ def lock_command(cfg: dict, in_file: Path, config_dir: Optional[Path | str] = No
         "pip",
         "compile",
         "--generate-hashes",
+        "--custom-compile-command",
+        f"manyruns tools lock {cfg['name']}",
         "--python-version",
         str(cfg.get("python") or "3.12"),
         "--output-file",
-        str(lock_path(cfg, config_dir)),
+        str(lock_path(cfg, config_dir).resolve()),
         str(in_file),
     ]
 
@@ -810,20 +812,17 @@ def lock(name: str, config_dir: Optional[Path | str] = None, timeout: int = 1800
         )
     path = lock_path(cfg, config_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", suffix=".in", delete=False) as stream:
-        in_file = Path(stream.name)
-        try:
-            stream.write("\n".join(cfg["requires"]) + "\n")
-            stream.close()
-            proc = subprocess.run(
-                lock_command(cfg, in_file, config_dir),
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-            return {"lock": path, "returncode": proc.returncode, "stderr": proc.stderr}
-        finally:
-            in_file.unlink()
+    with tempfile.TemporaryDirectory() as temp_dir:
+        in_file = Path("requirements.in")
+        (Path(temp_dir) / in_file).write_text("\n".join(cfg["requires"]) + "\n")
+        proc = subprocess.run(
+            lock_command(cfg, in_file, config_dir),
+            cwd=temp_dir,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        return {"lock": path, "returncode": proc.returncode, "stderr": proc.stderr}
 
 
 def build(name: str, config_dir: Optional[Path | str] = None, timeout: int = 3600) -> dict:

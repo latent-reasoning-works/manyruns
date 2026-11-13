@@ -33,7 +33,9 @@ def test_lock_compiles_the_manifest_requires_with_hashes(tmp_path, monkeypatch):
 
     def fake_run(argv, **kw):
         seen["argv"] = list(argv)
-        seen["in"] = Path(argv[-1]).read_text()
+        seen["cwd"] = Path(kw["cwd"])
+        assert seen["cwd"].is_dir()
+        seen["in"] = (seen["cwd"] / argv[-1]).read_text()
 
         class R:
             returncode, stderr = 0, ""
@@ -48,8 +50,11 @@ def test_lock_compiles_the_manifest_requires_with_hashes(tmp_path, monkeypatch):
     assert argv[:3] == ["/usr/bin/uv", "pip", "compile"] and "--generate-hashes" in argv
     assert argv[argv.index("--python-version") + 1] == "3.12"
     assert argv[argv.index("--output-file") + 1] == str(toolchain.lock_path(cfg))
+    assert "--custom-compile-command" in argv
+    assert argv[argv.index("--custom-compile-command") + 1] == "manyruns tools lock locky"
     assert seen["in"] == "locky==1.0\n"
-    assert Path(argv[-1]).parent == tmp_path and not Path(argv[-1]).exists()
+    assert argv[-1] == "requirements.in"
+    assert not seen["cwd"].exists()
     assert out == {"lock": toolchain.lock_path(cfg), "returncode": 0, "stderr": ""}
 
 

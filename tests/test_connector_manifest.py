@@ -74,3 +74,14 @@ def test_resource_and_network_rules_also_apply_to_precomputed_tools():
 def test_a_resource_licence_of_the_wrong_type_is_a_problem():
     assert problems(resource={'knowledge': {'release': '1', 'url': 'https://example.org',
                                            'licence': {}, 'commercial_use': True, 'prepare': 'prepare.py'}})
+
+
+def test_bundled_gene_tables_only_use_selection_and_gene_ids(monkeypatch):
+    monkeypatch.delenv('MANYRUNS_TOOL_DIR', raising=False)
+    root = toolchain.tool_dir()
+    assert root.is_dir()
+    for path in root.glob('*.yaml'):
+        cfg = toolchain.load_tool(path.stem)
+        if 'genes' in cfg.get('output', {}).get('tables', {}):
+            assert set(cfg.get('input', {}).get('tables', {})) <= {'selection'}, path.stem
+            assert set(cfg.get('resource', {})) <= {'gene_ids'}, path.stem
