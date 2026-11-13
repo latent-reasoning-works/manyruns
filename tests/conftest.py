@@ -52,6 +52,10 @@ def pytest_collection_modifyitems(items):
         for item in items:
             if item.get_closest_marker("profile_timing"):
                 item.add_marker(pytest.mark.skip(reason="set MANYRUNS_PROFILE_TIMING=1"))
+    if os.environ.get("MANYRUNS_TEST_NETWORK") != "1":
+        for item in items:
+            if item.get_closest_marker("network"):
+                item.add_marker(pytest.mark.skip(reason="set MANYRUNS_TEST_NETWORK=1"))
     root = Path(__file__).resolve().parents[1]
     assert root.is_dir(), "test root moved"
     if not (root / ".git").exists():

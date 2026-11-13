@@ -81,7 +81,7 @@ declaration:
 resource:
   opentargets:
     release: '25.03'
-    url: https://ftp.ebi.ac.uk/pub/databases/opentargets/platform/25.03/output/association_by_overall_direct/
+    url: https://ftp.ebi.ac.uk/pub/databases/opentargets/platform/25.03/output/association_overall_direct/
     licence: CC0-1.0  # https://platform-docs.opentargets.org/licence
     commercial_use: true
     prepare: opentargets_prepare.py
