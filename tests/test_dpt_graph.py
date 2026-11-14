@@ -19,6 +19,7 @@ def test_connected_input_and_diffusion_root(fixture, monkeypatch):
     from sklearn.decomposition import PCA
 
     if fixture == 'swissroll':
+        pytest.importorskip('manylatents')
         from manylatents.data.synthetic_dataset import SwissRoll
         X = SwissRoll(n_distributions=1000, n_points_per_distribution=1,
                       noise=0, manifold_noise=0, random_state=1).data
@@ -87,6 +88,7 @@ def test_latent_chain_refuses_stale_input():
 
 
 def test_latent_can_refit_raw_input_when_no_embedding_remains(monkeypatch, tmp_path):
+    pytest.importorskip('manylatents')
     import manylatents.api
 
     X = np.random.default_rng(1).normal(size=(400, 3))
@@ -163,6 +165,7 @@ def test_an_unavailable_engine_score_is_recorded_as_unavailable(tmp_path, monkey
     its `to_dict()` form, never a bare string, and the gate reads it as not measured."""
     import json
 
+    pytest.importorskip('manylatents')
     import manylatents.api
     from manylatents.utils.exceptions import MeasurementUnavailable
 
