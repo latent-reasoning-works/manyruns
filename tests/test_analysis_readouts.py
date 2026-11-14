@@ -262,9 +262,8 @@ def test_the_dpt_default_is_two_components_and_scanpys_default_would_break_it():
     clean low-dimensional manifold the higher ones are harmonics of the first and fold the
     manifold back on itself. On this fixture |Spearman| against the true parameter is ~0.997 at
     n_dcs=2 and ~0.05 at scanpy's default of 10 — the pseudotime rises 0 → 0.99 and falls back
-    to 0.35, which is not an ordering. The canonical `pseudotime` recipe feeds `dpt` a
-    `diffusionmap` embedding, i.e. exactly the input the default fails on, so this pins the
-    deviation rather than leaving it to a comment."""
+    to 0.35, which is not an ordering. A clean low-dimensional embedding is exactly the input the
+    default fails on, so this pins the deviation rather than leaving it to a comment."""
     _scanpy()
     spearmanr = pytest.importorskip("scipy.stats").spearmanr
     Z, t = _ribbon()
