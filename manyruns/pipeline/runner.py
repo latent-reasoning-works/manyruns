@@ -1135,6 +1135,7 @@ def apply_step(
     # unchanged there. Identity is the honest test of "this step assigned a new embedding", it
     # is the ONE test all three now use, and it must be `is`, since `!=` on two arrays is
     # elementwise.
+    state["emb_from"] = state.get("emb_from") or ctx.get("emb_from") or "input"
     before_keys, before_obj = set(g), state.get("emb")
     before_values = dict(g)
     # Figures are appended to a RUN-scoped list by `_io._save_scatter`, so until now nothing
@@ -1218,6 +1219,16 @@ def apply_step(
         else:
             rec["outcome"], rec["detail"] = "reported", str(override)
     finally:
+        coordinate_step = (
+            (group == "latent" or (name == "mioflow" and fn is _ml_lightning))
+            and not _label_valued(name) and not _graph_valued(name)
+        )
+        if coordinate_step and rec["outcome"] == "error" and state.get("emb") is before_obj:
+            state["emb_stale"] = name
+        if state.get("emb") is not before_obj and state.get("emb") is not None:
+            if rec["outcome"] == "ok":
+                state.pop("emb_stale", None)
+            state["emb_from"] = ctx["emb_from"] = name
         rec["seconds"] = round(time.perf_counter() - started, 6)
         # The OUTPUT half of the record, shared with `watch` so a wrapped tool and a
         # recipe step describe what they produced the same way. Until now a step could
@@ -2080,8 +2091,20 @@ def _save_engine_outputs(name: str, out: dict, emb: Any, ctx: dict) -> None:
         return
 
 
+def _score_value(v):
+    """An engine score as the record stores it. manylatents keeps a metric that declined as a
+    `MeasurementUnavailable` value; the record keeps its `to_dict()` form
+    (`{"status": "unavailable", "reason": ...}`), which `vocab._measured_number` reads as not
+    measured. Without this the JSON writer turned the exception into a bare reason string."""
+    if isinstance(v, Exception) and callable(getattr(v, "to_dict", None)):
+        return v.to_dict()
+    return v
+
+
 def _ml_latent(name, params, state, g, ctx):
     """A latent step → ``manylatents.api.run(algorithms={'latent': name})``."""
+    if state.get("emb") is not None:
+        _steps._require_embedding(state, name)
     import numpy as np
 
     from manylatents.api import run
@@ -2165,7 +2188,7 @@ def _ml_latent(name, params, state, g, ctx):
             )
         state.setdefault("extras", {})[f"{name}.membership"] = emb
         for k, v in (out.get("scores") or {}).items():
-            g[f"{name}.{k}"] = v
+            g[f"{name}.{k}"] = _score_value(v)
         _collect_extras(name, out, state, g)
         return
     _check_metadata_alignment(emb, state, ctx, out.get("obs_names", out.get("sample_ids")))
@@ -2185,7 +2208,7 @@ def _ml_latent(name, params, state, g, ctx):
             "partition (clusters), not coordinates"
         )
     for k, v in (out.get("scores") or {}).items():
-        g[f"{name}.{k}"] = v
+        g[f"{name}.{k}"] = _score_value(v)
         if not k.endswith("_note"):
             annotate(g, f"{name}.{k}", kind="measurement", stage=f"{name} engine evaluation")
     # Everything else the engine handed back — see `_collect_extras`. Measured on a plain
