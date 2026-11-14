@@ -355,7 +355,8 @@ def offer(obs: Observation, available: "list | None" = None, *,
     as a hollow row. Through `blocked` rather than `unmet` directly, so both surfaces ask the
     one question in the one way.
 
-    **With `evidence`, a claim the measured geometry does not support is not RECOMMENDED.**
+    **With `evidence`, an unsupported blocking claim is not RECOMMENDED.**
+    Single-trajectory is nonblocking while its dimension band is a placeholder.
     `vocab.rung_support` decides it. `evidence=None` (the default) does not consult the gate,
     and the menu is exactly what it was. `tui.state.ledger` passes the same two arguments, so
     a row the ledger refuses is never starred here.

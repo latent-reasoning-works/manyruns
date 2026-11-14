@@ -80,9 +80,9 @@ def is_probe(row: dict, dataset: str) -> bool:
       the final geometry could not be measured, and the run row has no `compute_error` field.
 
     A row written before `cancelled` and `not_run` reached the run row has neither key and reads
-    as not cancelled. The gate still refuses each measurement that is missing from the probe's
-    g-vector (`vocab.rung_support`, `not_measured`), so a row that passes this rule never lets a
-    claim through without its number.
+    as not cancelled. The gate still refuses blocking claims whose measurements are missing
+    from the probe's g-vector (`vocab.rung_support`, `not_measured`). Single-trajectory is
+    nonblocking while its dimension band is a placeholder.
     """
     if row.get("kind") in ("profile", "derived") or str(row.get("recipe") or "").startswith("derive:"):
         return False
@@ -190,7 +190,7 @@ def enumerate_actions(surface: str, *, dataset: Optional[str] = None,
         if not gate:
             return {**doc, **_ledger(obs, None, ())}
         # The gate is the geometry mask. Evidence is the probe run's g-vector, or `{}` when
-        # there is none: absence refuses every ruled claim, it never passes. The admitted set
+        # there is none: absence refuses every blocking claim. The admitted set
         # is the declared suite (the audit's verified-safe set, written down) plus the
         # readouts admitted by hand. Neither copies a measured value into the document.
         evidence = dict((probe or {}).get("g_vector") or {})
