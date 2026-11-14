@@ -64,7 +64,22 @@ def _require_embedding(state, step: str) -> None:
     `frozenset()` for that recipe (it unions `STEP_NEEDS` and does not model order), so the
     engine's own refusal is the only thing standing between a backwards recipe and a
     published number.
+
+    It also refuses STALE coordinates. When a coordinate step fails and leaves `state["emb"]`
+    as it was, the runner marks the embedding stale with that step's name, and a later
+    successful coordinate step clears the mark. Measured on the old `pseudotime` order
+    (`pca -> diffusionmap -> dpt`) over well-separated gaussian blobs: `diffusionmap` errored,
+    `dpt` ran on the PCA output instead and recorded `outcome=ok`. A step that reads
+    coordinates must name the embedding it was meant to read, not the one that happens to be
+    left in the slot.
     """
+    if state.get("emb_stale"):
+        failed = state["emb_stale"]
+        source = state.get("emb_from") or "input"
+        raise _StepSkipped(
+            f"{step} needs the embedding from {failed}, which failed; "
+            f"it will not run on the {source} embedding instead"
+        )
     if state.get("emb") is None:
         # Names the missing OBJECT, not a missing step. The rule is that a trajectory needs
         # coordinates to run on; it is indifferent to where they came from. Coordinates
@@ -118,9 +133,10 @@ def _step_phate(state, g, params, out_dir, plots, target_dim) -> None:
 def _extremal_root(Z) -> int:
     """The cell an ordering starts from — argmin of the coordinate sum. ONE home for the rule.
 
-    Extracted so `_diffusion_pseudotime` and `_step_dpt` cannot pick different roots for the
-    same embedding: they are two orderings whose AGREEMENT `_step_dpt` reports, and an
-    agreement between orderings rooted at different cells measures the roots, not the method.
+    The default root of `_diffusion_pseudotime` (the MIOFlow time label and the `real`
+    engine's trajectory step). `_step_dpt` no longer uses it: it roots at the minimum of the
+    first non-trivial diffusion component and passes that root to `_diffusion_pseudotime`, so
+    the two orderings whose AGREEMENT it reports still start from the same cell.
 
     The rule is a choice, not an inference, and the choice is the point of Weinreb et al.
     (PNAS 115:E2467, cited in `cflows.yaml`): direction is not identifiable from a static
@@ -131,9 +147,9 @@ def _extremal_root(Z) -> int:
     return int(np.argmin(np.asarray(Z).sum(axis=1)))
 
 
-def _diffusion_pseudotime(Z, n_neighbors: int, info: "dict | None" = None):
-    """Per-sample pseudotime: normalized geodesic distance from an extremal root on a
-    kNN graph. Shared by the `real` engine's trajectory step and the MIOFlow time label.
+def _diffusion_pseudotime(Z, n_neighbors: int, info: "dict | None" = None, root: int | None = None):
+    """Per-sample pseudotime: normalized geodesic distance from the supplied root on a
+    kNN graph. Without a root, use the minimum coordinate sum. Shared by the `real` engine's trajectory step and the MIOFlow time label.
 
     `info`, when a dict is passed, receives the diagnostics this function otherwise HIDES:
     `root` and `unreachable` (cells with no path to the root, which the return value silently
@@ -152,7 +168,7 @@ def _diffusion_pseudotime(Z, n_neighbors: int, info: "dict | None" = None):
     # int64 → "Buffer dtype mismatch, expected 'const int' but got 'long'".
     graph.indices = graph.indices.astype(np.int32, copy=False)
     graph.indptr = graph.indptr.astype(np.int32, copy=False)
-    root = _extremal_root(Z)  # an extremal point as the trajectory root
+    root = _extremal_root(Z) if root is None else root
     dist = shortest_path(graph, method="D", directed=False, indices=root)
     finite = dist[np.isfinite(dist)]
     if info is not None:
@@ -195,6 +211,9 @@ def _step_separation(state, g, params, out_dir, plots, target_dim) -> None:
     exist in the data. A denylist (`!= "group"`) would be the same defect one kind later; the
     refusal below is what group-only data got before the kind existed, and is what it gets
     again."""
+    if state.get("emb_stale"):
+        _require_embedding(state, "separation")
+
     import numpy as np
 
     Z = state.get("emb")
@@ -244,6 +263,9 @@ def _step_composition(state, g, params, out_dir, plots, target_dim) -> None:
     allowlist and not a denylist. This step is worse than that one when it is wrong: it names
     the two groups in `composition_between`, so a `group` axis produced a sentence like
     "branch-1 vs branch-2" in a field a reader is entitled to read as case versus control."""
+    if state.get("emb_stale"):
+        _require_embedding(state, "composition")
+
     import itertools
 
     import numpy as np
@@ -414,6 +436,9 @@ def _step_cluster_quality(state, g, params, out_dir, plots, target_dim) -> None:
     graph manyruns rebuilds with manyruns's k is a different number about a different graph,
     and would read in the record as a score of leiden's optimisation. The honest version needs
     the graph leiden used, which no step hands back."""
+    if state.get("emb_stale"):
+        _require_embedding(state, "cluster_quality")
+
     import numpy as np
 
     labels, where = _partition(state)
@@ -480,6 +505,9 @@ def _step_rank_genes(state, g, params, out_dir, plots, target_dim) -> None:
     AnnData (§2.5: not a step, absent from the trace, the g-vector and the caveats). This step
     asks `looks_like_counts` first — the same predicate, one home — because `state["counts"]`
     is `.X` untransformed and an already-normalized `.h5ad` must not be normalized twice."""
+    if state.get("emb_stale"):
+        _require_embedding(state, "rank_genes")
+
     import numpy as np
 
     counts, genes = state.get("counts"), state.get("genes")
@@ -541,7 +569,10 @@ def _step_dpt(state, g, params, out_dir, plots, target_dim) -> None:
     """Diffusion pseudotime — an ORDER over cells, never a significance. (`pseudotime`'s step.)
 
     Scanpy's `sc.tl.dpt` (Haghverdi et al. 2016, `10.1038/nmeth.3971`) on the current
-    embedding, rooted at `_extremal_root`. The per-cell ordering is written to
+    embedding's 15-NN graph. The root is the cell with the minimum of the first non-trivial
+    component of that graph's own diffusion map (`X_diffmap[:, 1]`; scanpy keeps the
+    steady-state component in column 0), lowest index on ties. It is recorded as
+    `dpt.root_rule`, and the embedding the graph was built on as `dpt.graph_on`. The per-cell ordering is written to
     `state["pseudotime"]`, which `artifacts.PERSISTED` already carries to disk — so the
     ORDER, which is the actual result, survives the run rather than being reduced to a scalar.
 
@@ -558,9 +589,9 @@ def _step_dpt(state, g, params, out_dir, plots, target_dim) -> None:
     | 1-D signal in 10-D gaussian noise| 0.985   | 0.991                     |
 
     At the default the pseudotime on a clean line rises 0 → 0.99 and falls back to 0.35: not
-    an ordering. This matters HERE more than in general use because the canonical `pseudotime`
-    recipe runs `dpt` straight after `diffusionmap` — a clean low-dimensional embedding is
-    exactly the input the default fails on. `n_dcs` is a declared parameter and the effective
+    an ordering. This mattered most when the `pseudotime` recipe ran `dpt` straight after
+    `diffusionmap`: a clean low-dimensional embedding is exactly the input the default fails
+    on. `n_dcs` is a declared parameter and the effective
     value is recorded as `dpt.n_dcs`, so the record says which DPT ran.
 
     That default is chosen on those two fixtures and **is not a claim that 2 is right in
@@ -568,6 +599,10 @@ def _step_dpt(state, g, params, out_dir, plots, target_dim) -> None:
     — scores 0.013 / 0.584 / 0.080 / 0.089 / 0.088 against truth at n_dcs 2 / 3 / 5 / 10 / 15:
     no value works, because that embedding's 15-NN graph falls into disconnected components
     (below). The failure there is upstream of `n_dcs`, and no default could have rescued it.
+    Nor does the root: on clean manylatents SwissRoll the diffusion-map graph split in 3 of 6
+    seed/size cases, and this root left 261 to 892 cells unreachable there, while the 15-NN
+    graph on PCA had one component in all six (`docs/guides/dpt-graph-measurements.md`). That
+    is why the `pseudotime` recipe now runs `dpt` on the PCA output, before `diffusionmap`.
 
     **`dpt_geodesic_agreement` reads in ONE direction only, and the asymmetry is measured.**
     It is the |Spearman| between this DPT and a second ordering of the same points — the kNN
@@ -623,7 +658,6 @@ def _step_dpt(state, g, params, out_dir, plots, target_dim) -> None:
     n = int(Z.shape[0])
     n_neighbors = int(_param(params, "n_neighbors", min(15, max(2, n - 1))))
     n_dcs = int(_param(params, "n_dcs", 2))
-    root = _extremal_root(Z)
     # scanpy raises `Cannot instantiate using n_dcs=…` when the diffusion map holds fewer
     # components than dpt asks for (measured: n_comps=5 with the default n_dcs=10), so the
     # map is sized from the request rather than from a constant.
@@ -631,6 +665,7 @@ def _step_dpt(state, g, params, out_dir, plots, target_dim) -> None:
     ad = _anndata.AnnData(X=Z)
     sc.pp.neighbors(ad, n_neighbors=n_neighbors, use_rep="X")
     sc.tl.diffmap(ad, n_comps=n_comps)
+    root = int(np.argmin(ad.obsm["X_diffmap"][:, 1]))
     ad.uns["iroot"] = root
     sc.tl.dpt(ad, n_dcs=n_dcs)
     pt = np.asarray(ad.obs["dpt_pseudotime"], dtype=float)
@@ -644,21 +679,20 @@ def _step_dpt(state, g, params, out_dir, plots, target_dim) -> None:
 
     g["dpt.n_dcs"] = n_dcs
     g["dpt.n_neighbors"] = n_neighbors
-    for key in ("dpt.n_dcs", "dpt.n_neighbors"):
+    g["dpt.root_rule"] = "diffusion_component_1_min"
+    g["dpt.graph_on"] = state.get("emb_from") or "input"
+    for key in ("dpt.n_dcs", "dpt.n_neighbors", "dpt.root_rule", "dpt.graph_on"):
         annotate(g, key, kind="setting", stage="dpt configuration")
     g["dpt_root"] = root
     g["dpt_unreachable"] = int((~finite).sum())
     g["dpt_unreachable_frac"] = round(float((~finite).mean()), 4)
-    # [0, 1] BY CONSTRUCTION whenever two cells are reachable — measured [0.0, 1.0] on all
-    # three fixtures in the docstring, at every n_dcs tried. Recorded because the degenerate
-    # case ([0, 0], nothing ordered) is a real outcome, NOT because the endpoints measure the
-    # data. `_step_mioflow`'s `pseudotime_range` has the same shape and the same limit.
+    # Record the finite range separately from unreachable cells.
     g["dpt_range"] = [float(np.nanmin(pt)), float(np.nanmax(pt))] if finite.any() else None
     if not finite.any():
         g["dpt_range_note"] = "no cell is reachable from the root — the kNN graph is empty"
         return
     geo_info: dict = {}
-    geodesic = _diffusion_pseudotime(Z, n_neighbors, info=geo_info)
+    geodesic = _diffusion_pseudotime(Z, n_neighbors, info=geo_info, root=root)
     from scipy.stats import spearmanr
 
     rho = spearmanr(pt[finite], geodesic[finite]).statistic
@@ -894,6 +928,9 @@ def _step_velocity_field(state, g, params, out_dir, plots, target_dim) -> None:
     verdict.md` measured at 12/12 rejections on pure noise. It needs `NULL_KIND: data`, which
     is declared and unimplemented. Said here rather than discovered later.
     """
+    if state.get("emb_stale"):
+        _require_embedding(state, "velocity_field")
+
     import numpy as np
 
     field = state.get("velocity")
