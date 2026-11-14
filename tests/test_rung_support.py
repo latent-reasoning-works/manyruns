@@ -1,8 +1,7 @@
-"""The rung-support gate: a recipe's claim is refused when the measured geometry does not
-support it.
+"""The rung-support gate refuses blocking claims when measured geometry does not support them.
 
 `vocab.unmet` is the structural half of the shield: a recipe whose steps need a fact the data
-does not carry is illegal. `vocab.rung_support` is the evidence half: a recipe whose CLAIM the
+does not carry is illegal. `vocab.rung_support` is the evidence half: a blocking claim the
 measured g-vector does not support is refused. A refusal reason is a fixed code string
 `<key>:<code>`; it never holds a measured value, a threshold or a note, because the reasons
 reach surfaces that a caller who must not see the geometry reads.
@@ -43,6 +42,7 @@ def test_the_table_covers_three_claims():
     assert vocab.RUNG_EVIDENCE["single-trajectory"] == ("lid", "lid")
     assert vocab.LID_1D_BAND == (0.5, 1.5)
     assert vocab.ADMITTED_READOUTS == frozenset()
+    assert vocab.BLOCKING_CLAIMS == frozenset({"clusters", "multi-branching"})
 
 
 def test_the_reason_set_is_closed():
@@ -95,12 +95,23 @@ def test_a_branch_point_supports_multi_branching():
         {f"{BRANCH_KEY}:fails_rule"})
 
 
-def test_the_lid_band_bounds_a_trajectory():
+def test_the_placeholder_lid_band_never_refuses_a_trajectory():
     claim = {"claims": "single-trajectory"}
     for v in (1.0, 0.5, 1.5):
         assert _rs(claim, {"lid": v}, {"lid"}) == frozenset(), v
     for v in (2.1, 0.3):
-        assert _rs(claim, {"lid": v}, {"lid"}) == frozenset({"lid:fails_rule"}), v
+        assert _rs(claim, {"lid": v}, {"lid"}) == frozenset(), v
+
+
+def test_empty_evidence_refuses_only_blocking_claims():
+    from manyruns.catalog import load_recipe
+
+    for admitted in ((), {"betti_0", "lid"}):
+        assert _rs(load_recipe("pseudotime"), {}, admitted) == frozenset()
+        code = "not_measured" if "betti_0" in admitted else "not_admitted"
+        assert _rs(load_recipe("cluster"), {}, admitted) == frozenset({f"betti_0:{code}"})
+        assert _rs(load_recipe("branches"), {}, admitted) == frozenset(
+            {f"{BRANCH_KEY}:not_admitted"})
 
 
 def test_a_reason_does_not_depend_on_the_measured_value():
@@ -109,9 +120,9 @@ def test_a_reason_does_not_depend_on_the_measured_value():
         got = _rs({"claims": "clusters"}, {"betti_0": v}, {"betti_0"})
         assert got == frozenset({"betti_0:fails_rule"}), v
         reasons |= got
-    for v in (0.3, 2.1, 17.25):
-        got = _rs({"claims": "single-trajectory"}, {"lid": v}, {"lid"})
-        assert got == frozenset({"lid:fails_rule"}), v
+    for v in (0, -1, -17.25):
+        got = _rs({"claims": "multi-branching"}, {BRANCH_KEY: v}, {"n_branch_points"})
+        assert got == frozenset({f"{BRANCH_KEY}:fails_rule"}), v
         reasons |= got
     for r in reasons:
         assert not any(ch.isdigit() for ch in r.rsplit(":", 1)[1]), r
@@ -119,6 +130,7 @@ def test_a_reason_does_not_depend_on_the_measured_value():
 
 def test_a_numpy_scalar_is_a_number():
     assert _rs({"claims": "clusters"}, {"betti_0": np.int64(3)}, {"betti_0"}) == frozenset()
+    assert _rs({"claims": "clusters"}, {"betti_0": np.float32(3)}, {"betti_0"}) == frozenset()
     assert _rs({"claims": "single-trajectory"}, {"lid": np.float32(1.0)}, {"lid"}) == frozenset()
 
 
@@ -139,17 +151,20 @@ def test_a_declined_suite_metric_refuses():
     assert not any("only 3 distinct points" in r for r in got)
 
 
-def test_the_engine_exception_refuses():
+def test_the_engine_exception_does_not_refuse_a_trajectory():
     claim = {"claims": "single-trajectory"}
-    assert _rs(claim, {"lid": MeasurementUnavailable("k too large")}, {"lid"}) == frozenset(
-        {"lid:not_measured"})
+    assert _rs(claim, {"lid": MeasurementUnavailable("k too large")}, {"lid"}) == frozenset()
+    assert _rs({"claims": "clusters"}, {"betti_0": MeasurementUnavailable("unavailable")},
+               {"betti_0"}) == frozenset({"betti_0:not_measured"})
 
 
-def test_the_real_engine_exception_refuses():
+def test_the_real_engine_exception_does_not_refuse_a_trajectory():
     exceptions = pytest.importorskip("manylatents.utils.exceptions")
     claim = {"claims": "single-trajectory"}
     value = exceptions.MeasurementUnavailable("k too large")
-    assert _rs(claim, {"lid": value}, {"lid"}) == frozenset({"lid:not_measured"})
+    assert _rs(claim, {"lid": value}, {"lid"}) == frozenset()
+    assert _rs({"claims": "clusters"}, {"betti_0": value}, {"betti_0"}) == frozenset(
+        {"betti_0:not_measured"})
 
 
 def test_the_serialised_form_refuses():
@@ -226,21 +241,20 @@ def test_no_evidence_changes_nothing():
     assert narrate.offer(obs) == narrate.offer(obs, evidence=None, admitted={"betti_0"})
 
 
-def test_recipes_without_a_rule_keep_their_legality_under_evidence():
-    """The spec's scenario passes `admitted=()`, which by the rule order yields `not_admitted`,
-    not `not_measured`. The metrics are admitted here so the scenario tests what it names: an
-    empty g-vector refuses every ruled claim as not measured."""
+def test_nonblocking_recipes_keep_their_legality_under_evidence():
+    """Empty evidence refuses blocking claims and preserves other recipes' legality."""
     from manyruns.catalog import load_recipe
 
     obs = _obs("manifold", modality="synthetic")
     before = {r.recipe: r for r in state.ledger(obs)}
     after = {r.recipe: r for r in state.ledger(obs, evidence={}, admitted={"betti_0", "lid"})}
     for name, row in before.items():
-        if load_recipe(name).get("claims") not in vocab.RUNG_EVIDENCE:
+        if load_recipe(name).get("claims") not in vocab.BLOCKING_CLAIMS:
             assert after[name].can_run == row.can_run, name
     assert before["embed"].can_run is True and after["embed"].can_run is True
     assert "betti_0:not_measured" in after["cluster"].blocked
-    assert "lid:not_measured" in after["pseudotime"].blocked
+    assert after["pseudotime"].can_run == before["pseudotime"].can_run
+    assert not any(reason.startswith("lid:") for reason in after["pseudotime"].blocked)
 
 
 def test_the_reasons_follow_the_data_reasons():

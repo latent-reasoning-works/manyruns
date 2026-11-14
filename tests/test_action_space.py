@@ -26,9 +26,9 @@ import yaml
 from manyruns import action_space, actions
 from manyruns.action_space import Refused, check_choice, offer_sha256
 
-#: Task 1.0, measured on the base commit with `manyruns actions swissroll` in an empty folder:
-#: the gate-on legal set of the bundled catalog.
-SWISS_LEGAL = ["archetypes", "embed", "profile"]
+#: The gate-on legal set for `manyruns actions swissroll` in an empty folder.
+#: Pseudotime stays legal while the single-trajectory dimension band is a placeholder.
+SWISS_LEGAL = ["archetypes", "embed", "profile", "pseudotime"]
 
 CHOOSER = "prior:test.0123456789ab"
 

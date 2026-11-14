@@ -72,7 +72,7 @@ def test_header_keys_come_first(tmp_path):
 
 def test_ledger_offered_equals_tui_ledger(tmp_path):
     """With the gate off: the gate-on document of a dataset with no probe run refuses every
-    ruled claim (`cluster` with `betti_0:not_measured`), which the gate scenarios pin below."""
+    blocking claim (`cluster` with `betti_0:not_measured`), which the gate scenarios pin below."""
     assert catalog.dataset_dir().is_dir()
     doc = actions.enumerate_actions("ledger", dataset="pbmc3k", gate=False, store=tmp_path)
     obs = narrate.declared_observation(catalog.load_dataset("pbmc3k"), "pbmc3k")
@@ -332,8 +332,9 @@ def test_the_probe_run_refuses_unsupported_claims(tmp_path):
     offered = _offered(doc)
     assert offered["cluster"]["can_run"] is False
     assert "betti_0:fails_rule" in offered["cluster"]["blocked"]
-    assert offered["pseudotime"]["can_run"] is False
-    assert "lid:fails_rule" in offered["pseudotime"]["blocked"]
+    assert offered["pseudotime"]["can_run"] is True
+    assert doc["detail"]["pseudotime"]["support"] == []
+    assert not any(reason.startswith("lid:") for reason in offered["pseudotime"]["blocked"])
     assert doc["detail"]["cluster"]["support"] == ["betti_0:fails_rule"]
     assert offered["embed"]["can_run"] is True
     assert doc["detail"]["embed"]["support"] == []
@@ -375,13 +376,17 @@ def test_gate_off_removes_the_mask(tmp_path):
     assert doc["evidence"] is None
 
 
-def test_no_probe_run_refuses_every_ruled_claim_and_keeps_the_rest(tmp_path):
+def test_no_probe_run_refuses_only_blocking_claims(tmp_path):
     assert tmp_path.is_dir()
     doc = actions.enumerate_actions("ledger", dataset="swissroll", gate=True, store=tmp_path)
     offered = _offered(doc)
     assert doc["evidence"] is None
     assert "betti_0:not_measured" in offered["cluster"]["blocked"]
-    assert "lid:not_measured" in offered["pseudotime"]["blocked"]
+    assert offered["pseudotime"]["can_run"] is True
+    assert doc["detail"]["pseudotime"]["support"] == []
+    assert not any(reason.startswith("lid:") for reason in offered["pseudotime"]["blocked"])
+    assert doc["detail"]["branches"]["support"] == [
+        "reeb_graph.structural_summary.n_branch_points:not_admitted"]
     assert offered["embed"]["can_run"] is True
 
 
