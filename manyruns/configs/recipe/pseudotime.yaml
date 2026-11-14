@@ -30,13 +30,15 @@ steps:
   - {name: transform, group: prep,   params: {method: log1p},     via: manylatents}
   - {name: pca,       group: latent, params: {n_components: 50},
      limits: {n_components: [n_samples, n_features]},          via: manylatents}
-  # `n_landmark: null` is REQUIRED, not a tuning choice. It defaults to 2000, and the engine
-  # refuses when it exceeds n_samples — `ValueError: n_landmark (2000) >= n_samples (180). Use
-  # kNNGraph instead` — so the step errors on every dataset this repo ships, and `dpt` then
-  # correctly skips for want of an embedding. Landmarking is an approximation for large n; at
-  # these sizes the exact operator is both correct and cheap.
-  - {name: diffusionmap, group: latent,   params: {n_components: 3, n_landmark: null}, via: manylatents}
+  # DPT uses PCA coordinates. On clean manylatents SwissRoll, seed 1, with one
+  # point per distribution and both noise parameters zero, the 15-neighbour Scanpy
+  # graph on PCA had one component and no unreachable cells at 400 and 1000 points.
+  # On the 3-component diffusion map it had two components at both sizes; the
+  # coordinate-sum root left 139 and 108 cells unreachable, respectively.
   - {name: dpt,          group: analysis, params: {},                via: manyruns}
+  # Keep the diffusion map and its metrics in the record. Disable landmarking so
+  # the exact operator can run without requiring more samples than the input holds.
+  - {name: diffusionmap, group: latent,   params: {n_components: 3, n_landmark: null}, via: manylatents}
   # Declared here (not chained into a trajectory step in THIS file) purely to register the
   # step name in the catalog, so it is typeable in any session — mix-and-match, same as any
   # other step (`commands.py`'s own model). Bins `dpt`'s ordering into discrete groups; on
