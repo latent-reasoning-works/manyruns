@@ -112,9 +112,6 @@ uv run ruff check manyruns tests
 ```
 
 `dev` is an extra, not a dependency group: use `--extra dev`, not `--dev`.
-**Never `uv pip install` in this project.** It mutates the environment without
-updating `uv.lock`; the next sync removes those packages, and a fresh checkout
-cannot reproduce the environment.
 
 Adding a dependency has three steps:
 
@@ -128,7 +125,4 @@ relocking. Consumers inherit project dependency metadata, not `tool.uv.sources`
 or this checkout's lockfile. Declare direct dependencies where they are used;
 do not rely on another package's source overrides or incidental dependencies.
 
-Write a failing test before changing behavior, then run affected tests, the full
-dev suite, and ruff. **Every test that scans a path must first assert `is_dir()`
-on its scan root.** A renamed directory can otherwise make `rglob` scan nothing
-and pass silently. Keep this protection when moving packages or config trees.
+Before pushing, run the affected tests, the full dev suite, and ruff.
