@@ -1321,7 +1321,7 @@ def _walk(
 # ── the rung-support gate ────────────────────────────────────────────────────
 # `unmet` is the STRUCTURAL half of the shield: it refuses a recipe whose steps need a fact the
 # data does not carry, and it never reads a measurement. This block is the EVIDENCE half: it
-# refuses a recipe whose `claims` the measured g-vector does not support. Pure, like `unmet`,
+# refuses a blocking claim the measured g-vector does not support. Pure, like `unmet`,
 # and it imports nothing — an unavailable measurement is recognised by its class NAME, so this
 # module stays free of the compute stack.
 
@@ -1344,13 +1344,17 @@ RUNG_EVIDENCE: dict[str, tuple[str, str]] = {
     "single-trajectory": ("lid", "lid"),
 }
 
+#: Single-trajectory is not blocking while LID_1D_BAND is a placeholder. Once calibrated,
+#: adding "single-trajectory" back here is the one-line change to make it blocking.
+BLOCKING_CLAIMS: frozenset[str] = frozenset({"clusters", "multi-branching"})
+
 #: The three refusal codes, in the order the rule check tests them.
 SUPPORT_CODES: tuple[str, str, str] = ("not_admitted", "not_measured", "fails_rule")
 
 #: The closed set of refusal reasons: three evidence keys times three codes. A reason never
 #: holds a measured value, a threshold or a note, because reasons reach the ledger's `blocked`
 #: list, decision rows and the action document, which a caller that must not see the geometry
-#: reads.
+#: reads. Keep the unreachable lid reasons for compatibility with existing records and callers.
 SUPPORT_REASONS: frozenset[str] = frozenset(
     f"{key}:{code}" for key, _ in RUNG_EVIDENCE.values() for code in SUPPORT_CODES
 )
@@ -1390,9 +1394,10 @@ def _measured_number(v: Any) -> Optional[float]:
 def rung_support(
     recipe: dict, evidence: Mapping[str, Any], admitted: Collection[str]
 ) -> frozenset[str]:
-    """Why the evidence does not support this recipe's claim. Empty = supported.
+    """Reasons to refuse a blocking claim. Empty means no evidence refusal, not proof of support.
 
-    A recipe whose `claims` has no rule in `RUNG_EVIDENCE` is never refused. Otherwise at most
+    A claim outside `BLOCKING_CLAIMS` or without a rule in `RUNG_EVIDENCE` is never refused.
+    Single-trajectory is nonblocking while `LID_1D_BAND` is a placeholder. Otherwise at most
     one reason `f"{key}:{code}"`, the first that holds of: the admission name is not in
     `admitted` (`not_admitted`); the value is missing, None, a `MeasurementUnavailable`, its
     `to_dict()` form, a bool, not a number, or not finite (`not_measured`); the value fails the
@@ -1402,7 +1407,8 @@ def rung_support(
     `admit.Verdict.ok`. This function reads no verdict strings and does no I/O.
     """
     claim = recipe.get("claims")
-    if not isinstance(claim, str) or claim not in RUNG_EVIDENCE:
+    if (not isinstance(claim, str) or claim not in BLOCKING_CLAIMS
+            or claim not in RUNG_EVIDENCE):
         return frozenset()
     key, admission = RUNG_EVIDENCE[claim]
     if admission not in admitted:
