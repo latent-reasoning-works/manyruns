@@ -40,7 +40,7 @@ result = space.act(policy.choose(doc, state, history))
 |---|---|
 | `ActionSpace(dataset, *, mode="library", store=".", engine=None, seed=42, device=None)` | `mode` is `"library"` (manyruns runs in this process) or `"cli"` (manyruns runs as `python -m manyruns` in a child process, with the store as its working directory). `store` is the folder whose `outputs/` holds the record; it must exist. |
 | `offer(surface="ledger", *, gate=None, recipe=None, step=None, run=None)` | Returns the action document of `ledger`, `tune`, `derive` or `ladder`. Both modes return equal documents. |
-| `gate` | The geometry mask. With `gate=True`, the legal set holds only the recipes that the measured geometry of the dataset supports. The evidence is the g-vector of the probe run. See [The probe run](#the-probe-run). With `gate=False`, only the data preconditions limit it. The document records `gate`, so its digest covers it. |
+| `gate` | The geometry mask. With `gate=True`, clusters and multi-branching require supporting evidence. Single-trajectory is nonblocking while its dimension band is a placeholder. The evidence is the g-vector of the probe run. See [The probe run](#the-probe-run). With `gate=False`, only the data preconditions limit it. The document records `gate`, so its digest covers it. |
 | `act(choice, *, extra=None)` | Runs one choice document and returns the result document `{"schema_version": 1, "decision_id", "run_id", "exit_code"}`. `exit_code` is 1 when the run itself failed; the decision row is still on disk. |
 | `extra` | An optional JSON object for the run row. `act` puts it in the choice document as the key `extra`, and `run --choice` writes it as the run row's `extra` key. manyruns reads none of its keys. |
 | `Refused` | The exception of a refusal. `exit_code` is 2 for a usage error or an illegal or stale choice, and 1 when the action document cannot be loaded. `message` holds the reason. Nothing was written. |
@@ -74,8 +74,9 @@ The probe run is the run whose g-vector the gate reads. It is the first row in
 
 A step that skipped does not disqualify a run. For example, `normalize` and `transform` skip
 a file whose values are already log-normalised. That run has `complete: false`, but it is a
-probe run. The gate still refuses each claim whose measurement is not in the g-vector, with
-the reason `<key>:not_measured`.
+probe run. The gate still refuses each admitted blocking claim whose measurement is not in
+the g-vector, with the reason `<key>:not_measured`. Single-trajectory is nonblocking while
+`LID_1D_BAND` is a placeholder.
 
 manyruns looks first for a probe run at the requested seed. If there is none, it uses the
 first probe run of the dataset at any seed. The document names the probe run in `evidence`:
@@ -87,7 +88,8 @@ first probe run of the dataset at any seed. The document names the probe run in 
 `seed` is the seed of the probe run. `requested_seed` is present only when the probe run came
 from a different seed than the request. If a probe run at the requested seed is written later,
 the next document names that run, and a choice made on the older document is stale. With no
-probe run at any seed, `evidence` is `null` and the gate refuses every claim that has a rule.
+probe run at any seed, `evidence` is `null` and the gate refuses every claim in
+`vocab.BLOCKING_CLAIMS`: clusters and multi-branching.
 
 ## The choice document
 
