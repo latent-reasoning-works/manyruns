@@ -899,8 +899,9 @@ def ledger(obs: Observation,
 
     `evidence` is a measured g-vector, and `admitted` the metric names a caller trusts. When
     `evidence` is given, the rung-support gate (`vocab.rung_support`) joins its sorted reasons
-    to each row's `blocked` list, after the data and availability reasons. When it is `None`
-    the gate is not consulted, and every row is what it was without it.
+    to each row's `blocked` list, after the data and availability reasons. Only claims in
+    `vocab.BLOCKING_CLAIMS` can be refused; single-trajectory is currently nonblocking. When
+    it is `None` the gate is not consulted, and every row is what it was without it.
     """
     from manyruns.catalog import discover_recipes, load_recipe
     from manyruns.vocab import rung_support
